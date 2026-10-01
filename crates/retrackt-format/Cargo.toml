@@ -1,0 +1,15 @@
+[package]
+name = "retrackt-format"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+description = "Track pieces, documents, analytic geometry, share codes and replays for retrackt"
+
+[dependencies]
+glam = { version = "0.33", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+base64 = "0.23"
+flate2 = "1"
+blake3 = "1"
+thiserror = "2"

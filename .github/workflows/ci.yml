@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: mlm-games/ci/.github/workflows/rust-app-ci.yml@main
+    with:
+      run-fmt: true
+      run-test: true
+      extra-checks: |
+        --target wasm32-unknown-unknown
+      include-android: true
+      cargo-rapk-version: "0.23.1"
+      upload-artifacts: true
+      app-slug: retrackt-desktop

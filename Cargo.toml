@@ -1,0 +1,77 @@
+[package]
+name = "retrackt"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+description = "TrackMania-style time-trial racer and track editor on repame + repose"
+repository = "https://github.com/mlm-games/retrackt"
+readme = "README.md"
+keywords = ["gamedev", "game", "racing", "repose"]
+categories = ["game-development"]
+rust-version = "1.98"
+default-run = "retrackt-desktop"
+
+[lib]
+name = "retrackt"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "retrackt-desktop"
+path = "src/main.rs"
+
+[dependencies]
+retrackt-format = { path = "crates/retrackt-format" }
+repame-sim = "0.3.3"
+repame-shell = "0.3.3"
+repame-view3d = { path = "../repame/crates/repame-view3d" }
+repose-core = "0.31.2"
+repose-ui = "0.31.2"
+repose-material = "0.31.2"
+game-utils = { path = "../game-utils/crates/game-utils" }
+game-utils-vehicle = { path = "../game-utils/crates/game-utils-vehicle" }
+glam = { version = "0.33", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+web-time = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+winit = "0.30"
+
+[package.metadata.android]
+package = "org.mlm.retrackt"
+apk_name = "retrackt"
+build_targets = ["aarch64-linux-android"]
+resources = "packaging/res"
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 37
+
+[package.metadata.android.application]
+label = "Retrackt"
+icon = "@mipmap/ic_launcher"
+
+[patch.crates-io]
+repame-view3d = { path = "../repame/crates/repame-view3d" }
+repose-app = { path = "../repose/crates/repose-app" }
+repose-canvas = { path = "../repose/crates/repose-canvas" }
+repose-core = { path = "../repose/crates/repose-core" }
+repose-devtools = { path = "../repose/crates/repose-devtools" }
+repose-macros = { path = "../repose/crates/repose-macros" }
+repose-material = { path = "../repose/crates/repose-material" }
+repose-navigation = { path = "../repose/crates/repose-navigation" }
+repose-platform = { path = "../repose/crates/repose-platform" }
+repose-render-wgpu = { path = "../repose/crates/repose-render-wgpu" }
+repose-text = { path = "../repose/crates/repose-text" }
+repose-tree = { path = "../repose/crates/repose-tree" }
+repose-ui = { path = "../repose/crates/repose-ui" }
+
+[workspace]
+members = ["crates/retrackt-format"]
+
+[dev-dependencies]
+game-utils-vehicle = { path = "../game-utils/crates/game-utils-vehicle" }

@@ -1,0 +1,20 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    uses: mlm-games/ci/.github/workflows/rust-app-release.yml@main
+    with:
+      working-directory: .
+      app-slug: retrackt
+      bin-name: retrackt-desktop
+      cargo-rapk-version: "0.23.1"
+      include-web: true
+      include-android: true
+      include-universal: true
+      itch-username: mlm-games
+      itch-game: retrackt
+    secrets: inherit
