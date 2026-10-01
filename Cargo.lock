@@ -3699,6 +3699,7 @@ dependencies = [
  "game-utils",
  "game-utils-vehicle",
  "glam 0.33.11",
+ "repame-input",
  "repame-shell",
  "repame-sim",
  "repame-view3d",

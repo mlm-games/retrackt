@@ -24,6 +24,7 @@ path = "src/main.rs"
 retrackt-format = { path = "crates/retrackt-format" }
 repame-sim = "0.3.3"
 repame-shell = "0.3.3"
+repame-input = "0.3.3"
 repame-view3d = { path = "../repame/crates/repame-view3d" }
 repose-core = "0.31.2"
 repose-ui = "0.31.2"
