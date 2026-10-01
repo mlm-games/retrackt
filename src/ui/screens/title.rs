@@ -102,5 +102,14 @@ fn controls_panel() -> View {
                 ),
         );
     }
-    panel("Controls", rows)
+    panel(
+        "Controls",
+        vec![ScrollArea(
+            Modifier::new()
+                .width(theme::dp(300.0))
+                .height(theme::dp(200.0)),
+            remember_scroll_state("title.controls"),
+            Column(Modifier::new().gap(theme::dp(10.0))).child(rows),
+        )],
+    )
 }

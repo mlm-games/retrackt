@@ -223,7 +223,11 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
                 let y = if up { u * rise } else { (1.0 - u) * rise };
                 let dy = if up { rise } else { -rise };
                 let t = Vec3::new(0.0, dy, l).normalize();
-                (Vec3::new(0.0, y, u * l), t, Vec3::Y)
+                // Out of the sloped face, never world up: the collision world
+                // reads this straight back as the road normal, so a flat
+                // normal makes every ramp drive as if it were level.
+                let nrm = Vec3::new(0.0, l, -dy).normalize();
+                (Vec3::new(0.0, y, u * l), t, nrm)
             });
         }
 
@@ -292,7 +296,10 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
             let lip = 0.8;
             push_segment(&mut c, n, |u| {
                 let z = u * half_len;
-                (Vec3::new(0.0, z * lip / half_len, z), Vec3::Z, Vec3::Y)
+                // The lip rises, so neither its heading nor its face is flat.
+                let t = Vec3::new(0.0, lip, half_len).normalize();
+                let nrm = Vec3::new(0.0, half_len, -lip).normalize();
+                (Vec3::new(0.0, z * lip / half_len, z), t, nrm)
             });
             c.skip = true;
         }
@@ -560,6 +567,14 @@ mod tests {
             for (i, n) in c.nrm.iter().enumerate() {
                 assert!(n.is_normalized(), "{id:?} normal {i} not unit");
             }
+            // A ribbon extrudes along tangent x normal, so a frame that is not
+            // square tilts the road: this is what once made ramps read flat.
+            for (i, (t, n)) in c.tan.iter().zip(c.nrm.iter()).enumerate() {
+                assert!(
+                    t.dot(*n).abs() < 1e-3,
+                    "{id:?} frame {i}: normal {n:?} is not perpendicular to {t:?}"
+                );
+            }
         }
     }
 
@@ -600,6 +615,25 @@ mod tests {
         assert_eq!(shape.ports[0].cell, [0, 0, 0]);
         // Two cells long, rising one cell edge.
         assert_eq!(shape.ports[1].cell, [0, 2, 2], "ramp exit cell");
+    }
+
+    #[test]
+    fn ramp_surface_normal_matches_its_slope() {
+        // A ramp rises one cell edge over two cells: 0.5 of run, not flat.
+        for (id, dy) in [(PieceId::RampUp, 0.5f32), (PieceId::RampDown, -0.5f32)] {
+            let tangent = Vec3::new(0.0, dy, 1.0).normalize();
+            let shape = piece_shape(id, &PieceParams::default(), C);
+            assert!(!shape.surface.is_empty(), "{id:?} has no drivable surface");
+            for (_, _, _, n) in shape.surface.triangles() {
+                let n = Vec3::from(n);
+                assert!(n.is_normalized(), "{id:?} normal {n:?} not unit");
+                assert!(
+                    n.dot(tangent) < 1e-3,
+                    "{id:?} normal {n:?} must be perpendicular to the slope {tangent:?}"
+                );
+                assert!(n.y > 0.0, "{id:?} normal {n:?} must point out of the road");
+            }
+        }
     }
 
     #[test]

@@ -689,6 +689,61 @@ mod tests {
     }
 
     #[test]
+    fn the_car_climbs_a_ramp_without_leaving_the_road() {
+        use retrackt_format::demo::ChainBuilder;
+
+        let mut b = ChainBuilder::new("Test Ramp");
+        b.step(PieceId::Start, PieceParams::default().length(2));
+        for _ in 0..3 {
+            b.step(PieceId::Straight, PieceParams::default().length(2));
+        }
+        b.step(PieceId::RampUp, PieceParams::default().length(2));
+        for _ in 0..8 {
+            b.step(PieceId::Straight, PieceParams::default().length(2));
+        }
+        let world = TrackWorld::from_doc(&b.build());
+
+        let mut car = fresh(&world);
+        let start_y = car.pos.y;
+        let tune = CarTuning::default();
+        let input = VehicleInput {
+            throttle: 1.0,
+            ..VehicleInput::neutral()
+        };
+        let mut airborne_before_top = 0;
+        let mut reached_top = false;
+        // How far the body leaned off world up: a ramp's face is 26.57 deg, so
+        // a car that stays level was told the road is flat.
+        let mut max_tilt = 0.0f32;
+        for _ in 0..400 {
+            step_car(&mut car, &input, &world, &tune, DT);
+            max_tilt = max_tilt.max(1.0 - car.up().dot(Vec3::Y));
+            if car.pos.y > start_y + 3.5 {
+                reached_top = true;
+                break;
+            }
+            if !car.grounded {
+                airborne_before_top += 1;
+            }
+        }
+
+        assert!(
+            reached_top,
+            "never gained the ramp's 4 m; ended {:+.2} m up",
+            car.pos.y - start_y
+        );
+        assert!(
+            airborne_before_top <= 10,
+            "left the road {airborne_before_top} ticks before the top"
+        );
+        assert!(
+            max_tilt > 0.05,
+            "never pitched to the slope: max lean {max_tilt:.4} (up {:+?})",
+            car.up()
+        );
+    }
+
+    #[test]
     fn the_car_respects_its_top_speed() {
         let world = flat_track();
         let tune = CarTuning::default();
