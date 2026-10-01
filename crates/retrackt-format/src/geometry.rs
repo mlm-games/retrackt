@@ -63,15 +63,24 @@ impl RawMesh {
         (lo.is_finite() && hi.is_finite()).then(|| (lo.into(), hi.into()))
     }
 
-    /// Translate and rotate the whole mesh by `m`.
+    /// Translate and rotate the whole mesh by `m`, multiplying `color` into
+    /// the existing vertex colours (baked decor colours survive the trip).
     pub fn transformed(&self, m: glam::Mat4, color: [f32; 3]) -> RawMesh {
         let linear = glam::Mat3::from_mat4(m);
         let nm = linear.inverse().transpose();
         let flip = linear.determinant() < 0.0;
+        let colors = if self.colors.len() == self.positions.len() {
+            self.colors
+                .iter()
+                .map(|c| [c[0] * color[0], c[1] * color[1], c[2] * color[2]])
+                .collect()
+        } else {
+            vec![color; self.positions.len()]
+        };
         let mut out = RawMesh {
             positions: Vec::with_capacity(self.positions.len()),
             normals: Vec::with_capacity(self.normals.len()),
-            colors: vec![color; self.positions.len()],
+            colors,
             indices: Vec::with_capacity(self.indices.len()),
         };
         for p in &self.positions {
@@ -429,19 +438,95 @@ fn ribbon(c: &Centerline, half: f32, kerb: f32) -> (RawMesh, RawMesh) {
         );
         if kerb > 0.0 {
             for (a, b, sign) in [(l0, l1, -1.0), (rr0, rr1, 1.0)] {
-                let n = (r0 * sign).to_array();
-                push_quad(
+                let face = (r0 * sign).to_array();
+                stripe_wall(
                     &mut walls,
-                    a.to_array(),
-                    (a + n0 * kerb).to_array(),
-                    (b + n1 * kerb).to_array(),
-                    b.to_array(),
-                    n,
+                    (a, b),
+                    (n0, n1),
+                    (c.arc[i], c.arc[i + 1]),
+                    kerb,
+                    face,
                 );
             }
         }
     }
     (flat, walls)
+}
+
+/// Kerb stripe period along the arc. The wall mesh bakes the stripe parity
+/// into vertex colour (white = even, black = odd); the renderer reads it back
+/// and substitutes the palette, so the format crate stays colour-free.
+const KERB_STRIPE: f32 = 0.8;
+
+/// Extrude one kerb run, cutting it at the stripe grid so every block spans a
+/// whole stripe.
+fn stripe_wall(
+    m: &mut RawMesh,
+    (a, b): (Vec3, Vec3),
+    (n0, n1): (Vec3, Vec3),
+    (arc0, arc1): (f32, f32),
+    kerb: f32,
+    face: [f32; 3],
+) {
+    let span = arc1 - arc0;
+    if span <= f32::EPSILON {
+        push_wall(
+            m,
+            (a, b),
+            (n0, n1),
+            (0.0, 1.0),
+            kerb,
+            face,
+            arc0 / KERB_STRIPE,
+        );
+        return;
+    }
+    let mut stripe = (arc0 / KERB_STRIPE).floor();
+    let mut t0 = 0.0;
+    loop {
+        let t1 = (((stripe + 1.0) * KERB_STRIPE - arc0) / span).min(1.0);
+        if (t1 - t0) * span > 1e-3 {
+            push_wall(m, (a, b), (n0, n1), (t0, t1), kerb, face, stripe);
+        }
+        if t1 >= 1.0 {
+            break;
+        }
+        t0 = t1;
+        stripe += 1.0;
+    }
+}
+
+/// One wall block: the sub-quad of the chord from `a` to `b` between `t0`
+/// and `t1`, tagged with its stripe parity.
+fn push_wall(
+    m: &mut RawMesh,
+    (a, b): (Vec3, Vec3),
+    (n0, n1): (Vec3, Vec3),
+    (t0, t1): (f32, f32),
+    kerb: f32,
+    face: [f32; 3],
+    stripe: f32,
+) {
+    let (pa, pb) = (a.lerp(b, t0), a.lerp(b, t1));
+    let (na, nb) = (
+        n0.lerp(n1, t0).normalize_or_zero(),
+        n0.lerp(n1, t1).normalize_or_zero(),
+    );
+    push_quad(
+        m,
+        pa.to_array(),
+        (pa + na * kerb).to_array(),
+        (pb + nb * kerb).to_array(),
+        pb.to_array(),
+        face,
+    );
+    let mask = if (stripe as i32).rem_euclid(2) == 0 {
+        [1.0; 3]
+    } else {
+        [0.0; 3]
+    };
+    let tail = m.colors.len() - 4;
+    m.colors[tail..].fill(mask);
 }
 
 fn push_quad(m: &mut RawMesh, a: [f32; 3], b: [f32; 3], c: [f32; 3], d: [f32; 3], n: [f32; 3]) {
@@ -766,5 +851,30 @@ mod tests {
         let n = shape.center.nrm[0];
         assert!(n.x > 0.1, "right bank leans its normal to +X, got {n:?}");
         assert!(n.dot(Vec3::Y) > 0.9, "and stays mostly up");
+    }
+
+    #[test]
+    fn kerb_walls_bake_alternating_stripe_parity() {
+        let shape = piece_shape(PieceId::Straight, &PieceParams::default(), C);
+        assert_eq!(shape.decor.colors.len(), shape.decor.positions.len());
+        let quads: Vec<[f32; 3]> = shape.decor.colors.chunks(4).map(|q| q[0]).collect();
+        assert!(
+            quads.iter().all(|c| *c == [1.0; 3] || *c == [0.0; 3]),
+            "stripe mask must be pure white/black"
+        );
+        assert!(quads.contains(&[1.0; 3]), "no even stripe");
+        assert!(quads.contains(&[0.0; 3]), "no odd stripe");
+    }
+
+    #[test]
+    fn transformed_multiplies_baked_colours() {
+        let mesh = RawMesh {
+            positions: vec![[0.0; 3]; 3],
+            colors: vec![[1.0, 0.5, 0.25]; 3],
+            indices: vec![0, 1, 2],
+            ..RawMesh::default()
+        };
+        let out = mesh.transformed(glam::Mat4::IDENTITY, [0.5, 1.0, 0.5]);
+        assert_eq!(out.colors, vec![[0.5, 0.5, 0.125]; 3]);
     }
 }
