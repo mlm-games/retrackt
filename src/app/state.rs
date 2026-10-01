@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use repose_core::ImageHandle;
 use retrackt_format::TrackDocument;
 
 use crate::save::Settings;
@@ -34,6 +35,13 @@ pub enum UiAct {
 
 pub type ActionQueue = Rc<RefCell<Vec<UiAct>>>;
 
+/// On-screen touch stick geometry, in physical px with a top-left origin.
+#[derive(Clone, Copy, Debug)]
+pub struct StickView {
+    pub anchor: (f32, f32),
+    pub knob: (f32, f32),
+}
+
 pub fn push(q: &ActionQueue, act: UiAct) {
     q.borrow_mut().push(act);
     repose_core::request_frame();
@@ -56,4 +64,8 @@ pub struct AppData {
     /// a failed save or load). Cleared when a race starts or the track changes.
     pub notice: Option<String>,
     pub actions: ActionQueue,
+    /// Set once the player first touches during a race.
+    pub stick: Option<StickView>,
+    /// Base and knob textures, uploaded on the frame the stick first shows.
+    pub stick_images: Option<(ImageHandle, ImageHandle)>,
 }
