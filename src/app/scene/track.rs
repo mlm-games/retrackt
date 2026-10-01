@@ -188,15 +188,18 @@ fn arch(c: &Centerline, cell: f32, s: f32, bar: Bar, out: &mut RawMesh) {
     let h = cell * 0.95;
     let lat = hw + 0.42;
     let foot = -0.7;
+    // Posts bury into the bar but must not share its planes: identical
+    // coplanar faces z-fight where the two boxes overlap.
+    let post_top = h - 0.04;
     let post = lin(ARCH_DARK);
     for side in [-1.0, 1.0] {
         push_obox(
             out,
-            p + r * (side * lat) + n * ((h + foot) * 0.5),
+            p + r * (side * lat) + n * ((post_top + foot) * 0.5),
             r,
             t,
             n,
-            Vec3::new(0.16, 0.16, (h - foot) * 0.5),
+            Vec3::new(0.16, 0.13, (post_top - foot) * 0.5),
             post,
         );
     }

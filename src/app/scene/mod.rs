@@ -113,21 +113,22 @@ pub(super) fn push_obox(
 ) {
     let (hu, hv, hw) = (half.x, half.y, half.z);
     let faces = [
-        (u, v, w, hv, hw),
-        (u, w, v, hw, hv),
-        (v, w, u, hw, hu),
-        (v, u, w, hu, hw),
-        (w, u, v, hu, hv),
-        (w, v, u, hv, hu),
+        (u, u * hu, v, hv, w, hw),
+        (-u, -u * hu, w, hw, v, hv),
+        (v, v * hv, w, hw, u, hu),
+        (-v, -v * hv, u, hu, w, hw),
+        (w, w * hw, u, hu, v, hv),
+        (-w, -w * hw, v, hv, u, hu),
     ];
-    for (axis, a, b, ha, hb) in faces {
+    for (axis, offset, a, ha, b, hb) in faces {
+        let c = centre + offset;
         push_lit(
             m,
             [
-                centre - a * ha - b * hb,
-                centre + a * ha - b * hb,
-                centre + a * ha + b * hb,
-                centre - a * ha + b * hb,
+                c - a * ha - b * hb,
+                c + a * ha - b * hb,
+                c + a * ha + b * hb,
+                c - a * ha + b * hb,
             ],
             axis,
             color,
@@ -242,8 +243,8 @@ impl App {
                 exposure: 1.0,
             },
             shadow: Some(ShadowDesc {
-                size: 1024,
-                bias: 0.0015,
+                size: 2048,
+                bias: 0.0035,
                 strength: 0.8,
             }),
             ..Frame3d::default()
