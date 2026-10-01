@@ -5,12 +5,15 @@ use repose_ui::{Box, Center, Column, Text, TextStyle, ViewExt};
 use crate::app::state::{ActionQueue, UiAct, push};
 use crate::app::theme;
 
-pub const CONTROLS: [(&str, &str); 5] = [
+pub const CONTROLS: [(&str, &str); 8] = [
     ("WASD / Arrows", "drive"),
     ("Space", "handbrake"),
     ("Shift", "boost"),
     ("R", "restart"),
     ("Esc", "quit to title"),
+    ("Stick, RT, LT", "drive"),
+    ("RB / LB", "handbrake / boost"),
+    ("Y / B", "restart / quit to title"),
 ];
 
 pub fn pusher(actions: &ActionQueue, act: UiAct) -> impl Fn() + 'static {
@@ -113,6 +116,8 @@ pub fn controls_hint() -> View {
     )
     .child(dim_text(&line(0..3)))
     .child(dim_text(&line(3..5)))
+    .child(dim_text(&line(5..7)))
+    .child(dim_text(&line(7..8)))
 }
 
 pub fn dim_text(text: &str) -> View {
