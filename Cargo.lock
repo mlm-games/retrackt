@@ -3507,7 +3507,7 @@ dependencies = [
 
 [[package]]
 name = "repame-view3d"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "bytemuck",
  "glam 0.33.11",
@@ -3523,7 +3523,7 @@ dependencies = [
 
 [[package]]
 name = "repose-app"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "log",
  "repose-core",
@@ -3534,7 +3534,7 @@ dependencies = [
 
 [[package]]
 name = "repose-canvas"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "lyon_path",
  "lyon_tessellation",
@@ -3544,7 +3544,7 @@ dependencies = [
 
 [[package]]
 name = "repose-core"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "accesskit",
  "log",
@@ -3558,7 +3558,7 @@ dependencies = [
 
 [[package]]
 name = "repose-devtools"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "repose-core",
  "web-time",
@@ -3567,7 +3567,7 @@ dependencies = [
 
 [[package]]
 name = "repose-macros"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3576,7 +3576,7 @@ dependencies = [
 
 [[package]]
 name = "repose-material"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "repose-canvas",
  "repose-core",
@@ -3588,7 +3588,7 @@ dependencies = [
 
 [[package]]
 name = "repose-navigation"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "log",
  "repose-core",
@@ -3599,7 +3599,7 @@ dependencies = [
 
 [[package]]
 name = "repose-platform"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -3631,7 +3631,7 @@ dependencies = [
 
 [[package]]
 name = "repose-render-wgpu"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3649,7 +3649,7 @@ dependencies = [
 
 [[package]]
 name = "repose-text"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "font-awl",
  "js-sys",
@@ -3666,7 +3666,7 @@ dependencies = [
 
 [[package]]
 name = "repose-tree"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "log",
  "rapidhash",
@@ -3679,7 +3679,7 @@ dependencies = [
 
 [[package]]
 name = "repose-ui"
-version = "0.31.3"
+version = "0.31.4"
 dependencies = [
  "log",
  "repose-core",
