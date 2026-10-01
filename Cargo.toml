@@ -3,7 +3,7 @@ name = "retrackt"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0"
-description = "TrackMania-style time-trial racer and track editor on repame + repose"
+description = "TrackMania-style time-trial racer and track editor on repame (dogfood)"
 repository = "https://github.com/mlm-games/retrackt"
 readme = "README.md"
 keywords = ["gamedev", "game", "racing", "repose"]
@@ -22,15 +22,15 @@ path = "src/main.rs"
 
 [dependencies]
 retrackt-format = { path = "crates/retrackt-format" }
-repame-sim = "0.3.3"
-repame-shell = "0.3.3"
-repame-input = "0.3.3"
-repame-view3d = { path = "../repame/crates/repame-view3d" }
-repose-core = "0.31.2"
-repose-ui = "0.31.2"
-repose-material = "0.31.2"
-game-utils = { path = "../game-utils/crates/game-utils" }
-game-utils-vehicle = { path = "../game-utils/crates/game-utils-vehicle" }
+repame-sim = "0.3"
+repame-shell = "0.3"
+repame-input = "0.3"
+repame-view3d = "0.3"
+repose-core = "0.31"
+repose-ui = "0.31"
+repose-material = "0.31"
+game-utils = "0.4"
+game-utils-vehicle = "0.4"
 glam = { version = "0.33", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"
@@ -56,23 +56,24 @@ target_sdk_version = 37
 label = "Retrackt"
 icon = "@mipmap/ic_launcher"
 
-[patch.crates-io]
-repame-view3d = { path = "../repame/crates/repame-view3d" }
-repose-app = { path = "../repose/crates/repose-app" }
-repose-canvas = { path = "../repose/crates/repose-canvas" }
-repose-core = { path = "../repose/crates/repose-core" }
-repose-devtools = { path = "../repose/crates/repose-devtools" }
-repose-macros = { path = "../repose/crates/repose-macros" }
-repose-material = { path = "../repose/crates/repose-material" }
-repose-navigation = { path = "../repose/crates/repose-navigation" }
-repose-platform = { path = "../repose/crates/repose-platform" }
-repose-render-wgpu = { path = "../repose/crates/repose-render-wgpu" }
-repose-text = { path = "../repose/crates/repose-text" }
-repose-tree = { path = "../repose/crates/repose-tree" }
-repose-ui = { path = "../repose/crates/repose-ui" }
+# [patch.crates-io]
+# repame-view3d = { path = "../repame/crates/repame-view3d" }
+# repose-app = { path = "../repose/crates/repose-app" }
+# repose-canvas = { path = "../repose/crates/repose-canvas" }
+# repose-core = { path = "../repose/crates/repose-core" }
+# repose-devtools = { path = "../repose/crates/repose-devtools" }
+# repose-macros = { path = "../repose/crates/repose-macros" }
+# repose-material = { path = "../repose/crates/repose-material" }
+# repose-navigation = { path = "../repose/crates/repose-navigation" }
+# repose-platform = { path = "../repose/crates/repose-platform" }
+# repose-render-wgpu = { path = "../repose/crates/repose-render-wgpu" }
+# repose-text = { path = "../repose/crates/repose-text" }
+# repose-tree = { path = "../repose/crates/repose-tree" }
+# repose-ui = { path = "../repose/crates/repose-ui" }
+# game-utils-vehicle = { path = "../game-utils/crates/game-utils-vehicle" }
 
 [workspace]
 members = ["crates/retrackt-format"]
 
 [dev-dependencies]
-game-utils-vehicle = { path = "../game-utils/crates/game-utils-vehicle" }
+game-utils-vehicle = "0.4"
