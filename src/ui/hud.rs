@@ -16,6 +16,9 @@ pub fn race_hud(data: &AppData) -> View {
             .absolute()
             .offset(Some(theme::dp(20.0)), Some(theme::dp(20.0)), None, None)
             .gap(theme::dp(4.0))
+            .padding(theme::dp(12.0))
+            .background(theme::background().with_alpha_f32(0.55))
+            .clip_rounded(theme::dp(8.0))
             .hit_passthrough(),
     )
     .child(
@@ -53,6 +56,9 @@ pub fn race_hud(data: &AppData) -> View {
             .absolute()
             .offset(None, Some(theme::dp(20.0)), Some(theme::dp(20.0)), None)
             .gap(theme::dp(4.0))
+            .padding(theme::dp(12.0))
+            .background(theme::background().with_alpha_f32(0.55))
+            .clip_rounded(theme::dp(8.0))
             .align_items(AlignItems::END)
             .hit_passthrough(),
     )
