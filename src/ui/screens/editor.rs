@@ -3,7 +3,7 @@ use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Row, Text, TextStyle, ViewExt};
 use retrackt_format::catalog;
 
-use crate::app::state::{ActionQueue, AppData, UiAct, push};
+use crate::app::state::{ActionQueue, AppData, TrackRef, UiAct, push};
 use crate::app::theme;
 use crate::ui::widgets::{
     danger_btn, dim_text, ghost_btn, heading, hud_text, menu_btn, panel, pusher, screen_backdrop,
@@ -134,7 +134,7 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
     let mut loaders: Vec<View> = Vec::new();
     for track in retrackt_format::builtin_tracks() {
         let label = format!("Load {}", track.name);
-        let click = pusher(actions, UiAct::LoadTrack(track.name));
+        let click = pusher(actions, UiAct::LoadTrack(TrackRef::Builtin(track.name)));
         loaders.push(ghost_btn(&label, click));
     }
     children.push(

@@ -27,6 +27,8 @@ pub enum CodeError {
     Corrupt,
     #[error("this track was made by a newer version of retrackt")]
     FutureFormat,
+    #[error("this track is too large to load")]
+    TooManyPieces,
 }
 
 /// Envelope so the format version can change without breaking old codes.
@@ -76,6 +78,7 @@ pub fn import_code(code: &str) -> Result<TrackDocument, CodeError> {
         return Err(CodeError::FutureFormat);
     }
     let mut doc = env.doc;
+    doc.check_piece_count().map_err(|_| CodeError::TooManyPieces)?;
     doc.normalize_uids();
     Ok(doc)
 }

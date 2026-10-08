@@ -3,10 +3,10 @@ use repose_ui::{Column, Text, TextStyle, ViewExt, ZStack};
 
 use crate::app::state::AppData;
 use crate::app::theme;
-use crate::ui::widgets::fmt_time;
+use crate::ui::widgets::fmt_ticks;
 
 pub fn race_hud(data: &AppData) -> View {
-    let time = fmt_time(data.race_time);
+    let time = fmt_ticks(data.race_ticks);
     let speed = data.speed_kmh;
     let checkpoint = data.checkpoint;
     let checkpoint_count = data.checkpoint_count;
@@ -41,7 +41,7 @@ pub fn race_hud(data: &AppData) -> View {
             .single_line(),
     ];
     let best = match data.best {
-        Some(best) => format!("Best {}", fmt_time(best)),
+        Some(best) => format!("Best {}", fmt_ticks(best)),
         None => "Best —".to_string(),
     };
     right_children.push(

@@ -70,9 +70,6 @@ pub struct CarTuning {
     pub boost_time: f32,
     /// Fall below this height respawns the car.
     pub kill_y: f32,
-    /// Slipstream: speed multiplier for following another car closely. Not
-    /// applied yet: the stand-in trigger gave every car a permanent +12%.
-    pub slipstream: f32,
 }
 
 /// True when a car released at the world's spawn finds road under its wheels.
@@ -83,11 +80,44 @@ pub fn settles_at_spawn(world: &TrackWorld) -> bool {
 }
 
 /// Physics identity stamped into replay tapes; playback refuses tapes recorded
-/// under other tuning. Bump the digest label with `SIM_VERSION` on every change.
+/// under other tuning. Hashed from the tuning values themselves, so changing a
+/// value invalidates old tapes without anyone having to remember to bump a label.
 pub fn physics_fingerprint() -> retrackt_format::fingerprint::TrackFingerprint {
+    let t = CarTuning::default();
+    let values = [
+        t.accel,
+        t.brake,
+        t.coast,
+        t.top_speed,
+        t.reverse_speed,
+        t.grip,
+        t.handbrake_grip,
+        t.steer_rate,
+        t.steer_falloff,
+        t.air_steer,
+        t.gravity,
+        t.surface_align,
+        t.air_align,
+        t.stick,
+        t.stick_min_speed,
+        t.ride_height,
+        t.penetration,
+        t.ride_stiffness,
+        t.ride_damping,
+        t.look_ahead,
+        t.look_pitch,
+        t.body_radius,
+        t.boost_speed,
+        t.boost_time,
+        t.kill_y,
+    ];
+    let mut bytes = Vec::with_capacity(values.len() * 4);
+    for v in values {
+        bytes.extend_from_slice(&v.to_bits().to_le_bytes());
+    }
     retrackt_format::fingerprint::physics_fingerprint(
         retrackt_format::replay::SIM_VERSION,
-        &retrackt_format::replay::PhysicsStamp::digest(b"car-tuning-v1"),
+        &retrackt_format::replay::PhysicsStamp::digest(&bytes),
     )
 }
 
@@ -119,7 +149,6 @@ impl Default for CarTuning {
             boost_speed: 1.35,
             boost_time: 2.2,
             kill_y: -60.0,
-            slipstream: 0.12,
         }
     }
 }
@@ -198,6 +227,53 @@ impl Car {
     /// Signed forward speed along the current heading (m/s).
     pub fn forward_speed(&self) -> f32 {
         self.vel.dot(self.forward())
+    }
+
+    /// Pose to draw between two ticks. `alpha` is `Sim::alpha`: 0 at the tick
+    /// just taken, 1 as the wall clock reaches the next one. The simulation
+    /// never draws itself, so without this the car holds one pose for a whole
+    /// tick and jumps at the next, which at 120 Hz and 62 m/s is half a metre.
+    ///
+    /// Never mutate a car through this: the simulation owns the real state, and
+    /// a blended pose is only valid to read.
+    pub fn render_lerp(prev: &Car, curr: &Car, alpha: f32) -> Car {
+        let t = alpha.clamp(0.0, 1.0);
+        let lerp = |a: f32, b: f32| a + (b - a) * t;
+        Car {
+            pos: prev.pos.lerp(curr.pos, t),
+            vel: prev.vel.lerp(curr.vel, t),
+            orient: prev.orient.slerp(curr.orient, t),
+            wheel_spin: [
+                lerp(prev.wheel_spin[0], curr.wheel_spin[0]),
+                lerp(prev.wheel_spin[1], curr.wheel_spin[1]),
+                lerp(prev.wheel_spin[2], curr.wheel_spin[2]),
+                lerp(prev.wheel_spin[3], curr.wheel_spin[3]),
+            ],
+            steer_angle: lerp(prev.steer_angle, curr.steer_angle),
+            compression: [
+                lerp(prev.compression[0], curr.compression[0]),
+                lerp(prev.compression[1], curr.compression[1]),
+                lerp(prev.compression[2], curr.compression[2]),
+                lerp(prev.compression[3], curr.compression[3]),
+            ],
+            // Directions, so a blended car still reports a unit heading.
+            ground_normal: prev
+                .ground_normal
+                .lerp(curr.ground_normal, t)
+                .normalize_or_zero(),
+            heading_dir: prev
+                .heading_dir
+                .lerp(curr.heading_dir, t)
+                .normalize_or_zero(),
+            air_time: lerp(prev.air_time, curr.air_time),
+            wall_contact: lerp(prev.wall_contact, curr.wall_contact),
+            boost_left: lerp(prev.boost_left, curr.boost_left),
+            // Discrete: there is no midpoint between touching and not, and the
+            // one-tick flags belong to the tick that is being drawn.
+            grounded: curr.grounded,
+            landed_hard: curr.landed_hard,
+            respawned: curr.respawned,
+        }
     }
 }
 
@@ -310,7 +386,7 @@ pub fn step_car(
             car.air_time = 0.0;
             car.compression = c.compression;
             car.ground_normal = c.normal;
-            ground_step(car, input, c, tune, dt, world);
+            ground_step(car, input, c, tune, dt);
         }
         _ => {
             car.grounded = false;
@@ -343,7 +419,6 @@ fn ground_step(
     c: Contact,
     tune: &CarTuning,
     dt: f32,
-    world: &TrackWorld,
 ) {
     let n = c.normal;
     let speed = car.speed();
@@ -391,8 +466,7 @@ fn ground_step(
             tune.boost_speed
         } else {
             1.0
-        }
-        * (1.0 + tune.slipstream * slipstream_factor(car, world));
+        };
 
     if throttle > 0.0 {
         a_fwd += throttle * tune.accel;
@@ -585,16 +659,6 @@ fn resolve_body(car: &mut Car, world: &TrackWorld, tune: &CarTuning) {
         // Scrub along the wall rather than bouncing off it.
         car.vel *= 0.985;
         car.wall_contact = 0.08;
-    }
-}
-
-/// How much slipstream is available behind `car`, 0..1.
-fn slipstream_factor(car: &Car, world: &TrackWorld) -> f32 {
-    // A cheap proxy: how much road is directly ahead at a similar height.
-    let ahead = car.pos + car.forward() * 12.0;
-    match world.ground_at(ahead, 8.0) {
-        Some(_) => 1.0,
-        None => 0.0,
     }
 }
 

@@ -12,7 +12,7 @@ use crate::fingerprint::TrackFingerprint;
 pub const TAPE_VERSION: u16 = 3;
 /// Bump when vehicle tuning changes behaviour. Tapes recorded under a
 /// different version are refused rather than re-simulated incorrectly.
-pub const SIM_VERSION: u32 = 1;
+pub const SIM_VERSION: u32 = 2;
 
 /// Tuning digest stamped into every tape.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,10 +197,18 @@ impl ReplayTape {
             .flat_map(|r| std::iter::repeat_n(r.input, r.ticks as usize))
     }
 
-    /// True when the tape may be played on this build.
-    pub fn compatible(&self, track: TrackFingerprint, physics: TrackFingerprint) -> bool {
+    /// True when the tape may be played on this build. `sim_hz` is the caller's
+    /// current rate: a tape recorded at a different one steps the same inputs
+    /// over different distances, so it must be refused too.
+    pub fn compatible(
+        &self,
+        track: TrackFingerprint,
+        physics: TrackFingerprint,
+        sim_hz: u16,
+    ) -> bool {
         self.header.format == TAPE_VERSION
             && self.header.sim_version == SIM_VERSION
+            && self.header.sim_hz == sim_hz
             && self.header.track == track
             && self.header.physics == physics
     }
@@ -320,17 +328,18 @@ mod tests {
         let back = decode_replay(&bytes).unwrap();
         assert_eq!(back.header.finish_tick, 500);
         assert_eq!(back.runs, tape.runs);
-        assert!(back.compatible(fp(7), fp(9)));
+        assert!(back.compatible(fp(7), fp(9), 120));
     }
 
     #[test]
     fn incompatible_tapes_are_refused() {
         let tape = ReplayTape::new(fp(1), fp(2), 120);
-        assert!(!tape.compatible(fp(9), fp(2)), "wrong track");
-        assert!(!tape.compatible(fp(1), fp(9)), "wrong tuning");
+        assert!(!tape.compatible(fp(9), fp(2), 120), "wrong track");
+        assert!(!tape.compatible(fp(1), fp(9), 120), "wrong tuning");
+        assert!(!tape.compatible(fp(1), fp(2), 60), "wrong tick rate");
         let mut old = tape.clone();
         old.header.sim_version = SIM_VERSION - 1;
-        assert!(!old.compatible(fp(1), fp(2)), "wrong sim version");
+        assert!(!old.compatible(fp(1), fp(2), 120), "wrong sim version");
     }
 
     #[test]

@@ -16,6 +16,24 @@ pub enum Screen {
     Editor,
 }
 
+/// Which copy of a track a menu row refers to. Built-ins and saved files share
+/// one namespace by name, so a name alone cannot say which one was clicked —
+/// and resolving by name alone quietly returned the built-in, leaving a saved
+/// track of the same name listed but unreachable.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TrackRef {
+    Builtin(String),
+    Saved(String),
+}
+
+impl TrackRef {
+    pub fn name(&self) -> &str {
+        match self {
+            TrackRef::Builtin(name) | TrackRef::Saved(name) => name,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiAct {
     StartRace,
@@ -26,7 +44,7 @@ pub enum UiAct {
     OpenEditor,
     CloseEditor,
     SaveTrack,
-    LoadTrack(String),
+    LoadTrack(TrackRef),
     Playtest,
     PlacePiece(retrackt_format::PieceId),
     RemoveLastPiece,
@@ -53,10 +71,11 @@ pub struct AppData {
     pub track: TrackDocument,
     pub settings: Settings,
     pub last_result: Option<RaceResult>,
-    /// Best recorded time on the current track, if one exists.
-    pub best: Option<f32>,
+    /// Best recorded time on the current track under the current vehicle
+    /// tuning, in simulated ticks.
+    pub best: Option<u32>,
     /// Live race readout, refreshed by the runtime every frame for the HUD.
-    pub race_time: f32,
+    pub race_ticks: u32,
     pub speed_kmh: f32,
     pub checkpoint: usize,
     pub checkpoint_count: usize,

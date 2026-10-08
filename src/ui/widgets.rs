@@ -147,8 +147,10 @@ pub fn badge(label: &str) -> View {
     )
 }
 
-pub fn fmt_time(seconds: f32) -> String {
-    let ms = (seconds.max(0.0) * 1000.0).round() as u64;
+/// Race time in simulated ticks. Integer throughout: the race clock counts
+/// ticks, so the displayed milliseconds are exactly the run that was timed.
+pub fn fmt_ticks(ticks: u32) -> String {
+    let ms = ticks as u64 * 1000 / crate::SIM_HZ as u64;
     format!(
         "{:02}:{:02}.{:03}",
         ms / 60_000,

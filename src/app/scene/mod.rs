@@ -8,7 +8,6 @@ use repame_view3d::{Frame3d, MeshGroup, SceneLight, ShadowDesc};
 use retrackt_format::geometry::RawMesh;
 
 use super::App;
-use super::schedule::CarRes;
 
 const GROUND_Y: f32 = -0.5;
 const TILE: f32 = 8.0;
@@ -172,56 +171,84 @@ fn tile_range(lo: f32, hi: f32) -> std::ops::Range<i32> {
 
 /// Unlit gradient dome, centred on the car so the horizon stays put. No
 /// normals: flat groups skip light and fog, which is exactly sky behaviour.
-fn sky_group(centre: Vec3) -> MeshGroup {
-    let horizon = lin(HORIZON);
-    let zenith = lin(ZENITH);
-    const LON: usize = 16;
-    const LAT: usize = 14;
-    let mut mesh = RawMesh::default();
-    let mut index = vec![0u32; (LAT + 1) * (LON + 1)];
-    for iy in 0..=LAT {
-        let elev = FRAC_PI_2 * (1.0 - 2.0 * iy as f32 / LAT as f32);
-        for j in 0..=LON {
-            let az = TAU * j as f32 / LON as f32;
-            let d = Vec3::new(elev.cos() * az.cos(), elev.sin(), elev.cos() * az.sin());
-            let t = d.y.max(0.0);
-            let color = [
-                horizon[0] + (zenith[0] - horizon[0]) * t,
-                horizon[1] + (zenith[1] - horizon[1]) * t,
-                horizon[2] + (zenith[2] - horizon[2]) * t,
-            ];
-            index[iy * (LON + 1) + j] = mesh.positions.len() as u32;
-            mesh.positions.push((centre + d * SKY_RADIUS).to_array());
-            mesh.colors.push(color);
-        }
-    }
-    let at = |iy: usize, j: usize| index[iy * (LON + 1) + j];
-    for iy in 0..LAT {
-        for j in 0..LON {
-            // Pole rings collapse to one point: the fan triangles are the
-            // non-degenerate halves of these quads.
-            if iy == 0 {
-                mesh.indices.extend([at(0, j), at(1, j), at(1, j + 1)]);
-            } else if iy == LAT - 1 {
-                mesh.indices
-                    .extend([at(LAT - 1, j), at(LAT, j + 1), at(LAT - 1, j + 1)]);
-            } else {
-                mesh.indices.extend([
-                    at(iy, j),
-                    at(iy + 1, j),
-                    at(iy + 1, j + 1),
-                    at(iy, j),
-                    at(iy + 1, j + 1),
-                    at(iy, j + 1),
-                ]);
+///
+/// Only the position of the dome follows the car; the shape, its colours and its
+/// indices never change. Those are built once and the vertices are translated
+/// per frame, rather than re-deriving ~250 vertices of trigonometry and index
+/// arithmetic every frame.
+pub(super) struct SkyDome {
+    /// `group` as built at the origin, and the same vertices un-translated.
+    template: MeshGroup,
+    offsets: Vec<[f32; 3]>,
+}
+
+impl SkyDome {
+    pub(super) fn new() -> Self {
+        let horizon = lin(HORIZON);
+        let zenith = lin(ZENITH);
+        const LON: usize = 16;
+        const LAT: usize = 14;
+        let mut mesh = RawMesh::default();
+        let mut index = vec![0u32; (LAT + 1) * (LON + 1)];
+        for iy in 0..=LAT {
+            let elev = FRAC_PI_2 * (1.0 - 2.0 * iy as f32 / LAT as f32);
+            for j in 0..=LON {
+                let az = TAU * j as f32 / LON as f32;
+                let d = Vec3::new(elev.cos() * az.cos(), elev.sin(), elev.cos() * az.sin());
+                let t = d.y.max(0.0);
+                let color = [
+                    horizon[0] + (zenith[0] - horizon[0]) * t,
+                    horizon[1] + (zenith[1] - horizon[1]) * t,
+                    horizon[2] + (zenith[2] - horizon[2]) * t,
+                ];
+                index[iy * (LON + 1) + j] = mesh.positions.len() as u32;
+                mesh.positions.push((d * SKY_RADIUS).to_array());
+                mesh.colors.push(color);
             }
         }
+        let at = |iy: usize, j: usize| index[iy * (LON + 1) + j];
+        for iy in 0..LAT {
+            for j in 0..LON {
+                // Pole rings collapse to one point: the fan triangles are the
+                // non-degenerate halves of these quads.
+                if iy == 0 {
+                    mesh.indices.extend([at(0, j), at(1, j), at(1, j + 1)]);
+                } else if iy == LAT - 1 {
+                    mesh.indices
+                        .extend([at(LAT - 1, j), at(LAT, j + 1), at(LAT - 1, j + 1)]);
+                } else {
+                    mesh.indices.extend([
+                        at(iy, j),
+                        at(iy + 1, j),
+                        at(iy + 1, j + 1),
+                        at(iy, j),
+                        at(iy + 1, j + 1),
+                        at(iy, j + 1),
+                    ]);
+                }
+            }
+        }
+        let offsets = mesh.positions.clone();
+        Self {
+            template: raw_mesh_to_group(&mesh, true),
+            offsets,
+        }
     }
-    raw_mesh_to_group(&mesh, true)
+
+    /// The dome moved to `centre`.
+    pub(super) fn at(&self, centre: Vec3) -> MeshGroup {
+        let mut group = self.template.clone();
+        for (position, offset) in group.positions.iter_mut().zip(&self.offsets) {
+            *position = (Vec3::from(*offset) + centre).to_array();
+        }
+        group
+    }
 }
 
 impl App {
-    pub fn build_frame(&mut self) -> Frame3d {
+    /// `car` is the pose to draw, already blended across the last tick; `alpha`
+    /// is the same blend factor for the camera.
+    pub fn build_frame(&mut self, car: &crate::sim::car::Car, alpha: f32) -> Frame3d {
         if self.track_mesh.is_none() {
             let (track, bounds) = track::build_group(&self.data.track);
             self.ground_mesh = Some(ground_group(bounds));
@@ -229,7 +256,7 @@ impl App {
         }
         let horizon = lin(HORIZON);
         let mut frame = Frame3d {
-            cam: self.cam.to_orbit(),
+            cam: self.cam.to_orbit(alpha),
             background: Some([horizon[0], horizon[1], horizon[2], 1.0]),
             light: SceneLight {
                 direction: [0.42, 0.78, 0.46],
@@ -249,15 +276,19 @@ impl App {
             }),
             ..Frame3d::default()
         };
-        let car = self.sim.world.resource::<CarRes>().0;
-        frame.push(sky_group(car.pos));
+        frame.push(self.sky.at(car.pos));
+        // Ground and track are handed over by value: `Frame3d` owns its groups
+        // and repame-view3d has no shared-group handle, so a per-frame clone is
+        // the price of them appearing in every frame. They stay separate groups
+        // because the renderer culls per group, and merging them would weld the
+        // track's bounds to the ground plane's, which never leaves the frustum.
         if let Some(ground) = &self.ground_mesh {
             frame.push(ground.clone());
         }
         if let Some(track) = &self.track_mesh {
             frame.push(track.clone());
         }
-        let (body, head, tail) = car::groups(&car);
+        let (body, head, tail) = car::groups(car);
         frame.push(body);
         frame.push(head);
         frame.push(tail);

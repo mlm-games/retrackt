@@ -2,10 +2,10 @@ use repose_core::{AlignItems, Modifier, View};
 use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt};
 
-use crate::app::state::{ActionQueue, AppData, UiAct};
+use crate::app::state::{ActionQueue, AppData, TrackRef, UiAct};
 use crate::app::theme;
 use crate::ui::widgets::{
-    CONTROLS, dim_text, fmt_time, ghost_btn, menu_btn, panel, pusher, screen_backdrop,
+    CONTROLS, dim_text, fmt_ticks, ghost_btn, menu_btn, panel, pusher, screen_backdrop,
 };
 
 pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
@@ -16,9 +16,16 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
     if builtins.is_empty() && saved.is_empty() {
         tracks.push(dim_text("No tracks available"));
     }
-    for track in builtins {
+    for track in &builtins {
+        // A saved track of the same name stands in for the built-in here. The
+        // name is the only handle on either copy, so listing both would give one
+        // label two meanings, and loading the player's own track is the one they
+        // mean. The built-in is still listed, and loaded, by the editor.
+        if saved.iter().any(|name| name == &track.name) {
+            continue;
+        }
         let label = track.name.clone();
-        let click = pusher(actions, UiAct::LoadTrack(track.name));
+        let click = pusher(actions, UiAct::LoadTrack(TrackRef::Builtin(label.clone())));
         tracks.push(ghost_btn(&label, click));
     }
     tracks.push(dim_text("Your tracks"));
@@ -27,7 +34,7 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
     }
     for name in saved {
         let label = name.clone();
-        let click = pusher(actions, UiAct::LoadTrack(name));
+        let click = pusher(actions, UiAct::LoadTrack(TrackRef::Saved(label.clone())));
         tracks.push(ghost_btn(&label, click));
     }
 
@@ -45,7 +52,7 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
     let mut info = Row(Modifier::new().gap(theme::dp(12.0)))
         .child(dim_text(&format!("Track: {}", data.track.name)))
         .child(match data.best {
-            Some(best) => Text(format!("Best  {}", fmt_time(best)))
+            Some(best) => Text(format!("Best  {}", fmt_ticks(best)))
                 .size(theme::sp(14.0))
                 .color(theme::accent())
                 .single_line(),

@@ -21,7 +21,7 @@ use wasm_bindgen::prelude::*;
 use crate::sim::car::Car;
 use crate::sim::world::TrackWorld;
 use schedule::{ActiveRes, CarRes, FinishedRes, InputRes, SessionRes, TapeRes, TrackRes};
-use state::{Screen, UiAct};
+use state::{Screen, TrackRef, UiAct};
 
 pub struct App {
     pub data: state::AppData,
@@ -31,6 +31,11 @@ pub struct App {
     save: crate::save::SaveData,
     ground_mesh: Option<MeshGroup>,
     track_mesh: Option<MeshGroup>,
+    sky: scene::SkyDome,
+    /// Car pose at the previous frame, blended with the current one by
+    /// `Sim::alpha`. `None` after a teleport, where there is nothing to blend
+    /// from. The simulation keeps no history of its own.
+    prev_car: Option<Car>,
     last: Instant,
     race_done: bool,
     /// Held for the process lifetime: `paint` publishes the real window size
@@ -38,10 +43,20 @@ pub struct App {
     geom: GeomHandle,
 }
 
+/// Catch-up ticks one frame may run. Bounded because every one of them reuses
+/// the single input sample taken at the frame, so a larger budget buys nothing
+/// and delays the player's next input by longer.
+const MAX_CATCHUP_TICKS: u32 = 8;
+
 impl App {
     pub fn new() -> Self {
-        let save = crate::save::boot();
+        let mut save = crate::save::boot();
+        // Records under other tuning can no longer be read as records; drop them
+        // now rather than carrying them for the rest of the session.
+        save.records
+            .prune(&crate::sim::car::physics_fingerprint());
         let mut sim = Sim::new(crate::SIM_STEP);
+        sim.max_steps = MAX_CATCHUP_TICKS;
         schedule::register(&mut sim);
         schedule::insert_resources(&mut sim.world);
         let data = state::AppData {
@@ -56,6 +71,8 @@ impl App {
             save,
             ground_mesh: None,
             track_mesh: None,
+            sky: scene::SkyDome::new(),
+            prev_car: None,
             last: Instant::now(),
             race_done: false,
             geom: GeomHandle::new(),
@@ -69,10 +86,8 @@ impl App {
         let now = Instant::now();
         let dt = now
             .duration_since(self.last)
-            .min(web_time::Duration::from_secs_f32(0.25));
+            .min(MAX_CATCHUP_TICKS * crate::SIM_STEP);
         self.last = now;
-
-        self.sim.step(dt);
 
         self.drain_actions();
 
@@ -92,9 +107,15 @@ impl App {
                 ),
             ));
         }
-        self.sim
-            .world
-            .insert_resource(InputRes(self.input.vehicle_input()));
+        // Queued for every tick this frame could run, so a hitch that catches up
+        // several ticks still gives each one its own entry to consume.
+        let packed = self.input.packed();
+        let catchup = self.sim.max_steps as usize;
+        self.sim.world.resource_mut::<InputRes>().refill(packed, catchup);
+
+        // Stepped only once this frame's intent is queued, so the car reacts to
+        // the input the player just gave rather than to the previous frame's.
+        self.sim.step(dt);
 
         // Consumed before the keys below so a same-frame restart cannot overwrite
         // a finish; only `start_race`/`leave_run` reset `race_done`.
@@ -105,12 +126,8 @@ impl App {
             let result = {
                 let session = self.sim.world.resource::<SessionRes>();
                 if let Some(tape) = tape.as_mut() {
-                    tape.split_ticks = session
-                        .0
-                        .splits()
-                        .iter()
-                        .map(|t| (t * crate::SIM_HZ as f32).round() as u32)
-                        .collect();
+                    // Verbatim: the run clock already counts ticks.
+                    tape.split_ticks = session.0.splits().to_vec();
                 }
                 session.0.result(&self.data.track, tape)
             };
@@ -131,21 +148,35 @@ impl App {
             }
         }
 
+        // Blend the tick just taken against the one before it: the sim runs at a
+        // fixed rate that need not divide the display's, so drawing only the
+        // newest tick holds one pose per tick and judders between them.
+        let alpha = self.sim.alpha();
         let car = self.sim.world.resource::<CarRes>().0;
+        let draw_car = if car.respawned {
+            // A kill-height respawn teleports the car. Blending across that jump
+            // draws the car sliding across the map for one frame, so the pose is
+            // drawn as it landed and the history is dropped.
+            self.sim.world.resource_mut::<CarRes>().0.respawned = false;
+            self.prev_car = None;
+            self.cam.snap(&car);
+            car
+        } else {
+            Car::render_lerp(&self.prev_car.unwrap_or(car), &car, alpha)
+        };
+        self.prev_car = Some(car);
+
         let session = self.sim.world.resource::<SessionRes>();
-        self.data.race_time = session.0.time();
+        self.data.race_ticks = session.0.ticks();
         self.data.speed_kmh = car.speed_kmh();
         self.data.checkpoint = session.0.checkpoint();
         self.data.checkpoint_count = session.0.checkpoint_count();
 
-        // A kill-height respawn teleports the car; easing the camera across
-        // that jump reads as a glitch, so it snaps instead.
-        if car.respawned {
-            self.sim.world.resource_mut::<CarRes>().0.respawned = false;
-            self.cam.snap(&car);
-        }
+        // Eased toward the current tick, not the drawn one: `to_orbit` applies
+        // `alpha` itself, so blending here as well would put the view a frame
+        // behind the car it is following.
         self.cam.update(dt.as_secs_f32(), &car);
-        let frame = self.build_frame();
+        let frame = self.build_frame(&draw_car, alpha);
         let viewport = Viewport3d(
             frame,
             self.geom.clone(),
@@ -185,8 +216,8 @@ impl App {
                 self.refresh_best();
             }
             UiAct::RaceFinished(result) => {
-                let fingerprint = result.track_fingerprint;
-                if self.save.best_times.insert(&fingerprint, result.total_time)
+                let (track, physics) = (result.track_fingerprint, result.physics_fingerprint);
+                if self.save.records.insert(&track, &physics, result.total_ticks)
                     && let Err(e) = crate::save::save(&self.save)
                 {
                     self.data.notice = Some(e);
@@ -198,7 +229,7 @@ impl App {
                 self.sim.world.insert_resource(ActiveRes(false));
             }
             UiAct::SaveTrack => self.save_track(),
-            UiAct::LoadTrack(name) => self.load_track(&name),
+            UiAct::LoadTrack(track) => self.load_track(&track),
             UiAct::PlacePiece(id) => self.place_piece(id),
             UiAct::RemoveLastPiece => {
                 if self.data.track.pieces.pop().is_some() {
@@ -240,10 +271,11 @@ impl App {
         ))));
         self.race_done = false;
         self.data.screen = Screen::Race;
-        self.data.race_time = 0.0;
+        self.data.race_ticks = 0;
         self.data.speed_kmh = 0.0;
         self.data.checkpoint = 0;
         self.refresh_best();
+        self.prev_car = None;
         self.cam.snap(&car);
         true
     }
@@ -276,6 +308,7 @@ impl App {
         self.sim.world.insert_resource(CarRes(car));
         self.track_mesh = None;
         self.ground_mesh = None;
+        self.prev_car = None;
         self.cam.snap(&car);
         self.refresh_best();
         // A race on the old geometry restarts on the new one; anywhere else
@@ -288,8 +321,8 @@ impl App {
     }
 
     fn refresh_best(&mut self) {
-        let fingerprint = gameplay_fingerprint(&self.data.track);
-        self.data.best = self.save.best_times.get(&fingerprint);
+        let track = gameplay_fingerprint(&self.data.track);
+        self.data.best = self.save.records.get(&track, &crate::sim::car::physics_fingerprint());
     }
 
     fn save_track(&mut self) {
@@ -299,16 +332,19 @@ impl App {
         }
     }
 
-    fn load_track(&mut self, name: &str) {
-        // Builtins win over a saved file of the same name, and
-        // `save::load_track` reads the disk only, so the check stays first.
-        if let Some(doc) = builtin_tracks().into_iter().find(|d| d.name == name) {
-            self.set_track(doc);
-            return;
-        }
-        match crate::save::load_track(name) {
+    fn load_track(&mut self, track: &TrackRef) {
+        let name = track.name();
+        let loaded = match track {
+            TrackRef::Builtin(_) => builtin_tracks()
+                .into_iter()
+                .find(|d| d.name == name)
+                .ok_or_else(|| format!("No built-in track named \"{name}\"")),
+            TrackRef::Saved(_) => crate::save::load_track(name)
+                .ok_or_else(|| format!("Could not load track \"{name}\"")),
+        };
+        match loaded {
             Some(doc) => self.set_track(doc),
-            None => self.data.notice = Some(format!("Could not load track \"{name}\"")),
+            Err(e) => self.data.notice = Some(e),
         }
     }
 

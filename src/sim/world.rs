@@ -38,6 +38,10 @@ pub struct Hit {
     pub owner: PieceUid,
 }
 
+/// Ceiling on spatial-grid cells. `Grid::build` coarsens its cell size until the
+/// grid fits this, so a document spanning an absurd box stays affordable.
+const MAX_CELLS: u64 = 1 << 20;
+
 /// Uniform grid over world space.
 #[derive(Clone, Debug)]
 struct Grid {
@@ -45,11 +49,20 @@ struct Grid {
     /// Shared by bucketing and querying so the two cannot drift.
     cell: f32,
     dims: [i32; 3],
-    /// Flat index -> triangle indices.
-    cells: Vec<Box<[u32]>>,
+    /// Compressed sparse rows over triangle indices: cell `i` owns
+    /// `flat[offsets[i]..offsets[i + 1]]`. Flat rather than one box per cell,
+    /// because a coarsened hostile grid would otherwise mean an allocation per
+    /// cell, which is the cost the cap exists to bound.
+    offsets: Vec<u32>,
+    flat: Vec<u32>,
 }
 
 impl Grid {
+    /// Triangle indices bucketed in `cell`.
+    fn in_cell(&self, cell: usize) -> &[u32] {
+        &self.flat[self.offsets[cell] as usize..self.offsets[cell + 1] as usize]
+    }
+
     fn build(triangles: &[Triangle], cell: f32) -> Self {
         let mut lo = Vec3::splat(f32::MAX);
         let mut hi = Vec3::splat(f32::MIN);
@@ -63,25 +76,38 @@ impl Grid {
             lo = Vec3::splat(-1.0);
             hi = Vec3::splat(1.0);
         }
-        // Pad by two cells, not one: a flat track's vertical span is zero, so a
-        // one-cell margin sends rays from above outside the grid, finding nothing.
-        let pad = Vec3::splat(cell * 2.0);
-        lo -= pad;
-        hi += pad;
-        let span = hi - lo;
-        let dims = [
-            (span.x / cell).ceil().max(2.0) as i32,
-            (span.y / cell).ceil().max(2.0) as i32,
-            (span.z / cell).ceil().max(2.0) as i32,
-        ];
-        let total = (dims[0] * dims[1] * dims[2]).max(1) as usize;
+
+        // Coarsen the cell until the grid fits its budget. Piece counts are capped
+        // at load, but that cannot bound this: two pieces at opposite ends of the
+        // cell range span the whole box, and at the requested cell size the cell
+        // count runs to 10^14. A coarser cell costs lookup precision, not
+        // correctness — every triangle still lands in the cells it overlaps.
+        let mut cell = cell.max(1e-3);
+        let (dims, origin, total) = loop {
+            // Pad by two cells, not one: a flat track's vertical span is zero, so
+            // a one-cell margin sends rays from above outside the grid, finding nothing.
+            let pad = Vec3::splat(cell * 2.0);
+            let origin = lo - pad;
+            let span = hi + pad - origin;
+            let dims = [
+                (span.x / cell).ceil().max(2.0) as i32,
+                (span.y / cell).ceil().max(2.0) as i32,
+                (span.z / cell).ceil().max(2.0) as i32,
+            ];
+            let total = u64::from(dims[0] as u32) * u64::from(dims[1] as u32) * u64::from(dims[2] as u32);
+            if total <= MAX_CELLS {
+                break (dims, origin, total as usize);
+            }
+            cell *= 2.0;
+        };
 
         // Bucket in two passes so each cell holds one contiguous slice.
         let mut g = Self {
-            origin: lo,
+            origin,
             cell,
             dims,
-            cells: Vec::new(),
+            offsets: Vec::new(),
+            flat: Vec::new(),
         };
 
         let mut counts = vec![0u32; total];
@@ -94,7 +120,11 @@ impl Grid {
         for i in 0..total {
             offsets[i + 1] = offsets[i] + counts[i];
         }
-        let mut flat = vec![0u32; total];
+        // One slot per triangle-cell reference, not per cell: a triangle spanning
+        // several cells contributes one entry to each, so `offsets[total]` is the
+        // true reference count and can exceed the cell count. Sizing by `total`
+        // wrote past the end of `flat` whenever the geometry was dense.
+        let mut flat = vec![0u32; offsets[total] as usize];
         let mut cursor = offsets[..total].to_vec();
         for (ti, t) in triangles.iter().enumerate() {
             for idx in g.cells_in_box(t.a.min(t.b).min(t.c), t.a.max(t.b).max(t.c)) {
@@ -102,13 +132,8 @@ impl Grid {
                 cursor[idx] += 1;
             }
         }
-        g.cells = (0..total)
-            .map(|i| {
-                flat[offsets[i] as usize..offsets[i + 1] as usize]
-                    .to_vec()
-                    .into_boxed_slice()
-            })
-            .collect();
+        g.offsets = offsets;
+        g.flat = flat;
         g
     }
 
@@ -245,7 +270,7 @@ impl Grid {
         let budget = (dx + dims[1] as usize + dims[2] as usize) * 4 + 8;
         let mut seen: Vec<u32> = Vec::new();
         for _ in 0..budget {
-            for &ti in &self.cells[c] {
+            for &ti in self.in_cell(c) {
                 if !seen.contains(&ti) {
                     seen.push(ti);
                     out.push(ti);
@@ -468,7 +493,7 @@ impl TrackWorld {
         let mut seen: Vec<u32> = Vec::new();
 
         for idx in grid.cells_in_box(lo, hi) {
-            for &ti in &grid.cells[idx] {
+            for &ti in grid.in_cell(idx) {
                 if seen.contains(&ti) {
                     continue;
                 }

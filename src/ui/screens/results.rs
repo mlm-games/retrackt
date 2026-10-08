@@ -5,7 +5,7 @@ use repose_ui::{Column, Text, TextStyle, ViewExt};
 use crate::app::state::{ActionQueue, AppData, UiAct};
 use crate::app::theme;
 use crate::ui::widgets::{
-    badge, dim_text, fmt_time, ghost_btn, heading, menu_btn, panel, pusher, screen_backdrop,
+    badge, dim_text, fmt_ticks, ghost_btn, heading, menu_btn, panel, pusher, screen_backdrop,
 };
 
 pub fn results_ui(data: &AppData, actions: &ActionQueue) -> View {
@@ -16,22 +16,20 @@ pub fn results_ui(data: &AppData, actions: &ActionQueue) -> View {
     match &data.last_result {
         Some(result) => {
             let new_record = match data.best {
-                Some(best) => result.total_time < best,
+                Some(best) => result.total_ticks < best,
                 None => true,
             };
             if new_record {
                 children.push(badge("NEW RECORD"));
             }
             children.push(
-                Text(format!("Total  {}", fmt_time(result.total_time)))
+                Text(format!("Total  {}", fmt_ticks(result.total_ticks)))
                     .size(theme::sp(24.0))
                     .color(theme::accent())
                     .single_line(),
             );
-            let lap = fmt_time(result.best_lap);
-            children.push(dim_text(&format!("Best lap  {lap}")));
             if let Some(best) = data.best {
-                let best = fmt_time(best);
+                let best = fmt_ticks(best);
                 children.push(dim_text(&format!("Previous best  {best}")));
             }
             if !result.splits.is_empty() {
@@ -55,11 +53,11 @@ pub fn results_ui(data: &AppData, actions: &ActionQueue) -> View {
     screen_backdrop(panel("", children))
 }
 
-fn splits_body(splits: &[f32]) -> View {
+fn splits_body(splits: &[u32]) -> View {
     let rows: Vec<View> = splits
         .iter()
         .enumerate()
-        .map(|(index, split)| dim_text(&format!("{}  {}", index + 1, fmt_time(*split))))
+        .map(|(index, split)| dim_text(&format!("{}  {}", index + 1, fmt_ticks(*split))))
         .collect();
     if splits.len() > 5 {
         ScrollArea(

@@ -4,6 +4,7 @@ use repame_shell::{GamepadPoller, PadBank};
 use repose_core::input::PhysicalKey;
 use repose_core::runtime::Scheduler;
 use repose_core::{Dp, dp_to_px};
+use retrackt_format::PackedInput;
 
 use crate::app::state::StickView;
 
@@ -206,8 +207,18 @@ impl InputState {
         self.quit_latched = quit;
     }
 
-    pub fn vehicle_input(&self) -> VehicleInput {
-        self.vehicle
+    /// Quantised form of this frame's intent: the value the simulation consumes
+    /// and the tape stores, so neither can drift from the other.
+    pub fn packed(&self) -> PackedInput {
+        let v = self.vehicle;
+        PackedInput::new(
+            v.steer,
+            v.throttle,
+            v.brake,
+            v.handbrake > 0.0,
+            v.boost > 0.0,
+            false,
+        )
     }
 
     pub fn stick_view(&self) -> Option<StickView> {

@@ -1,5 +1,7 @@
 //! Track documents: an ordered set of placed pieces plus spawn and rules.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::from_grid;
@@ -8,6 +10,19 @@ use crate::piece::{GridDir, PieceId, PieceParams, rotate_local_xz};
 /// Bumped whenever the on-wire shape of [`TrackDocument`] or [`PieceInstance`]
 /// changes. Share codes carry it so old tracks are rejected, not misread.
 pub const FORMAT_VERSION: u32 = 1;
+
+/// Ceiling on pieces in one document. Every piece builds a mesh, and the
+/// simulation builds a second triangle soup from it, so an unbounded document
+/// turns a small pasted or saved file into unbounded work at load.
+pub const MAX_PIECES: usize = 4096;
+
+#[derive(Debug, thiserror::Error)]
+pub enum TrackError {
+    #[error("malformed track: {0}")]
+    Ron(#[from] ron::error::SpannedError),
+    #[error("track has {count} pieces, over the {max} limit")]
+    TooManyPieces { count: usize, max: usize },
+}
 
 /// Stable per-piece identity. Never a vector index: inserting a piece
 /// renumbers indices and would silently corrupt saves, checkpoints and undo.
@@ -101,27 +116,49 @@ impl TrackDocument {
         }
     }
 
-    /// Assign UIDs to anything that lacks one, and stamp the current
-    /// format. Safe to call repeatedly.
+    /// Give every piece a distinct UID and stamp the current format. UIDs that
+    /// are already set are kept, so a saved track keeps its identity; unset and
+    /// repeated ones are handed fresh values. Safe to call repeatedly.
     pub fn normalize_uids(&mut self) {
-        let mut used: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
-        for p in &self.pieces {
-            if p.uid.0 != 0 {
-                used.insert(p.uid.0);
-            }
-        }
-        let mut next = 1u32;
+        // The uids already in the document, and the ones handed out below. The
+        // two must be tracked apart: deciding which piece keeps an identity
+        // consumes it, so `assigned` only ever grows and is what a fresh value
+        // is checked against.
+        let present: BTreeSet<u32> = self.pieces.iter().map(|p| p.uid.0).filter(|u| *u != 0).collect();
+        let mut assigned: BTreeSet<u32> = BTreeSet::new();
+        // Fresh ids start above the highest one claimed, so a document carrying
+        // an enormous uid costs no walk across the gap below it. A saturated
+        // maximum leaves no room above, so start from the floor instead.
+        let mut next = match present.iter().next_back() {
+            Some(&u32::MAX) | None => 1,
+            Some(&top) => top + 1,
+        };
         for p in &mut self.pieces {
-            if p.uid.0 == 0 {
-                while used.contains(&next) {
-                    next = next.saturating_add(1);
-                }
-                p.uid = PieceUid(next);
-                used.insert(next);
+            // The first piece holding an identity keeps it; an unset slot or a
+            // repeat is reissued below.
+            if p.uid.0 != 0 && !assigned.contains(&p.uid.0) {
+                assigned.insert(p.uid.0);
+                continue;
             }
+            while assigned.contains(&next) {
+                next = next.saturating_add(1);
+            }
+            p.uid = PieceUid(next);
+            assigned.insert(next);
             next = next.saturating_add(1);
         }
         self.format = FORMAT_VERSION;
+    }
+
+    /// Refuse a document too large to build a world from.
+    pub fn check_piece_count(&self) -> Result<(), TrackError> {
+        if self.pieces.len() > MAX_PIECES {
+            return Err(TrackError::TooManyPieces {
+                count: self.pieces.len(),
+                max: MAX_PIECES,
+            });
+        }
+        Ok(())
     }
 
     pub fn next_piece_uid(&self) -> PieceUid {
@@ -172,7 +209,10 @@ impl TrackDocument {
                 let origin = from_grid(start.cell, self.cell_size);
                 let world = origin + local;
                 let heading = start.yaw as f32 * std::f32::consts::FRAC_PI_2;
-                (world + glam::Vec3::Z * 2.0, heading)
+                // Ahead along the piece's own direction of travel: a world +Z
+                // offset would set a yawed start piece's car down beside the road.
+                let ahead = glam::Vec3::new(heading.sin(), 0.0, heading.cos()) * 2.0;
+                (world + ahead, heading)
             }
             None => (glam::Vec3::new(0.0, 1.0, 0.0), 0.0),
         }
@@ -193,8 +233,9 @@ impl TrackDocument {
         ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
     }
 
-    pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {
+    pub fn from_ron(text: &str) -> Result<Self, TrackError> {
         let mut doc: Self = ron::from_str(text)?;
+        doc.check_piece_count()?;
         doc.normalize_uids();
         Ok(doc)
     }
@@ -230,12 +271,6 @@ impl TrackDocument {
     /// The piece that follows `uid` along the track: `uid`'s exit must be met
     /// head-on by an *entry*, index-matched so exits never satisfy exits; loops self-match.
     pub fn next_piece(&self, uid: PieceUid) -> Option<PieceUid> {
-        self.next_from(uid, usize::MAX)
-    }
-
-    /// The piece following `uid` in route order, treating pieces up to `avoid`
-    /// as invisible, so two entries sharing a cell cannot both claim the join.
-    pub fn next_from(&self, uid: PieceUid, _avoid: usize) -> Option<PieceUid> {
         let ports = self.all_ports();
         let exits: Vec<WorldPort> = ports
             .iter()
@@ -435,6 +470,56 @@ mod tests {
         let before = doc.pieces.clone();
         doc.normalize_uids();
         assert_eq!(doc.pieces, before, "re-normalising must not change uids");
+    }
+
+    #[test]
+    fn an_oversized_document_is_refused_at_parse() {
+        let mut doc = TrackDocument::empty();
+        doc.pieces = vec![PieceInstance::new(PieceId::Straight, [0, 0, 0]); MAX_PIECES];
+        assert!(doc.check_piece_count().is_ok(), "the limit itself is allowed");
+        doc.pieces.push(PieceInstance::new(PieceId::Straight, [0, 0, 1]));
+        assert!(doc.check_piece_count().is_err());
+        assert!(TrackDocument::from_ron(&doc.to_ron().unwrap()).is_err());
+    }
+
+    #[test]
+    fn repeated_uids_are_reissued_and_a_saved_track_keeps_its_identities() {
+        let mut doc = TrackDocument::empty();
+        doc.pieces = vec![
+            PieceInstance::new(PieceId::Straight, [0, 0, 0]).with_uid(PieceUid(7)),
+            PieceInstance::new(PieceId::Straight, [0, 0, 1]).with_uid(PieceUid(7)),
+            PieceInstance::new(PieceId::Straight, [0, 0, 2]).with_uid(PieceUid(1)),
+            PieceInstance::new(PieceId::Straight, [0, 0, 3]).with_uid(PieceUid(2)),
+            PieceInstance::new(PieceId::Straight, [0, 0, 4]),
+        ];
+        doc.normalize_uids();
+
+        let uids: Vec<u32> = doc.pieces.iter().map(|p| p.uid.0).collect();
+        assert_eq!(uids[0], 7, "the first holder keeps its identity");
+        assert_eq!(uids[2], 1);
+        assert_eq!(uids[3], 2);
+        let mut distinct = uids.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), uids.len(), "no identity may repeat: {uids:?}");
+
+        let before = doc.pieces.clone();
+        doc.normalize_uids();
+        assert_eq!(doc.pieces, before, "re-normalising must not change uids");
+    }
+
+    #[test]
+    fn a_saturated_uid_does_not_walk_the_whole_range() {
+        // A hostile document carrying u32::MAX must not cost a scan up to it.
+        let mut doc = TrackDocument::empty();
+        doc.pieces = vec![
+            PieceInstance::new(PieceId::Straight, [0, 0, 0]).with_uid(PieceUid(u32::MAX)),
+            PieceInstance::new(PieceId::Straight, [0, 0, 1]).with_uid(PieceUid(u32::MAX)),
+            PieceInstance::new(PieceId::Straight, [0, 0, 2]),
+        ];
+        doc.normalize_uids();
+        assert_eq!(doc.pieces[0].uid, PieceUid(u32::MAX));
+        assert_ne!(doc.pieces[1].uid, doc.pieces[2].uid);
     }
 
     #[test]

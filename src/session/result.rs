@@ -4,9 +4,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct RaceResult {
-    pub total_time: f32,
-    pub best_lap: f32,
-    pub splits: Vec<f32>,
+    /// Race time in simulated ticks, matching `ReplayTape::split_ticks`.
+    pub total_ticks: u32,
+    /// Race time at each checkpoint, in ticks.
+    pub splits: Vec<u32>,
     pub track_fingerprint: TrackFingerprint,
+    /// Vehicle tuning the run was set under. A record only means something
+    /// against the physics that produced it.
+    pub physics_fingerprint: TrackFingerprint,
     pub replay: Option<ReplayTape>,
 }

@@ -5,12 +5,16 @@ use glam::Vec3;
 use crate::sim::world::{Gate, TrackWorld};
 
 /// Live race timing for a single time-trial run: `world.checkpoints` plus
-/// `world.finish` when present; clock, splits and gate order follow the `dt` sequence.
+/// `world.finish` when present.
+///
+/// The clock counts ticks rather than seconds. One [`RaceSession::tick`] per
+/// simulated tick means the recorded time is exactly the number of steps the car
+/// ran, so it cannot drift from the tape the same run recorded.
 pub struct RaceSession {
     gates: Vec<Gate>,
     next: usize,
-    elapsed: f32,
-    splits: Vec<f32>,
+    ticks: u32,
+    splits: Vec<u32>,
     finished: bool,
 }
 
@@ -19,7 +23,7 @@ impl RaceSession {
         Self {
             gates: Vec::new(),
             next: 0,
-            elapsed: 0.0,
+            ticks: 0,
             splits: Vec::new(),
             finished: false,
         }
@@ -31,23 +35,24 @@ impl RaceSession {
             self.gates.push(finish);
         }
         self.next = 0;
-        self.elapsed = 0.0;
+        self.ticks = 0;
         self.splits.clear();
         self.finished = false;
     }
 
-    pub fn update(&mut self, dt: f32, pos: Vec3) {
+    /// Advance the run by one simulated tick and test the gates against `pos`.
+    pub fn tick(&mut self, pos: Vec3) {
         if self.finished {
             return;
         }
-        self.elapsed += dt.max(0.0);
+        self.ticks = self.ticks.saturating_add(1);
         while self.next < self.gates.len() {
             let gate = self.gates[self.next];
             if !gate.contains(pos) {
                 break;
             }
             if !gate.is_finish {
-                self.splits.push(self.elapsed);
+                self.splits.push(self.ticks);
             }
             self.next += 1;
         }
@@ -60,11 +65,13 @@ impl RaceSession {
         self.finished
     }
 
-    pub fn time(&self) -> f32 {
-        self.elapsed
+    /// Race time in simulated ticks.
+    pub fn ticks(&self) -> u32 {
+        self.ticks
     }
 
-    pub fn splits(&self) -> &[f32] {
+    /// Race time at each checkpoint, in ticks.
+    pub fn splits(&self) -> &[u32] {
         &self.splits
     }
 
@@ -85,10 +92,10 @@ impl RaceSession {
         replay: Option<retrackt_format::ReplayTape>,
     ) -> crate::session::result::RaceResult {
         crate::session::result::RaceResult {
-            total_time: self.elapsed,
-            best_lap: self.elapsed,
+            total_ticks: self.ticks,
             splits: self.splits.clone(),
             track_fingerprint: retrackt_format::gameplay_fingerprint(track),
+            physics_fingerprint: crate::sim::car::physics_fingerprint(),
             replay,
         }
     }
@@ -125,11 +132,11 @@ mod tests {
         w
     }
 
-    fn run(w: &TrackWorld, path: &[(f32, Vec3)]) -> RaceSession {
+    fn run(w: &TrackWorld, path: &[Vec3]) -> RaceSession {
         let mut s = RaceSession::new();
         s.start(w);
-        for (dt, pos) in path {
-            s.update(*dt, *pos);
+        for pos in path {
+            s.tick(*pos);
         }
         s
     }
@@ -143,26 +150,26 @@ mod tests {
         assert_eq!(s.checkpoint(), 0);
         assert!(!s.finished());
 
-        s.update(0.25, Vec3::new(10.0, 0.0, 0.0));
+        s.tick(Vec3::new(10.0, 0.0, 0.0));
         assert_eq!(s.checkpoint(), 0, "gates must be passed in order");
         assert!(s.splits().is_empty());
 
-        s.update(0.25, Vec3::new(0.0, 0.0, 0.0));
+        s.tick(Vec3::new(0.0, 0.0, 0.0));
         assert_eq!(s.checkpoint(), 1);
-        assert_eq!(s.splits(), &[0.5]);
+        assert_eq!(s.splits(), &[2]);
 
-        s.update(0.25, Vec3::new(10.0, 0.0, 0.0));
+        s.tick(Vec3::new(10.0, 0.0, 0.0));
         assert_eq!(s.checkpoint(), 2);
-        assert_eq!(s.splits(), &[0.5, 0.75]);
+        assert_eq!(s.splits(), &[2, 3]);
 
-        s.update(0.25, Vec3::new(20.0, 0.0, 0.0));
+        s.tick(Vec3::new(20.0, 0.0, 0.0));
         assert!(s.finished());
         assert_eq!(s.checkpoint(), 3);
         assert_eq!(s.splits().len(), 2, "the finish gate records no split");
-        assert_eq!(s.time(), 1.0);
+        assert_eq!(s.ticks(), 4);
 
-        s.update(5.0, Vec3::new(999.0, 0.0, 0.0));
-        assert_eq!(s.time(), 1.0, "the clock stops once the run is over");
+        s.tick(Vec3::new(999.0, 0.0, 0.0));
+        assert_eq!(s.ticks(), 4, "the clock stops once the run is over");
         assert_eq!(s.checkpoint(), 3);
     }
 
@@ -179,29 +186,45 @@ mod tests {
         let mut s = RaceSession::new();
         s.start(&w);
         // Inside all three checkpoints, short of the finish.
-        s.update(0.25, Vec3::new(0.5, 0.0, 0.0));
+        s.tick(Vec3::new(0.5, 0.0, 0.0));
         assert_eq!(s.checkpoint(), 3);
-        assert_eq!(s.splits(), &[0.25, 0.25, 0.25]);
+        assert_eq!(s.splits(), &[1, 1, 1]);
         assert!(!s.finished());
 
-        s.update(0.25, Vec3::new(3.0, 0.0, 0.0));
+        s.tick(Vec3::new(3.0, 0.0, 0.0));
         assert!(s.finished());
-        assert_eq!(s.time(), 0.5);
+        assert_eq!(s.ticks(), 2);
         assert_eq!(s.splits().len(), 3);
     }
 
     #[test]
-    fn identical_dt_sequences_produce_identical_runs() {
+    fn the_clock_counts_ticks_and_never_rewinds() {
+        let w = spaced_world();
+        let mut s = RaceSession::new();
+        s.start(&w);
+        assert_eq!(s.ticks(), 0);
+        for expected in 1..=5 {
+            s.tick(Vec3::new(0.0, 0.0, 0.0));
+            assert_eq!(s.ticks(), expected, "exactly one tick per call");
+        }
+        // Nothing to wind back: the run has no wall-clock input at all.
+        s.start(&w);
+        assert_eq!(s.ticks(), 0);
+        assert!(s.splits().is_empty());
+    }
+
+    #[test]
+    fn identical_tick_sequences_produce_identical_runs() {
         let w = spaced_world();
         let path = [
-            (0.25, Vec3::new(0.0, 0.0, 0.0)),
-            (0.25, Vec3::new(10.0, 0.0, 0.0)),
-            (0.25, Vec3::new(20.0, 0.0, 0.0)),
-            (0.25, Vec3::new(20.0, 0.0, 0.0)),
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(20.0, 0.0, 0.0),
+            Vec3::new(20.0, 0.0, 0.0),
         ];
         let a = run(&w, &path);
         let b = run(&w, &path);
-        assert_eq!(a.time(), b.time());
+        assert_eq!(a.ticks(), b.ticks());
         assert_eq!(a.splits(), b.splits());
         assert_eq!(a.checkpoint(), b.checkpoint());
         assert_eq!(a.finished(), b.finished());
@@ -222,7 +245,7 @@ mod tests {
             } else {
                 w.finish.expect("demo track has a finish gate")
             };
-            s.update(1.0 / 120.0, gate.centre);
+            s.tick(gate.centre);
             if s.finished() {
                 break;
             }
@@ -230,7 +253,7 @@ mod tests {
         assert!(s.finished());
         assert_eq!(s.checkpoint(), s.checkpoint_count());
         assert_eq!(s.splits().len(), w.checkpoints.len());
-        assert!(s.time() > 0.0);
+        assert!(s.ticks() > 0);
     }
 
     #[test]
@@ -245,23 +268,12 @@ mod tests {
         let mut s = RaceSession::new();
         s.start(&w);
         assert_eq!(s.checkpoint_count(), 2, "no finish gate to count");
-        s.update(0.5, Vec3::new(0.0, 0.0, 0.0));
+        s.tick(Vec3::new(0.0, 0.0, 0.0));
         assert!(!s.finished());
-        s.update(0.5, Vec3::new(10.0, 0.0, 0.0));
+        s.tick(Vec3::new(10.0, 0.0, 0.0));
         assert!(s.finished());
-        assert_eq!(s.splits(), &[0.5, 1.0]);
+        assert_eq!(s.splits(), &[1, 2]);
         assert_eq!(s.checkpoint(), s.checkpoint_count());
-    }
-
-    #[test]
-    fn negative_dt_does_not_rewind_the_clock() {
-        let w = spaced_world();
-        let mut s = RaceSession::new();
-        s.start(&w);
-        s.update(0.5, Vec3::new(0.0, 0.0, 0.0));
-        s.update(-10.0, Vec3::new(10.0, 0.0, 0.0));
-        assert_eq!(s.time(), 0.5, "the clock must never go backwards");
-        assert_eq!(s.checkpoint(), 2, "gates still advance when dt is clamped");
     }
 
     #[test]
@@ -270,8 +282,6 @@ mod tests {
         use retrackt_format::ReplayTape;
         use retrackt_format::decode_replay;
         use retrackt_format::encode_replay;
-        use retrackt_format::fingerprint::physics_fingerprint;
-        use retrackt_format::replay::{PhysicsStamp, SIM_VERSION};
 
         let doc = retrackt_format::demo_track();
         let w = TrackWorld::from_doc(&doc);
@@ -287,13 +297,16 @@ mod tests {
             } else {
                 w.finish.expect("demo track has a finish gate")
             };
-            s.update(1.0 / 120.0, gate.centre);
+            s.tick(gate.centre);
         }
         assert!(s.finished());
 
         let track_fp = retrackt_format::gameplay_fingerprint(&doc);
-        let physics_fp = physics_fingerprint(SIM_VERSION, &PhysicsStamp::digest(b"car-tuning-v1"));
-        let mut tape = ReplayTape::new(track_fp, physics_fp, crate::SIM_HZ as u16);
+        let mut tape = ReplayTape::new(
+            track_fp,
+            crate::sim::car::physics_fingerprint(),
+            crate::SIM_HZ as u16,
+        );
         for i in 0..240u32 {
             tape.push(PackedInput::new(
                 (i as f32 - 120.0) / 60.0,
@@ -305,15 +318,16 @@ mod tests {
             ));
         }
         tape.header.finish_tick = tape.tick_len();
-        tape.split_ticks = s
-            .splits()
-            .iter()
-            .map(|t| (t * crate::SIM_HZ as f32).round() as u32)
-            .collect();
+        // Splits land on the tape verbatim: the run clock is already in ticks,
+        // so there is no seconds-to-ticks conversion left to round.
+        tape.split_ticks = s.splits().to_vec();
 
         let result = s.result(&doc, Some(tape.clone()));
         assert_eq!(result.track_fingerprint, track_fp);
+        assert_eq!(result.physics_fingerprint, crate::sim::car::physics_fingerprint());
+        assert_eq!(result.total_ticks, s.ticks());
         assert_eq!(result.splits.as_slice(), s.splits());
+        assert_eq!(tape.split_ticks, result.splits);
         let bytes =
             encode_replay(result.replay.as_ref().expect("replay present")).expect("encodes");
         assert_eq!(decode_replay(&bytes).expect("decodes"), tape);

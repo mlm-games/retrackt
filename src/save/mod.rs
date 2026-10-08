@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use retrackt_format::fingerprint::TrackFingerprint;
 use retrackt_format::{FORMAT_VERSION, TrackDocument};
 
-pub const SAVE_VERSION: u32 = 1;
+pub const SAVE_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Settings {
@@ -27,32 +27,77 @@ impl Default for Settings {
     }
 }
 
-/// Best time per track, keyed by gameplay fingerprint. A `Vec` rather than a
-/// map so the RON round-trip never has to use byte arrays as map keys.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
-pub struct BestTimes {
-    entries: Vec<(TrackFingerprint, f32)>,
+/// One stored record: the fastest run on a track under one vehicle tuning.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+pub struct RecordEntry {
+    pub track: TrackFingerprint,
+    pub physics: TrackFingerprint,
+    /// Race time in simulated ticks. The race clock is integral, so this is
+    /// exactly what was run.
+    pub ticks: u32,
 }
 
-impl BestTimes {
-    pub fn get(&self, fp: &TrackFingerprint) -> Option<f32> {
-        self.entries.iter().find(|(k, _)| k == fp).map(|(_, t)| *t)
+/// Records per track *and* vehicle tuning. A `Vec` rather than a map so the RON
+/// round-trip never has to use byte arrays as map keys.
+///
+/// Physics is part of the key because a time set under one tuning is not
+/// comparable with one set under another: retune the car and the old number
+/// stops being a target the player can read anything into.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct Records {
+    entries: Vec<RecordEntry>,
+}
+
+impl Records {
+    pub fn get(&self, track: &TrackFingerprint, physics: &TrackFingerprint) -> Option<u32> {
+        self.entries
+            .iter()
+            .find(|e| e.track == *track && e.physics == *physics)
+            .map(|e| e.ticks)
     }
 
-    /// Returns true iff `time` beat the previous best for `fp`.
-    pub fn insert(&mut self, fp: &TrackFingerprint, time: f32) -> bool {
+    /// Returns true iff `ticks` beat the previous best for this track and tuning.
+    pub fn insert(
+        &mut self,
+        track: &TrackFingerprint,
+        physics: &TrackFingerprint,
+        ticks: u32,
+    ) -> bool {
         for entry in &mut self.entries {
-            if entry.0 == *fp {
-                if time < entry.1 {
-                    entry.1 = time;
+            if entry.track == *track && entry.physics == *physics {
+                if ticks < entry.ticks {
+                    entry.ticks = ticks;
                     return true;
                 }
                 return false;
             }
         }
-        self.entries.push((*fp, time));
+        self.entries.push(RecordEntry {
+            track: *track,
+            physics: *physics,
+            ticks,
+        });
         true
     }
+
+    /// Drop records set under other tuning. They cannot be read as records
+    /// anymore, and leaving them in the file grows it on every retune.
+    pub fn prune(&mut self, physics: &TrackFingerprint) {
+        self.entries.retain(|e| e.physics == *physics);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Records as written by save format 1, keyed on the track alone. Read only so a
+/// version 1 file still deserialises; [`Versioned::migrate`] discards them,
+/// because a time set under an unknown physics revision is not comparable with
+/// one set under the current build.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct LegacyRecords {
+    entries: Vec<(TrackFingerprint, f32)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -61,7 +106,9 @@ pub struct SaveData {
     pub version: u32,
     pub settings: Settings,
     #[serde(default)]
-    pub best_times: BestTimes,
+    pub best_times: LegacyRecords,
+    #[serde(default)]
+    pub records: Records,
 }
 
 impl Default for SaveData {
@@ -69,7 +116,8 @@ impl Default for SaveData {
         Self {
             version: SAVE_VERSION,
             settings: Settings::default(),
-            best_times: BestTimes::default(),
+            best_times: LegacyRecords::default(),
+            records: Records::default(),
         }
     }
 }
@@ -81,6 +129,12 @@ impl Versioned for SaveData {
 
     fn set_version(&mut self, version: u32) {
         self.version = version;
+    }
+
+    fn migrate(&mut self, from: u32, _to: u32) {
+        if from < 2 {
+            self.best_times = LegacyRecords::default();
+        }
     }
 }
 
@@ -167,19 +221,23 @@ fn save_track_with<S: Storage>(
     track_store(dir, file, storage).write(text.as_bytes())
 }
 
-fn load_track_with<S: Storage>(storage: S, dir: &Path, name: &str) -> Option<TrackDocument> {
-    let file = format!("{}.ron", track_stem(name));
-    let bytes = track_store(dir, file, storage)
-        .load(&SaveStore::<S>::is_intact_ron, &[])
-        .data?;
-    let text = std::str::from_utf8(&bytes).ok()?;
-    // `TrackDocument::from_ron` re-stamps `format` via `normalize_uids`, so the
-    // on-disk version must be read before parsing or a future file is adopted.
+/// Parse a stored track, refusing anything written under a different format
+/// version. `TrackDocument::from_ron` re-stamps `format` via `normalize_uids`,
+/// so the on-disk version must be read before parsing or a future file is adopted.
+fn parse_stored(text: &str) -> Option<TrackDocument> {
     let header = ron::from_str::<TrackHeader>(text).ok()?;
     if header.format != FORMAT_VERSION {
         return None;
     }
     TrackDocument::from_ron(text).ok()
+}
+
+fn load_track_with<S: Storage>(storage: S, dir: &Path, name: &str) -> Option<TrackDocument> {
+    let file = format!("{}.ron", track_stem(name));
+    let bytes = track_store(dir, file, storage)
+        .load(&SaveStore::<S>::is_intact_ron, &[])
+        .data?;
+    parse_stored(std::str::from_utf8(&bytes).ok()?)
 }
 
 pub fn save_track(track: &TrackDocument) -> Result<(), String> {
@@ -188,6 +246,26 @@ pub fn save_track(track: &TrackDocument) -> Result<(), String> {
 
 pub fn load_track(name: &str) -> Option<TrackDocument> {
     load_track_with(FsStorage, &tracks_dir(), name)
+}
+
+/// Every stored track, read through the platform storage backend rather than
+/// `std::fs`: on wasm that is the only route to what the game itself wrote, and
+/// the raw path silently listed nothing.
+pub fn stored_tracks() -> Vec<TrackDocument> {
+    let storage = FsStorage;
+    let Ok(paths) = storage.read_dir(&tracks_dir()) else {
+        return Vec::new();
+    };
+    let mut docs: Vec<TrackDocument> = paths
+        .into_iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("ron"))
+        .filter_map(|p| {
+            let bytes = storage.read(&p).ok().flatten()?;
+            std::str::from_utf8(&bytes).ok().and_then(parse_stored)
+        })
+        .collect();
+    docs.sort_by(|a, b| a.name.cmp(&b.name));
+    docs
 }
 
 #[cfg(test)]
@@ -219,16 +297,17 @@ mod tests {
             ..SaveData::default()
         };
         let fp = [7u8; 16];
-        assert!(data.best_times.insert(&fp, 42.5));
+        let tune = [8u8; 16];
+        assert!(data.records.insert(&fp, &tune, 5_100));
         let other_fp = [3u8; 16];
-        assert!(data.best_times.insert(&other_fp, 99.0));
+        assert!(data.records.insert(&other_fp, &tune, 11_900));
 
         save_with(&mgr, &data).expect("saves");
         let (loaded, status) = load_with(&mgr);
 
         assert_eq!(status, LoadStatus::Ok);
         assert_eq!(loaded, data);
-        assert_eq!(loaded.best_times.get(&other_fp), Some(99.0));
+        assert_eq!(loaded.records.get(&other_fp, &tune), Some(11_900));
     }
 
     #[test]
@@ -251,34 +330,69 @@ mod tests {
     }
 
     #[test]
-    fn best_times_only_replace_strictly_faster_runs() {
-        let mut best = BestTimes::default();
+    fn records_only_replace_strictly_faster_runs() {
+        let mut records = Records::default();
         let fp = [1u8; 16];
-        let other = [2u8; 16];
+        let tune = [2u8; 16];
+        let other = [3u8; 16];
 
-        assert_eq!(best.get(&fp), None);
-        assert!(best.insert(&fp, 10.0));
-        assert!(!best.insert(&fp, 11.0));
-        assert!(best.insert(&fp, 9.0));
-        assert_eq!(best.get(&fp), Some(9.0));
+        assert_eq!(records.get(&fp, &tune), None);
+        assert!(records.insert(&fp, &tune, 1200));
+        assert!(!records.insert(&fp, &tune, 1300));
+        assert!(records.insert(&fp, &tune, 1100));
+        assert_eq!(records.get(&fp, &tune), Some(1100));
 
-        assert!(best.insert(&other, 20.0));
-        assert_eq!(best.get(&other), Some(20.0));
-        assert_eq!(best.get(&fp), Some(9.0));
+        assert!(records.insert(&other, &tune, 2400));
+        assert_eq!(records.get(&other, &tune), Some(2400));
+        assert_eq!(records.get(&fp, &tune), Some(1100));
     }
 
     #[test]
-    fn an_older_save_is_migrated_and_keeps_its_data() {
+    fn a_record_under_other_tuning_is_a_different_record() {
+        let mut records = Records::default();
+        let fp = [1u8; 16];
+        let tune = [2u8; 16];
+        let retuned = [9u8; 16];
+
+        assert!(records.insert(&fp, &tune, 1200));
+        assert_eq!(records.get(&fp, &retuned), None, "tuning is part of the key");
+        assert!(
+            records.insert(&fp, &retuned, 5000),
+            "a slow run on new tuning is still its first record"
+        );
+        assert_eq!(records.get(&fp, &tune), Some(1200));
+        assert_eq!(records.get(&fp, &retuned), Some(5000));
+
+        records.prune(&retuned);
+        assert_eq!(records.get(&fp, &tune), None, "prune drops other tuning");
+        assert_eq!(records.get(&fp, &retuned), Some(5000));
+    }
+
+    #[test]
+    fn an_older_save_is_migrated_and_keeps_its_settings() {
         let mgr = mem_manager();
-        let old =
-            b"(version: 0, settings: (master_volume: 0.5, music_volume: 0.25, sfx_volume: 0.75))";
-        mgr.storage().write(&mgr.path(), old).unwrap();
+        // Built the way a version 1 save was written rather than typed by hand: a
+        // fingerprint inside a tuple has no hand-writable RON spelling, and this
+        // is the exact shape on disk.
+        let legacy = ron::ser::to_string(&LegacyRecords {
+            entries: vec![([1u8; 16], 42.0)],
+        })
+        .expect("serialises");
+        let old = format!(
+            "(version: 1, settings: (master_volume: 0.5, music_volume: 0.25, \
+             sfx_volume: 0.75), best_times: {legacy})"
+        );
+        mgr.storage().write(&mgr.path(), old.as_bytes()).unwrap();
 
         let (data, status) = load_with(&mgr);
         assert_eq!(status, LoadStatus::Ok);
         assert_eq!(data.version, SAVE_VERSION);
         assert_eq!(data.settings.master_volume, 0.5);
-        assert_eq!(data.best_times, BestTimes::default());
+        assert!(
+            data.best_times.entries.is_empty(),
+            "a v1 record has no physics revision, so it is discarded"
+        );
+        assert!(data.records.is_empty());
         assert_eq!(boot_with(&mgr), data);
     }
 
@@ -302,14 +416,14 @@ mod tests {
             version: 0,
             ..SaveData::default()
         };
-        assert!(data.best_times.insert(&[9u8; 16], 12.5));
+        assert!(data.records.insert(&[9u8; 16], &[4u8; 16], 1_500));
 
         save_with(&mgr, &data).unwrap();
         let (loaded, status) = load_with(&mgr);
         assert_eq!(status, LoadStatus::Ok);
         assert_eq!(loaded.version, SAVE_VERSION);
         assert_eq!(loaded.settings, data.settings);
-        assert_eq!(loaded.best_times, data.best_times);
+        assert_eq!(loaded.records, data.records);
     }
 
     fn track_dir() -> PathBuf {

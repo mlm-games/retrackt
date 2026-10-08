@@ -19,6 +19,18 @@ pub struct ChaseCamera {
     pub pitch: f32,
     pub dist: f32,
     pub fov_y_deg: f32,
+    /// Where the camera stood at the previous frame. The simulation is
+    /// fixed-step, so blending this with the current pose is what stops the view
+    /// from stepping once per tick while the display runs faster.
+    prev: ChasePose,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ChasePose {
+    target: Vec3,
+    yaw: f32,
+    pitch: f32,
+    dist: f32,
 }
 
 impl ChaseCamera {
@@ -29,6 +41,12 @@ impl ChaseCamera {
             pitch: PITCH,
             dist: BASE_DIST,
             fov_y_deg: 70.0,
+            prev: ChasePose {
+                target: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: PITCH,
+                dist: BASE_DIST,
+            },
         }
     }
 
@@ -40,9 +58,12 @@ impl ChaseCamera {
         }
         self.pitch = PITCH;
         self.dist = BASE_DIST;
+        // A teleport must not be blended across, so history starts here.
+        self.prev = self.pose();
     }
 
     pub fn update(&mut self, dt: f32, car: &Car) {
+        self.prev = self.pose();
         let follow = 1.0 - (-FOLLOW_RATE * dt.max(0.0)).exp();
         self.target += (car.pos - self.target) * follow;
         if let Some(yaw) = yaw_behind(car) {
@@ -53,12 +74,27 @@ impl ChaseCamera {
         self.dist += (dist - self.dist) * follow;
     }
 
-    pub fn to_orbit(&self) -> OrbitCamera {
-        OrbitCamera {
+    fn pose(&self) -> ChasePose {
+        ChasePose {
             target: self.target,
             yaw: self.yaw,
             pitch: self.pitch,
             dist: self.dist,
+        }
+    }
+
+    /// `alpha` is `Sim::alpha`: 0 at the tick just taken, 1 as the wall clock
+    /// reaches the next one.
+    pub fn to_orbit(&self, alpha: f32) -> OrbitCamera {
+        let t = alpha.clamp(0.0, 1.0);
+        let prev = self.prev;
+        let blend = |a: f32, b: f32| a + (b - a) * t;
+        OrbitCamera {
+            target: prev.target.lerp(self.target, t),
+            // Shortest arc, or the view spins the long way round at the wrap.
+            yaw: lerp_angle(prev.yaw, self.yaw, t),
+            pitch: blend(prev.pitch, self.pitch),
+            dist: blend(prev.dist, self.dist),
             fov_y_deg: self.fov_y_deg,
         }
     }
@@ -107,7 +143,7 @@ mod tests {
         let car = Car::at_spawn(Vec3::ZERO, 0.0);
         let mut cam = ChaseCamera::new();
         cam.snap(&car);
-        let cam = cam.to_orbit();
+        let cam = cam.to_orbit(1.0);
 
         let right = car.forward().cross(car.up());
         let on_screen_right = ndc_x(&cam, right * 5.0);
