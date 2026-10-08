@@ -18,6 +18,13 @@ const RIM: u32 = 0xC6CBD3;
 const HEAD: u32 = 0xEDEFF2;
 const TAIL: u32 = 0xC2261C;
 
+/// Ghost albedo: a cool cyan that no track surface or car panel uses, so a
+/// translucent body is never mistaken for a piece of the scenery.
+const GHOST_TINT: [f32; 3] = [0.16, 0.62, 0.86];
+/// Low enough to read through the car's own shell, high enough to read against
+/// both bright road and dark sky.
+const GHOST_ALPHA: f32 = 0.42;
+
 const RIDE: f32 = 0.55;
 const WHEEL_R: f32 = 0.32;
 const WHEEL_W: f32 = 0.12;
@@ -40,6 +47,29 @@ pub(super) fn groups(car: &Car) -> (MeshGroup, MeshGroup, MeshGroup) {
     tail.material.emissive = [0.45, 0.04, 0.03];
 
     (body, head, tail)
+}
+
+/// The ghost body: the same shell and wheels, drawn translucent and tinted.
+/// Lamps are omitted, because a reference lap is not a car you can collide with
+/// and a pair of lit headlights reads as a rival on the road.
+pub(super) fn ghost_group(car: &Car) -> MeshGroup {
+    let mut shell = RawMesh::default();
+    bodywork(&mut shell);
+    wheels(&mut shell, car);
+    let mut group = raw_mesh_to_group(&shell.transformed(body_matrix(car), [1.0; 3]), true);
+    // One flat albedo, not the car's own paint: the shell reads as a solid
+    // silhouette rather than a translucent copy, which is what keeps a
+    // half-transparent car from looking like a rendering fault.
+    group.colors.fill(GHOST_TINT);
+    // The blend pipeline disables depth writes (`render.rs:1533`), so the ghost
+    // does not occlude its own far side. Depth *testing* stays on, so the track
+    // still hides it — a reference visible through the scenery would be no help
+    // at judging a line.
+    group.transparent = true;
+    group.alpha = GHOST_ALPHA;
+    group.material.roughness = 1.0;
+    group.material.emissive = [0.05, 0.12, 0.20];
+    group
 }
 
 /// Everything in body space: +Z forward, +Y up, origin at the car centre,

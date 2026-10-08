@@ -14,6 +14,7 @@ pub enum Screen {
     Race,
     Results,
     Editor,
+    Ghosts,
 }
 
 /// Which copy of a track a menu row refers to. Built-ins and saved files share
@@ -49,6 +50,27 @@ pub enum UiAct {
     PlacePiece(retrackt_format::PieceId),
     RemoveLastPiece,
     ClearTrack,
+    /// Delete the piece with this identity. Uid rather than index: placing or
+    /// removing a piece renumbers indices, so a button built this frame would
+    /// delete a different piece by the time it was pressed.
+    DeletePiece(retrackt_format::PieceUid),
+    /// Quarter-turn the piece with this identity.
+    RotatePiece(retrackt_format::PieceUid),
+    /// Nudge one tunable value on the piece with this identity.
+    AdjustParam(retrackt_format::PieceUid, crate::app::ParamKind, i8),
+    OpenGhosts,
+    CloseGhosts,
+    /// Race a kept tape by its library file stem.
+    RaceGhost(String),
+    /// Keep the tape of the run that just finished, under this name.
+    SaveGhost(String),
+    /// The ghost-name field's current text. Its own action so the draft survives
+    /// leaving and re-entering the results screen.
+    SetGhostDraft(String),
+    /// Clear the last runtime message.
+    DismissNotice,
+    /// Discard the kept tape with this file stem, and its file.
+    DeleteGhost(String),
 }
 
 pub type ActionQueue = Rc<RefCell<Vec<UiAct>>>;
@@ -71,6 +93,19 @@ pub struct AppData {
     pub track: TrackDocument,
     pub settings: Settings,
     pub last_result: Option<RaceResult>,
+    /// The kept-tape library, refreshed by the runtime whenever it changes so
+    /// the ghost screen never reads storage while a view is being built.
+    pub ghosts: Vec<crate::save::GhostEntry>,
+    /// Name of the ghost the current race is running against, for the HUD.
+    pub ghost_name: Option<String>,
+    /// Race time of that ghost, in ticks, so the HUD can show what is being
+    /// chased without decoding a tape per frame.
+    pub ghost_ticks: Option<u32>,
+    /// Where the ghost library was opened from, so closing returns there rather
+    /// than always dropping to the title.
+    pub ghost_return: Screen,
+    /// Draft text for naming a new ghost.
+    pub ghost_draft: String,
     /// Best recorded time on the current track under the current vehicle
     /// tuning, in simulated ticks.
     pub best: Option<u32>,

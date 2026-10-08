@@ -6,9 +6,11 @@ use game_utils::storage::{FsStorage, Storage};
 use serde::{Deserialize, Serialize};
 
 use retrackt_format::fingerprint::TrackFingerprint;
-use retrackt_format::{FORMAT_VERSION, TrackDocument};
+use retrackt_format::{
+    FORMAT_VERSION, ReplayTape, TrackDocument, decode_replay, encode_replay,
+};
 
-pub const SAVE_VERSION: u32 = 2;
+pub const SAVE_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Settings {
@@ -100,6 +102,76 @@ pub struct LegacyRecords {
     entries: Vec<(TrackFingerprint, f32)>,
 }
 
+/// One kept replay tape. The tape itself is a file; this is the row the library
+/// lists it by.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct GhostEntry {
+    pub name: String,
+    /// File stem under the ghosts directory. Separate from `name` because the
+    /// library is free-form: two ghosts may carry the same name, and the stem is
+    /// what the bytes are actually keyed on.
+    pub file: String,
+    pub track: TrackFingerprint,
+    pub physics: TrackFingerprint,
+    /// Race time of the recorded run, in ticks.
+    pub ticks: u32,
+}
+
+/// Every kept tape, across all tracks.
+///
+/// Not keyed on track: a ghost is chosen from the whole library, and a tape whose
+/// track or tuning does not match the run being started is refused by
+/// [`ReplayTape::compatible`] rather than silently resimulated wrong.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct GhostLibrary {
+    entries: Vec<GhostEntry>,
+}
+
+/// Ceiling on kept tapes. Each is a file the player cannot see the size of, and
+/// saving one is a single tap on the results screen, so the library is bounded
+/// rather than grown until the save directory fills.
+const MAX_GHOSTS: usize = 64;
+
+impl GhostLibrary {
+    pub fn all(&self) -> &[GhostEntry] {
+        &self.entries
+    }
+
+    pub fn get(&self, file: &str) -> Option<&GhostEntry> {
+        self.entries.iter().find(|e| e.file == file)
+    }
+
+    /// Err iff the library is already at [`MAX_GHOSTS`]; the player frees a slot
+    /// by deleting one.
+    pub fn insert(&mut self, entry: GhostEntry) -> Result<(), String> {
+        if self.entries.len() >= MAX_GHOSTS {
+            return Err(format!(
+                "Ghost library is full ({MAX_GHOSTS}). Delete one first."
+            ));
+        }
+        self.entries.push(entry);
+        Ok(())
+    }
+
+    /// The removed row, so the caller can delete the tape it named.
+    pub fn remove(&mut self, file: &str) -> Option<GhostEntry> {
+        let index = self.entries.iter().position(|e| e.file == file)?;
+        Some(self.entries.remove(index))
+    }
+
+    /// Drop tapes that can no longer be played, and rows whose file has gone:
+    /// a retune invalidates the first, and a deleted file would otherwise
+    /// leave a row that fails to load every time it is picked.
+    pub fn prune(&mut self, physics: &TrackFingerprint, present: &dyn Fn(&str) -> bool) {
+        self.entries
+            .retain(|e| e.physics == *physics && present(&e.file));
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct SaveData {
     #[serde(default)]
@@ -109,6 +181,8 @@ pub struct SaveData {
     pub best_times: LegacyRecords,
     #[serde(default)]
     pub records: Records,
+    #[serde(default)]
+    pub ghosts: GhostLibrary,
 }
 
 impl Default for SaveData {
@@ -118,6 +192,7 @@ impl Default for SaveData {
             settings: Settings::default(),
             best_times: LegacyRecords::default(),
             records: Records::default(),
+            ghosts: GhostLibrary::default(),
         }
     }
 }
@@ -135,6 +210,8 @@ impl Versioned for SaveData {
         if from < 2 {
             self.best_times = LegacyRecords::default();
         }
+        // Nothing to do for 3: the library is `#[serde(default)]`, so a version 2
+        // save loads as an empty one rather than failing to deserialise.
     }
 }
 
@@ -176,7 +253,9 @@ pub fn default_data() -> SaveData {
     SaveData::default()
 }
 
-fn track_stem(name: &str) -> String {
+/// A name reduced to a safe single path segment. Shared by tracks and ghosts:
+/// both are keyed on a file stem under their own directory.
+fn file_stem(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| {
@@ -187,6 +266,8 @@ fn track_stem(name: &str) -> String {
             }
         })
         .collect();
+    // A name that sanitises away entirely still needs a stable file: the stem is
+    // how the file is found again, and it must not change between saves.
     if cleaned.is_empty() {
         "track".to_string()
     } else {
@@ -196,6 +277,97 @@ fn track_stem(name: &str) -> String {
 
 fn tracks_dir() -> PathBuf {
     manager().data_dir().join("tracks")
+}
+
+fn ghosts_dir() -> PathBuf {
+    manager().data_dir().join("ghosts")
+}
+
+/// Tapes are zlib-compressed, so the only integrity test is a decode. A free
+/// function rather than a closure because [`SaveStore::load`] takes a `fn` item.
+fn is_intact_ghost(bytes: &[u8]) -> bool {
+    decode_replay(bytes).is_ok()
+}
+
+fn ghost_store<S: Storage>(dir: &Path, stem: &str, storage: S) -> SaveStore<S> {
+    SaveStore::new_with_storage(dir, format!("{stem}.ghost"), storage)
+        .with_validator(is_intact_ghost)
+}
+
+/// A stem no ghost file already occupies. Names are free-form and may repeat, so
+/// the name is not a usable file key and collisions are numbered off.
+///
+/// Takes the storage backend by value rather than by reference: `&S` would make
+/// `storage.clone()` resolve to `Clone for &T` and hand back another `&S`.
+fn free_ghost_stem<S: Storage>(storage: S, dir: &Path, name: &str) -> String {
+    let stem = file_stem(name);
+    let taken = |candidate: &str| ghost_store(dir, candidate, storage.clone()).exists();
+    if !taken(&stem) {
+        return stem;
+    }
+    for n in 2..1000 {
+        let candidate = format!("{stem}-{n}");
+        if !taken(&candidate) {
+            return candidate;
+        }
+    }
+    stem
+}
+
+/// Write `tape` under a free stem and return the row describing it.
+fn save_ghost_with<S: Storage>(
+    storage: S,
+    dir: &Path,
+    tape: &ReplayTape,
+    name: &str,
+) -> Result<GhostEntry, String> {
+    let file = free_ghost_stem(storage.clone(), dir, name);
+    let bytes = encode_replay(tape).map_err(|e| e.to_string())?;
+    ghost_store(dir, &file, storage).write(&bytes)?;
+    Ok(GhostEntry {
+        name: name.to_string(),
+        file,
+        track: tape.header.track,
+        physics: tape.header.physics,
+        ticks: tape.header.finish_tick,
+    })
+}
+
+fn load_ghost_with<S: Storage>(storage: S, dir: &Path, file: &str) -> Option<ReplayTape> {
+    let bytes = ghost_store(dir, file, storage).load(&is_intact_ghost, &[]).data?;
+    decode_replay(&bytes).ok()
+}
+
+pub fn save_ghost(tape: &ReplayTape, name: &str) -> Result<GhostEntry, String> {
+    save_ghost_with(FsStorage, &ghosts_dir(), tape, name)
+}
+
+pub fn load_ghost(file: &str) -> Option<ReplayTape> {
+    load_ghost_with(FsStorage, &ghosts_dir(), file)
+}
+
+/// Drop the tape and its rotations. Missing is not an error: the caller wants
+/// the file gone, and it already is.
+pub fn delete_ghost(file: &str) {
+    ghost_store(&ghosts_dir(), file, FsStorage).delete();
+}
+
+/// Stems of every ghost file on disk. Read through the platform storage backend
+/// for the same reason [`stored_tracks`] does: on wasm the raw path lists nothing.
+pub fn stored_ghost_files() -> Vec<String> {
+    let storage = FsStorage;
+    let Ok(paths) = storage.read_dir(&ghosts_dir()) else {
+        return Vec::new();
+    };
+    let mut files: Vec<String> = paths
+        .into_iter()
+        .filter_map(|p| {
+            let stem = p.file_stem()?.to_str()?.to_string();
+            (p.extension().and_then(|e| e.to_str()) == Some("ghost")).then_some(stem)
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 fn track_store<S: Storage>(dir: &Path, file_name: impl Into<String>, storage: S) -> SaveStore<S> {
@@ -217,7 +389,7 @@ fn save_track_with<S: Storage>(
     let mut doc = track.clone();
     doc.normalize_uids();
     let text = doc.to_ron().map_err(|e| e.to_string())?;
-    let file = format!("{}.ron", track_stem(&doc.name));
+    let file = format!("{}.ron", file_stem(&doc.name));
     track_store(dir, file, storage).write(text.as_bytes())
 }
 
@@ -233,7 +405,7 @@ fn parse_stored(text: &str) -> Option<TrackDocument> {
 }
 
 fn load_track_with<S: Storage>(storage: S, dir: &Path, name: &str) -> Option<TrackDocument> {
-    let file = format!("{}.ron", track_stem(name));
+    let file = format!("{}.ron", file_stem(name));
     let bytes = track_store(dir, file, storage)
         .load(&SaveStore::<S>::is_intact_ron, &[])
         .data?;
@@ -430,6 +602,188 @@ mod tests {
         PathBuf::from("/mem/tracks")
     }
 
+    fn ghost_dir() -> PathBuf {
+        PathBuf::from("/mem/ghosts")
+    }
+
+    fn sample_tape(track: u8, ticks: u32) -> ReplayTape {
+        let mut tape = ReplayTape::new([track; 16], [2u8; 16], crate::SIM_HZ as u16);
+        let input = retrackt_format::PackedInput::new(0.0, 1.0, 0.0, false, false, false);
+        for _ in 0..ticks {
+            tape.push(input);
+        }
+        tape.header.finish_tick = ticks;
+        tape
+    }
+
+    fn entry(name: &str, file: &str, track: u8, physics: u8, ticks: u32) -> GhostEntry {
+        GhostEntry {
+            name: name.into(),
+            file: file.into(),
+            track: [track; 16],
+            physics: [physics; 16],
+            ticks,
+        }
+    }
+
+    #[test]
+    fn a_ghost_tape_round_trips_through_memory_storage() {
+        let storage = MemoryStorage::new();
+        let dir = ghost_dir();
+        let tape = sample_tape(7, 500);
+
+        let saved = save_ghost_with(storage.clone(), &dir, &tape, "My run").expect("saves");
+        assert_eq!(saved.name, "My run");
+        assert_eq!(saved.track, tape.header.track);
+        assert_eq!(saved.physics, tape.header.physics);
+        assert_eq!(saved.ticks, 500);
+        assert_eq!(
+            load_ghost_with(storage, &dir, &saved.file).expect("loads"),
+            tape
+        );
+    }
+
+    #[test]
+    fn two_ghosts_of_the_same_name_get_distinct_files() {
+        let storage = MemoryStorage::new();
+        let dir = ghost_dir();
+        let first = save_ghost_with(storage.clone(), &dir, &sample_tape(1, 10), "Best")
+            .expect("saves");
+        let second = save_ghost_with(storage, &dir, &sample_tape(1, 20), "Best").expect("saves");
+
+        assert_ne!(
+            first.file, second.file,
+            "a repeated name must not overwrite the first tape"
+        );
+    }
+
+    #[test]
+    fn a_ghost_name_cannot_escape_the_ghost_directory() {
+        let storage = MemoryStorage::new();
+        let dir = ghost_dir();
+        let saved =
+            save_ghost_with(storage.clone(), &dir, &sample_tape(1, 10), "../../etc/№7: ünïcode?")
+                .expect("saves");
+
+        let stem = file_stem(&saved.name);
+        assert!(!stem.contains('/') && !stem.contains('\\') && !stem.contains(".."));
+        assert!(storage.exists(&dir.join(format!("{stem}.ghost"))));
+        assert!(load_ghost_with(storage, &dir, &saved.file).is_some());
+    }
+
+    #[test]
+    fn a_missing_or_corrupt_ghost_file_reads_as_none() {
+        let storage = MemoryStorage::new();
+        let dir = ghost_dir();
+        assert!(load_ghost_with(storage.clone(), &dir, "never saved").is_none());
+
+        ghost_store(&dir, "broken", storage.clone())
+            .write(b"((( not a tape at all")
+            .unwrap();
+        assert!(load_ghost_with(storage, &dir, "broken").is_none());
+    }
+
+    #[test]
+    fn a_tape_from_another_track_or_rate_is_refused_for_playback() {
+        let doc = retrackt_format::demo_track();
+        let world = crate::sim::world::TrackWorld::from_doc(&doc);
+        let track = retrackt_format::gameplay_fingerprint(&doc);
+        let mut ghost = crate::app::schedule::GhostRes::default();
+
+        let wrong_track = ReplayTape::new(
+            [9u8; 16],
+            crate::sim::car::physics_fingerprint(),
+            crate::SIM_HZ as u16,
+        );
+        assert!(ghost.arm(wrong_track, track, &world).is_err());
+        assert!(!ghost.armed(), "a refused tape must leave no ghost");
+
+        // Same track and tuning, another rate: the same inputs step over
+        // different distances, so playback would not match the recorded run.
+        let wrong_hz = ReplayTape::new(
+            track,
+            crate::sim::car::physics_fingerprint(),
+            crate::SIM_HZ as u16 - 1,
+        );
+        assert!(ghost.arm(wrong_hz, track, &world).is_err());
+        assert!(!ghost.armed());
+    }
+
+    #[test]
+    fn the_library_drops_unplayable_and_missing_rows() {
+        let mut library = GhostLibrary::default();
+        library.insert(entry("keep", "keep", 1, 2, 100)).unwrap();
+        library.insert(entry("retuned", "retuned", 1, 9, 100)).unwrap();
+        library.insert(entry("deleted", "deleted", 1, 2, 100)).unwrap();
+        assert_eq!(library.all().len(), 3);
+
+        library.prune(&[2u8; 16], &|file| file == "keep");
+        assert_eq!(library.all().len(), 1);
+        assert_eq!(library.all()[0].name, "keep");
+        assert!(library.get("keep").is_some());
+        assert!(library.get("retuned").is_none(), "other tuning is unplayable");
+        assert!(
+            library.get("deleted").is_none(),
+            "a row whose file is gone can never be played"
+        );
+    }
+
+    #[test]
+    fn the_library_is_bounded_and_says_why() {
+        let mut library = GhostLibrary::default();
+        for n in 0..MAX_GHOSTS {
+            library
+                .insert(entry(&format!("g{n}"), &format!("g{n}"), 1, 2, 100))
+                .unwrap();
+        }
+        assert!(library.insert(entry("one more", "x", 1, 2, 100)).is_err());
+        assert_eq!(library.all().len(), MAX_GHOSTS);
+
+        assert!(library.remove("g0").is_some());
+        assert!(
+            library.insert(entry("now there is room", "y", 1, 2, 100)).is_ok(),
+            "deleting frees a slot"
+        );
+        assert!(library.remove("g0").is_none(), "removing twice is a no-op");
+    }
+
+    #[test]
+    fn deleting_a_ghost_removes_it_from_the_save_round_trip() {
+        let mgr = mem_manager();
+        let mut data = SaveData::default();
+        data.ghosts
+            .insert(entry("two", "two", 1, [2u8; 16], 100))
+            .unwrap();
+        data.ghosts
+            .insert(entry("one", "one", 1, [2u8; 16], 200))
+            .unwrap();
+        save_with(&mgr, &data).expect("saves");
+
+        let mut loaded = load_with(&mgr).0;
+        assert_eq!(loaded.ghosts.all().len(), 2);
+        loaded.ghosts.remove("two");
+        save_with(&mgr, &loaded).expect("saves");
+
+        let (back, status) = load_with(&mgr);
+        assert_eq!(status, LoadStatus::Ok);
+        assert_eq!(back.ghosts.all().len(), 1);
+        assert_eq!(back.ghosts.all()[0].name, "one");
+    }
+
+    #[test]
+    fn a_version_2_save_loads_with_an_empty_ghost_library() {
+        let mgr = mem_manager();
+        let old = "(version: 2, settings: (master_volume: 0.5, music_volume: 0.25, \
+                   sfx_volume: 0.75))";
+        mgr.storage().write(&mgr.path(), old.as_bytes()).unwrap();
+
+        let (data, status) = load_with(&mgr);
+        assert_eq!(status, LoadStatus::Ok);
+        assert_eq!(data.version, SAVE_VERSION);
+        assert!(data.ghosts.is_empty(), "no tapes existed before version 3");
+        assert_eq!(data.settings.master_volume, 0.5);
+    }
+
     #[test]
     fn track_save_then_load_roundtrips() {
         let storage = MemoryStorage::new();
@@ -451,7 +805,7 @@ mod tests {
         doc.name = "../../etc/№7: ünïcode?".into();
 
         save_track_with(storage.clone(), &dir, &doc).expect("saves");
-        let stem = track_stem(&doc.name);
+        let stem = file_stem(&doc.name);
         assert!(!stem.contains('/') && !stem.contains('\\') && !stem.contains(".."));
         assert!(storage.exists(&dir.join(format!("{stem}.ron"))));
 

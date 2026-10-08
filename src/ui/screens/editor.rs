@@ -1,10 +1,11 @@
 use repose_core::{AlignItems, Alignment, Modifier, PaddingValues, View};
 use repose_ui::scroll::{ScrollArea, remember_scroll_state};
-use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Row, Text, TextStyle, ViewExt};
+use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Row, Text, ViewExt};
 use retrackt_format::catalog;
 
 use crate::app::state::{ActionQueue, AppData, TrackRef, UiAct, push};
 use crate::app::theme;
+use crate::app::ParamKind;
 use crate::ui::widgets::{
     danger_btn, dim_text, ghost_btn, heading, hud_text, menu_btn, panel, pusher, screen_backdrop,
 };
@@ -75,9 +76,84 @@ fn palette_list(actions: &ActionQueue) -> View {
     )
 }
 
+/// One row per placed piece: its identity and cell, then the three edits that
+/// apply to it — quarter-turn, and the length/radius/bank nudges.
+fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
+    if data.track.pieces.is_empty() {
+        return vec![dim_text("No pieces placed")];
+    }
+    data.track
+        .pieces
+        .iter()
+        .enumerate()
+        .map(|(index, piece)| {
+            let uid = piece.uid;
+            let (len, rad, bank) =
+                retrackt_format::piece::resolve_params(piece.id, &piece.params);
+            let nudge = |label: &'static str, kind: ParamKind, delta: i8| {
+                let queue = actions.clone();
+                ghost_btn(label, move || push(&queue, UiAct::AdjustParam(uid, kind, delta)))
+            };
+            let rotate = ghost_btn("Rotate", {
+                let queue = actions.clone();
+                move || push(&queue, UiAct::RotatePiece(uid))
+            });
+            let remove = danger_btn("Remove", {
+                let queue = actions.clone();
+                move || push(&queue, UiAct::DeletePiece(uid))
+            });
+
+            // Radius means nothing for a piece the catalogue gives none, so the
+            // control is withheld rather than offered and silently discarded.
+            let radius = if rad == 0 {
+                vec![dim_text("rad —")]
+            } else {
+                vec![
+                    dim_text(&format!("rad {rad}")),
+                    nudge("R-", ParamKind::Radius, -1),
+                    nudge("R+", ParamKind::Radius, 1),
+                ]
+            };
+
+            Column(Modifier::new().gap(theme::dp(4.0))).child([
+                Row(Modifier::new().gap(theme::dp(8.0)))
+                    .child(hud_text(&format!(
+                        "{}. {} [{} {} {}] yaw {}",
+                        index + 1,
+                        piece.id.label(),
+                        piece.cell[0],
+                        piece.cell[1],
+                        piece.cell[2],
+                        piece.yaw,
+                    )))
+                    .child(rotate)
+                    .child(remove),
+                FlowRow(
+                    Modifier::new().gap(theme::dp(6.0)),
+                    FlowRowConfig::default(),
+                )
+                .child(
+                    [
+                        dim_text(&format!("len {len}")),
+                        nudge("L-", ParamKind::Length, -1),
+                        nudge("L+", ParamKind::Length, 1),
+                    ]
+                    .into_iter()
+                    .chain(radius)
+                    .chain([
+                        dim_text(&format!("bank {bank}°")),
+                        nudge("B-", ParamKind::Bank, -5),
+                        nudge("B+", ParamKind::Bank, 5),
+                    ])
+                    .collect::<Vec<_>>(),
+                ),
+            ])
+        })
+        .collect()
+}
+
 fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
     let mut children: Vec<View> = Vec::new();
-
     let count = data.track.pieces.len();
     children.push(dim_text(&format!("{count} pieces")));
     if crate::ui::library::persisted(&data.track) {
@@ -91,32 +167,12 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
         children.push(dim_text("Unsaved changes"));
     }
 
-    let rows: Vec<View> = if data.track.pieces.is_empty() {
-        vec![dim_text("No pieces placed")]
-    } else {
-        data.track
-            .pieces
-            .iter()
-            .enumerate()
-            .map(|(index, piece)| {
-                let uid = piece.uid.0;
-                hud_text(&format!(
-                    "{}. {} [{} {} {}] #{uid}",
-                    index + 1,
-                    piece.id.label(),
-                    piece.cell[0],
-                    piece.cell[1],
-                    piece.cell[2],
-                ))
-            })
-            .collect()
-    };
     children.push(ScrollArea(
         Modifier::new()
             .width(theme::dp(420.0))
             .height(theme::dp(200.0)),
         remember_scroll_state("editor.track"),
-        Column(Modifier::new().gap(theme::dp(4.0))).child(rows),
+        Column(Modifier::new().gap(theme::dp(4.0))).child(piece_rows(data, actions)),
     ));
 
     children.push(

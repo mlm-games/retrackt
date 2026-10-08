@@ -64,6 +64,65 @@ impl InputRes {
     }
 }
 
+/// The ghost car: a second [`Car`] driven by a recorded tape rather than by the
+/// player. It is stepped by the same chain, on the same track world, so a ghost
+/// is a real car in the simulation and cannot drift from the run that recorded it.
+#[derive(Resource)]
+pub struct GhostRes {
+    pub car: Car,
+    /// Next tick of the tape to apply.
+    pub tick: u32,
+    /// Empty when no ghost is selected, or once its tape has run out.
+    pub tape: Option<ReplayTape>,
+}
+
+impl Default for GhostRes {
+    fn default() -> Self {
+        Self {
+            car: Car::default(),
+            tick: 0,
+            tape: None,
+        }
+    }
+}
+
+impl GhostRes {
+    /// Load `tape` and put the ghost on the start line of `world`. `track` is
+    /// the fingerprint of the document `world` was built from: a tape recorded
+    /// anywhere else is refused rather than resimulated against geometry it was
+    /// never driven on.
+    ///
+    /// The track check must be made here, against the track being raced. Passing
+    /// `tape.header.track` back in would compare it with itself and accept every
+    /// tape, which is the one input that cannot be checked later — by then the
+    /// ghost is already driving.
+    pub fn arm(
+        &mut self,
+        tape: ReplayTape,
+        track: retrackt_format::fingerprint::TrackFingerprint,
+        world: &TrackWorld,
+    ) -> Result<(), String> {
+        let physics = crate::sim::car::physics_fingerprint();
+        let hz = crate::SIM_HZ as u16;
+        if !tape.compatible(track, physics, hz) {
+            return Err("That ghost was recorded on a different track or build.".into());
+        }
+        self.car = Car::at_spawn(world.spawn, world.spawn_yaw);
+        self.tick = 0;
+        self.tape = Some(tape);
+        Ok(())
+    }
+
+    pub fn disarm(&mut self) {
+        self.tape = None;
+        self.tick = 0;
+    }
+
+    pub fn armed(&self) -> bool {
+        self.tape.is_some()
+    }
+}
+
 #[derive(Resource)]
 pub struct SessionRes(pub RaceSession);
 
@@ -81,6 +140,7 @@ pub struct TapeRes(pub Option<ReplayTape>);
 pub fn insert_resources(world: &mut World) {
     world.insert_resource(TrackRes(TrackWorld::default()));
     world.insert_resource(CarRes(Car::default()));
+    world.insert_resource(GhostRes::default());
     world.insert_resource(InputRes::new());
     world.insert_resource(SessionRes(RaceSession::new()));
     world.insert_resource(ActiveRes(false));
@@ -119,6 +179,40 @@ fn step_vehicle(
         &CarTuning::default(),
         time.delta_secs,
     );
+}
+
+/// Step the ghost on the tick the player's car runs, from the next tape entry.
+///
+/// Uses [`ReplayTape::tick`] rather than a recorded position stream: playback
+/// re-simulates the same inputs through the same [`step_car`], so the ghost is
+/// exact by construction and cannot accumulate the drift a stored pose would.
+///
+/// Past the end of the tape the ghost stops being stepped and holds its last
+/// pose. That is what makes it read as a finished run rather than a car frozen
+/// mid-jump.
+fn step_ghost(
+    time: Res<SimTime>,
+    track: Res<TrackRes>,
+    active: Res<ActiveRes>,
+    mut ghost: ResMut<GhostRes>,
+) {
+    if !active.0 {
+        return;
+    }
+    let Some(tape) = ghost.tape.as_ref() else {
+        return;
+    };
+    let Some(packed) = tape.tick(ghost.tick) else {
+        return;
+    };
+    step_car(
+        &mut ghost.car,
+        &decode(packed),
+        &track.0,
+        &CarTuning::default(),
+        time.delta_secs,
+    );
+    ghost.tick += 1;
 }
 
 fn advance_session(active: Res<ActiveRes>, car: Res<CarRes>, mut session: ResMut<SessionRes>) {
@@ -161,10 +255,23 @@ fn record_replay(
     }
 }
 
-/// One chain, ordered: car, session, finish flag, tape. Separate `add_*` calls
-/// get no ordering, so order-sensitive systems live in this tuple.
+/// One chain, ordered: car, ghost, session, finish flag, tape. Separate
+/// `add_*` calls get no ordering, so order-sensitive systems live in this tuple.
+///
+/// The ghost sits between the car and the session so a tape tick is consumed on
+/// the same step it was recorded on, and `record_replay` still runs last and
+/// reads the input `step_vehicle` actually consumed.
 pub fn register(sim: &mut repame_sim::Sim) {
-    sim.add_chained_systems((step_vehicle, advance_session, signal_finish, record_replay).chain());
+    sim.add_chained_systems(
+        (
+            step_vehicle,
+            step_ghost,
+            advance_session,
+            signal_finish,
+            record_replay,
+        )
+            .chain(),
+    );
 }
 
 #[cfg(test)]
@@ -279,5 +386,125 @@ mod chain_tests {
                 .tick_len(),
             0
         );
+    }
+
+    /// Drive 120 ticks of fixed input, optionally recording it to `tape`.
+    fn drive_recorded_run(tape: Option<&mut ReplayTape>) -> Car {
+        let world = TrackWorld::from_doc(&demo_track());
+        let mut car = Car::at_spawn(world.spawn, world.spawn_yaw);
+        let tune = CarTuning::default();
+        let steer = PackedInput::new(0.25, 1.0, 0.0, false, false, false);
+        for _ in 0..120 {
+            step_car(&mut car, &decode(steer), &world, &tune, crate::SIM_STEP);
+            if let Some(tape) = tape {
+                tape.push(steer);
+            }
+        }
+        car
+    }
+
+    #[test]
+    fn a_ghost_replaying_a_tape_reproduces_the_recorded_run() {
+        let doc = demo_track();
+        let world = TrackWorld::from_doc(&doc);
+        let mut tape = ReplayTape::new(
+            gameplay_fingerprint(&doc),
+            crate::sim::car::physics_fingerprint(),
+            crate::SIM_HZ as u16,
+        );
+        let driven = drive_recorded_run(Some(&mut tape));
+        assert_eq!(tape.tick_len(), 120);
+
+        let mut ghost = GhostRes::default();
+        ghost
+            .arm(tape.clone(), gameplay_fingerprint(&doc), &world)
+            .expect("arms");
+        assert!(ghost.armed());
+        while let Some(packed) = tape.tick(ghost.tick) {
+            step_car(
+                &mut ghost.car,
+                &decode(packed),
+                &world,
+                &CarTuning::default(),
+                crate::SIM_STEP,
+            );
+            ghost.tick += 1;
+        }
+
+        assert!(
+            ghost.car.pos.distance(driven.pos) < 1e-4,
+            "ghost drifted: {:?} vs {:?}",
+            ghost.car.pos,
+            driven.pos
+        );
+    }
+
+    #[test]
+    fn a_ghost_past_the_end_of_its_tape_holds_its_last_pose() {
+        let doc = demo_track();
+        let world = TrackWorld::from_doc(&doc);
+        let mut tape = ReplayTape::new(
+            gameplay_fingerprint(&doc),
+            crate::sim::car::physics_fingerprint(),
+            crate::SIM_HZ as u16,
+        );
+        drive_recorded_run(Some(&mut tape));
+
+        let mut ghost = GhostRes::default();
+        ghost
+            .arm(tape, gameplay_fingerprint(&doc), &world)
+            .expect("arms");
+        // Two passes over the tape: the second finds no tick and must not move it.
+        for _ in 0..240 {
+            let Some(packed) = ghost.tape.as_ref().and_then(|t| t.tick(ghost.tick)) else {
+                break;
+            };
+            step_car(
+                &mut ghost.car,
+                &decode(packed),
+                &world,
+                &CarTuning::default(),
+                crate::SIM_STEP,
+            );
+            ghost.tick += 1;
+        }
+        assert_eq!(
+            ghost.tick,
+            120,
+            "the tape ran out, so no further ticks are consumed"
+        );
+
+        // Disarming must not leave a ghost that comes back on the next step.
+        ghost.disarm();
+        assert!(!ghost.armed());
+    }
+
+    #[test]
+    fn a_ghost_is_refused_a_tape_from_another_track_or_rate() {
+        let doc = demo_track();
+        let world = TrackWorld::from_doc(&doc);
+        let track = gameplay_fingerprint(&doc);
+        let mut ghost = GhostRes::default();
+
+        // The check must compare the tape against the track being raced. Were
+        // `arm` to pass `tape.header.track` instead, this would arm, and the
+        // ghost would drive geometry its recorded run never touched.
+        let wrong_track = ReplayTape::new(
+            [9u8; 16],
+            crate::sim::car::physics_fingerprint(),
+            crate::SIM_HZ as u16,
+        );
+        assert!(ghost.arm(wrong_track, track, &world).is_err());
+        assert!(!ghost.armed(), "a refused tape must leave no ghost");
+
+        // Same track and tuning, recorded at another tick rate: the same inputs
+        // would step over different distances.
+        let wrong_hz = ReplayTape::new(
+            track,
+            crate::sim::car::physics_fingerprint(),
+            crate::SIM_HZ as u16 - 1,
+        );
+        assert!(ghost.arm(wrong_hz, track, &world).is_err());
+        assert!(!ghost.armed());
     }
 }

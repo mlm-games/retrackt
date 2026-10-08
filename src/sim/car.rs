@@ -582,6 +582,74 @@ mod basis_tests {
     use super::*;
     use glam::{Mat3, Quat};
 
+    #[test]
+    fn an_already_quantised_run_replays_bit_exactly() {
+        // The property a ghost depends on. A tape stores quantised inputs, so a
+        // run that consumed them must reproduce exactly when they are fed back
+        // through the same `step_car`. Both halves here use the same packed
+        // values: the point is that the *re-simulation* is deterministic, not
+        // that quantisation is lossless — packing a raw float genuinely loses
+        // precision, and the live run is what recorded the packed form.
+        let world = flat_track();
+        let tune = CarTuning::default();
+        let inputs: Vec<VehicleInput> = (0..(120 * 6))
+            .map(|t| {
+                let steer = ((t as f32) * 0.017).sin() * 0.7;
+                let packed = retrackt_format::PackedInput::new(
+                    steer,
+                    1.0,
+                    0.0,
+                    t % 211 == 0,
+                    false,
+                    false,
+                );
+                VehicleInput {
+                    steer: packed.steer_f32(),
+                    throttle: packed.throttle_f32(),
+                    brake: packed.brake_f32(),
+                    handbrake: f32::from(u8::from(packed.handbrake())),
+                    ..VehicleInput::neutral()
+                }
+            })
+            .collect();
+
+        let mut first = fresh(&world);
+        for input in &inputs {
+            step_car(&mut first, input, &world, &tune, DT);
+        }
+        let mut replayed = fresh(&world);
+        for input in &inputs {
+            step_car(&mut replayed, input, &world, &tune, DT);
+        }
+
+        assert_eq!(
+            first.pos.to_array(),
+            replayed.pos.to_array(),
+            "an identical input sequence must land on the same car"
+        );
+        assert_eq!(first.wheel_spin, replayed.wheel_spin);
+        assert_eq!(
+            first.orient.to_array(),
+            replayed.orient.to_array(),
+            "orientation must match too, or the ghost draws a different attitude"
+        );
+    }
+
+    #[test]
+    fn quantisation_error_is_bounded_by_one_step() {
+        // The property the test above leans on, stated directly: a packed input
+        // is within one quantisation step of the float it came from. Without this
+        // bound, replaying a tape could differ from the run by more than rounding.
+        for t in 0..600 {
+            let steer = ((t as f32) * 0.017).sin() * 0.7;
+            let throttle = 0.3 + (t as f32) * 0.001;
+            let packed =
+                retrackt_format::PackedInput::new(steer, throttle, 0.0, false, false, false);
+            assert!((packed.steer_f32() - steer).abs() <= 1.0 / 127.0);
+            assert!((packed.throttle_f32() - throttle).abs() <= 1.0 / 255.0);
+        }
+    }
+
     /// The single fact the whole vehicle model rests on: the basis built from
     /// a surface normal and a forward direction must be a real rotation.
     #[test]

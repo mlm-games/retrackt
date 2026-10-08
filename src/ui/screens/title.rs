@@ -83,6 +83,7 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
     .child(info)
     .child(menu_btn("Start Race", pusher(actions, UiAct::StartRace)))
     .child(menu_btn("Track Editor", pusher(actions, UiAct::OpenEditor)))
+    .child(menu_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)))
     .child(columns);
 
     screen_backdrop(menu)

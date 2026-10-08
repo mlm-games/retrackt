@@ -246,9 +246,20 @@ impl SkyDome {
 }
 
 impl App {
-    /// `car` is the pose to draw, already blended across the last tick; `alpha`
-    /// is the same blend factor for the camera.
-    pub fn build_frame(&mut self, car: &crate::sim::car::Car, alpha: f32) -> Frame3d {
+    /// `car` is the player's pose to draw, already blended across the last tick.
+    /// `ghost`, when present, is the reference car's pose blended by the same
+    /// factor; `alpha` is that blend factor for the camera.
+    ///
+    /// Both cars are blended by one `alpha` because they are stepped on the same
+    /// tick: blending them by different factors would put the ghost half a tick
+    /// ahead of the car it is being compared against, which is exactly the
+    /// difference the player is trying to read.
+    pub fn build_frame(
+        &mut self,
+        car: &crate::sim::car::Car,
+        ghost: Option<&crate::sim::car::Car>,
+        alpha: f32,
+    ) -> Frame3d {
         if self.track_mesh.is_none() {
             let (track, bounds) = track::build_group(&self.data.track);
             self.ground_mesh = Some(ground_group(bounds));
@@ -287,6 +298,13 @@ impl App {
         }
         if let Some(track) = &self.track_mesh {
             frame.push(track.clone());
+        }
+        // Order here does not decide what draws over what: the renderer partitions
+        // opaque from transparent and blends the latter back-to-front on its own
+        // (`render.rs:2207`). A ghost is always alpha-blended, so it always
+        // composites over the player's solid car, wherever in this list it sits.
+        if let Some(ghost) = ghost {
+            frame.push(car::ghost_group(ghost));
         }
         let (body, head, tail) = car::groups(car);
         frame.push(body);

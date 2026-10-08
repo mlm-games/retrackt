@@ -5,6 +5,12 @@ use crate::app::state::AppData;
 use crate::app::theme;
 use crate::ui::widgets::fmt_ticks;
 
+/// Matches the ghost car's albedo, so the HUD line and the car on the track are
+/// visibly the same thing.
+fn ghost_ink() -> repose_core::Color {
+    repose_core::Color::from_rgb(90, 178, 232)
+}
+
 pub fn race_hud(data: &AppData) -> View {
     let time = fmt_ticks(data.race_ticks);
     let speed = data.speed_kmh;
@@ -50,6 +56,17 @@ pub fn race_hud(data: &AppData) -> View {
             .color(theme::text_dim())
             .single_line(),
     );
+
+    // What the run is being timed against. Without a label it reads as a second
+    // clock bug rather than a target, so the ghost's own time is named.
+    if let (Some(name), Some(ticks)) = (&data.ghost_name, data.ghost_ticks) {
+        right_children.push(
+            Text(format!("vs {name}  {}", fmt_ticks(ticks)))
+                .size(theme::sp(16.0))
+                .color(ghost_ink())
+                .single_line(),
+        );
+    }
 
     let right = Column(
         Modifier::new()
