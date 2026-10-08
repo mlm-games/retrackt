@@ -81,9 +81,13 @@ fn stick_axis(knob: (f32, f32), travel: f32) -> (f32, bool, bool) {
 
 /// Anchored at the first touch of a race and grabbed by whichever finger is
 /// down; the knob returns to centre on release but the anchor stays put.
+///
+/// Shown only while a finger holds it, so the stick is not left sitting on the
+/// track between runs. The anchor outliving the touch is what makes the next one
+/// land where the last one was released rather than wherever the player happened
+/// to tap.
 #[derive(Default)]
 struct TouchStick {
-    visible: bool,
     anchor: (f32, f32),
     finger: Option<u64>,
     knob: (f32, f32),
@@ -92,6 +96,11 @@ struct TouchStick {
 impl TouchStick {
     fn update(&mut self, sched: &Scheduler, racing: bool) {
         if !racing {
+            // Dropped here rather than left as it was: a race that ends with a
+            // finger still down would otherwise open the next one with a stick
+            // already held, deflected to wherever that finger was.
+            self.finger = None;
+            self.knob = (0.0, 0.0);
             return;
         }
         if let Some(id) = self.finger {
@@ -109,7 +118,6 @@ impl TouchStick {
             self.anchor = (*x, *y);
             self.knob = (0.0, 0.0);
             self.finger = Some(*id);
-            self.visible = true;
         }
     }
 }
@@ -406,8 +414,13 @@ impl InputState {
         )
     }
 
+    /// The stick to draw, or nothing when no finger is holding it.
+    ///
+    /// Reads the finger rather than a separate visible flag: the flag was set on
+    /// touch-down and never cleared, so the stick stayed on screen for the rest of
+    /// the session. One source of truth cannot drift that way.
     pub fn stick_view(&self) -> Option<StickView> {
-        self.stick.visible.then_some(StickView {
+        self.stick.finger.is_some().then_some(StickView {
             anchor: self.stick.anchor,
             knob: self.stick.knob,
         })
@@ -514,7 +527,7 @@ mod tests {
     fn touch_track_stays_put_and_releases_cleanly() {
         let mut sched = Scheduler::new();
         let mut stick = TouchStick::default();
-        assert!(!stick.visible);
+        assert_eq!(stick.finger, None);
 
         sched.touch_points.push((7, 100.0, 200.0));
         stick.update(&sched, true);
@@ -527,11 +540,63 @@ mod tests {
         assert!((stick.knob.0 - travel).abs() < 1e-3);
         assert_eq!(stick.knob.1, 0.0);
 
+        // Released: the knob centres, and the anchor is kept so the next touch lands
+        // where this one was released.
         sched.touch_points.clear();
         stick.update(&sched, true);
         assert_eq!(stick.finger, None);
         assert_eq!(stick.knob, (0.0, 0.0));
-        assert!(stick.visible);
+        assert_eq!(stick.anchor, (100.0, 200.0));
+    }
+
+    #[test]
+    fn the_stick_is_not_drawn_once_the_finger_lifts() {
+        // The stick used to be marked visible on touch-down and never unmarked, so
+        // it stayed on screen for the rest of the session once used.
+        let mut sched = Scheduler::new();
+        let mut input = InputState::default();
+
+        sched.touch_points.push((3, 120.0, 260.0));
+        input.poll(&sched, true);
+        assert!(input.stick_view().is_some(), "held: the stick is drawn");
+
+        sched.touch_points.clear();
+        input.poll(&sched, true);
+        assert!(input.stick_view().is_none(), "released: the stick is gone");
+    }
+
+    #[test]
+    fn the_stick_is_not_drawn_before_the_first_touch() {
+        let sched = Scheduler::new();
+        let mut input = InputState::default();
+        input.poll(&sched, true);
+        assert!(input.stick_view().is_none());
+    }
+
+    #[test]
+    fn a_race_ending_mid_touch_does_not_hand_a_held_stick_to_the_next_one() {
+        // Leaving the race screen with a finger down used to leave the stick held,
+        // so the next race opened already deflected.
+        let mut sched = Scheduler::new();
+        let mut input = InputState::default();
+
+        sched.touch_points.push((4, 200.0, 300.0));
+        input.poll(&sched, true);
+        assert!(input.stick_view().is_some());
+
+        // Not racing any more, finger still reported down.
+        input.poll(&sched, false);
+        assert!(
+            input.stick_view().is_none(),
+            "a stick held as a race ends must not survive into the next"
+        );
+
+        // Racing again with that same finger still down: it re-anchors afresh rather
+        // than resuming a deflection from the previous race.
+        input.poll(&sched, true);
+        let view = input.stick_view().expect("a fresh touch re-anchors");
+        assert_eq!(view.knob, (0.0, 0.0));
+        assert_eq!(view.anchor, (200.0, 300.0));
     }
 
     fn sched_with(keys: &[PhysicalKey]) -> Scheduler {
