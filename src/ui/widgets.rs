@@ -1,4 +1,4 @@
-use repose_core::{AlignItems, Modifier, View};
+use repose_core::{AlignItems, Dp, Modifier, View};
 use repose_material::material3::{Button, ButtonConfig, OutlinedButton};
 use repose_ui::{Box, Center, Column, Text, TextStyle, ViewExt};
 
@@ -12,6 +12,20 @@ use crate::ui::fit;
 const PANEL_WIDE_DP: f32 = 560.0;
 /// Comfortable height for a panel that is mostly one list.
 const PANEL_TALL_DP: f32 = 520.0;
+
+/// Gap between a panel's own children.
+///
+/// Named rather than written at the call site because callers that lay their own
+/// content out against a panel have to reason about its rhythm: the editor sizes
+/// its rows from it.
+pub const PANEL_GAP: Dp = Dp(14.0);
+
+/// Horizontal inset a panel's content sits inside.
+///
+/// Exposed because a caller that builds a row *inside* a panel has to know how
+/// wide it is — the panel's width less this on both sides. Restating the number
+/// separately is how the piece list came to ask for 620 dp inside a 520 dp box.
+pub const PANEL_INSET_DP: Dp = Dp(20.0);
 
 pub const CONTROLS: [(&str, &str); 9] = [
     ("WASD / Arrows", "drive"),
@@ -53,8 +67,23 @@ pub fn ghost_btn(label: &str, on_click: impl Fn() + 'static) -> View {
 /// Every outlined button, since they differ only in colour: same width rules,
 /// so turning one into its accent or danger variant never resizes its row.
 fn outlined(label: &str, config: ButtonConfig, on_click: impl Fn() + 'static) -> View {
+    outlined_at(label, theme::dp(fit::button_width()), config, on_click)
+}
+
+/// An outlined button with the caller's own width floor.
+///
+/// The editor derives its control width from the width of the panel it sits in,
+/// so that a fixed number of controls share a line at every window size — which
+/// one app-wide floor cannot express. Same shape and same variants as every
+/// other outlined button, so a control changing colour never changes geometry.
+pub fn outlined_at(
+    label: &str,
+    min_width: Dp,
+    config: ButtonConfig,
+    on_click: impl Fn() + 'static,
+) -> View {
     OutlinedButton(
-        Modifier::new().min_width(theme::dp(fit::button_width())),
+        Modifier::new().min_width(min_width),
         on_click,
         config,
         || Text(label).size(theme::sp(16.0)).single_line(),
@@ -113,7 +142,11 @@ pub fn disabled_btn(label: &str) -> View {
 /// it costs one tap instead of a trip back to a menu.
 pub fn practice_toggle(practice: bool, actions: &ActionQueue) -> View {
     ghost_btn(
-        if practice { "Practice: on" } else { "Practice: off" },
+        if practice {
+            "Practice: on"
+        } else {
+            "Practice: off"
+        },
         pusher(actions, UiAct::SetPractice(!practice)),
     )
 }
@@ -144,7 +177,7 @@ pub fn panel_height() -> repose_core::Dp {
 /// pushes the buttons off the side of a small screen instead of the line wrapping
 /// inside it.
 pub fn panel(title: &str, children: Vec<View>) -> View {
-    panel_inner(title, children, AlignItems::CENTER)
+    panel_inner(title, panel_width(), children, AlignItems::CENTER)
 }
 
 /// A panel for a list screen, whose content is taller than it is wide.
@@ -152,16 +185,25 @@ pub fn panel(title: &str, children: Vec<View>) -> View {
 /// Left-aligned, because a row of a list is a row of columns and centring each of
 /// them separately would leave a ragged left edge down the length of it.
 pub fn list_panel(title: &str, children: Vec<View>) -> View {
-    panel_inner(title, children, AlignItems::STRETCH)
+    panel_inner(title, panel_width(), children, AlignItems::STRETCH)
 }
 
-fn panel_inner(title: &str, children: Vec<View>, align: AlignItems) -> View {
+/// A list panel at the caller's own width, for a screen that has to fit one
+/// beside something else rather than over it.
+///
+/// A panel wider than the column holding it scrolls sideways inside that column,
+/// which on the editor's side column is a horizontal scrollbar over a list.
+pub fn list_panel_w(title: &str, width: Dp, children: Vec<View>) -> View {
+    panel_inner(title, width, children, AlignItems::STRETCH)
+}
+
+fn panel_inner(title: &str, width: Dp, children: Vec<View>, align: AlignItems) -> View {
     let mut column = Column(
         Modifier::new()
-            .gap(theme::dp(14.0))
-            .padding(theme::dp(20.0))
+            .gap(PANEL_GAP)
+            .padding(PANEL_INSET_DP)
             .align_items(align)
-            .width(panel_width())
+            .width(width)
             .max_height(panel_height())
             .background(theme::surface())
             .border(

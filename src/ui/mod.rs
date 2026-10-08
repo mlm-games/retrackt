@@ -1,3 +1,4 @@
+pub mod dims;
 pub mod fit;
 pub mod hud;
 pub mod library;

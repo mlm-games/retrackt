@@ -103,9 +103,17 @@ pub fn label_width(buttons: usize) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use repose_core::{calculate_window_size_class, set_window_container_size};
+
+    /// Taken for the whole body of any test that composes against a window.
+    ///
+    /// The window size is global engine state and `cargo test` runs tests on
+    /// separate threads, so two tests composing against different windows would
+    /// read each other's. Shared with `ui::dims`, whose layout tests set the same
+    /// state, because one module's lock cannot serialise the other's.
+    pub(crate) static WINDOW: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Compose against a specific window, as the layout engine would.
     ///
@@ -113,6 +121,7 @@ mod tests {
     /// be, which is either a real window or the 360x800 default — so the desktop
     /// half of the behaviour would never be exercised at all.
     fn window(px_w: u32, px_h: u32, scale: f32) {
+        let _turn = WINDOW.lock().unwrap_or_else(|e| e.into_inner());
         set_window_container_size(px_w as f32 / scale, px_h as f32 / scale);
         repose_core::set_window_size_class_default(calculate_window_size_class(
             px_w, px_h, scale,
