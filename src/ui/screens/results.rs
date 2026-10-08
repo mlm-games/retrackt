@@ -1,5 +1,5 @@
 use repose_core::{Modifier, View};
-use repose_ui::scroll::{ScrollArea, remember_scroll_state};
+use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt};
 
 use crate::app::state::{ActionQueue, AppData, UiAct};
@@ -128,11 +128,11 @@ fn splits_body(splits: &[u32], theirs: Option<&[u32]>) -> View {
         })
         .collect();
     if splits.len() > 5 {
-        ScrollArea(
+        ScrollAreaXY(
             Modifier::new()
                 .width(theme::dp(300.0))
                 .height(theme::dp(160.0)),
-            remember_scroll_state("results.splits"),
+            remember_scroll_state_xy("results.splits"),
             Column(Modifier::new().gap(theme::dp(4.0))).child(rows),
         )
     } else {

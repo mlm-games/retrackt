@@ -1,4 +1,4 @@
-use repose_core::{Modifier, View};
+use repose_core::{AlignItems, Modifier, View};
 use repose_material::material3::{Button, ButtonConfig, OutlinedButton};
 use repose_ui::{Box, Center, Column, Text, TextStyle, ViewExt};
 
@@ -104,11 +104,37 @@ pub fn practice_toggle(practice: bool, actions: &ActionQueue) -> View {
     )
 }
 
+/// Ceiling for a panel's width, in dp. See `panel_inner`.
+pub const WIDE_DP: f32 = 900.0;
+
+/// A modal panel, for anything the player has to deal with before continuing.
+///
+/// Children are centred across it. Without that a button of a fixed width — every
+/// one of them is, or has a minimum — cannot stretch to fill, so it is placed at
+/// the cross-axis start and reads as hanging off the left edge of the panel.
 pub fn panel(title: &str, children: Vec<View>) -> View {
+    panel_inner(title, children, AlignItems::CENTER)
+}
+
+/// The same panel for a workspace column beside the thing being worked on.
+///
+/// Left-aligned, because the rows here are a dense list that reads better flush to
+/// the same edge than as a column of independently centred fragments.
+pub fn side_panel(title: &str, children: Vec<View>) -> View {
+    panel_inner(title, children, AlignItems::STRETCH)
+}
+
+fn panel_inner(title: &str, children: Vec<View>, align: AlignItems) -> View {
     let mut column = Column(
         Modifier::new()
             .gap(theme::dp(14.0))
             .padding(theme::dp(28.0))
+            .align_items(align)
+            // A ceiling, so a panel has a width its rows can wrap against rather
+            // than growing to whatever its widest line happens to be. Comfortably
+            // above the default window: this is here to bound content that would
+            // otherwise run away, not to shape the panel at normal sizes.
+            .max_width(theme::dp(WIDE_DP))
             .background(theme::surface())
             .border(
                 theme::dp(1.0),

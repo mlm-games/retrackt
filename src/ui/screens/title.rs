@@ -1,12 +1,12 @@
 use repose_core::{AlignItems, Modifier, View};
-use repose_ui::scroll::{ScrollArea, remember_scroll_state};
-use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt};
+use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
+use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Row, Text, TextStyle, ViewExt};
 
 use crate::app::state::{ActionQueue, AppData, TrackRef, UiAct};
 use crate::app::theme;
 use crate::ui::thumb;
 use crate::ui::widgets::{
-    CONTROLS, dim_text, fmt_ticks, ghost_btn, menu_btn, panel, practice_toggle, pusher,
+    CONTROLS, WIDE_DP, dim_text, fmt_ticks, ghost_btn, menu_btn, panel, practice_toggle, pusher,
 };
 
 /// Edge of a library thumbnail, in dp.
@@ -60,11 +60,11 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
 
     let library = panel(
         "Tracks",
-        vec![ScrollArea(
+        vec![ScrollAreaXY(
             Modifier::new()
                 .width(theme::dp(420.0))
                 .height(theme::dp(240.0)),
-            remember_scroll_state("title.library"),
+            remember_scroll_state_xy("title.library"),
             Column(Modifier::new().gap(theme::dp(6.0))).child(tracks),
         )],
     );
@@ -82,16 +82,22 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
         info = info.child(dim_text("no pieces placed"));
     }
 
-    let columns = Row(Modifier::new()
-        .gap(theme::dp(24.0))
-        .align_items(AlignItems::START))
+    // Wrapping, so the two panels stack rather than run off the side of a window too
+    // narrow to hold both: together they want about 856.
+    let columns = FlowRow(
+        Modifier::new()
+            .gap(theme::dp(24.0))
+            .align_items(AlignItems::START),
+        FlowRowConfig::default(),
+    )
     .child(library)
     .child(controls_panel());
 
     let menu = Column(
         Modifier::new()
             .gap(theme::dp(14.0))
-            .align_items(AlignItems::CENTER),
+            .align_items(AlignItems::CENTER)
+            .max_width(theme::dp(WIDE_DP)),
     )
     .child(
         Text("RETRACKT")
@@ -138,9 +144,18 @@ fn track_row(
         Text(doc.name.clone())
             .size(theme::sp(16.0))
             .color(theme::text())
-            .single_line(),
+            .single_line()
+            .overflow_ellipsize(),
     );
-    let mut row = Row(Modifier::new().gap(theme::dp(10.0)).align_items(AlignItems::CENTER));
+    // Wrapping rather than a plain row: thumbnail, name, summary and button are
+    // wider together than the library is, so a non-wrapping row would clip the
+    // button off the right edge.
+    let mut row = FlowRow(
+        Modifier::new()
+            .gap(theme::dp(10.0))
+            .align_items(AlignItems::CENTER),
+        FlowRowConfig::default(),
+    );
     if thumbs {
         // A track with no geometry has nothing to draw, and an empty frame beside
         // its name would read as a rendering fault rather than as "no road yet".
@@ -177,11 +192,11 @@ fn controls_panel() -> View {
     }
     panel(
         "Controls",
-        vec![ScrollArea(
+        vec![ScrollAreaXY(
             Modifier::new()
                 .width(theme::dp(300.0))
                 .height(theme::dp(200.0)),
-            remember_scroll_state("title.controls"),
+            remember_scroll_state_xy("title.controls"),
             Column(Modifier::new().gap(theme::dp(10.0))).child(rows),
         )],
     )

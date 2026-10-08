@@ -1,5 +1,5 @@
 use repose_core::{Modifier, View};
-use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt};
+use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Text, TextStyle, ViewExt};
 
 use crate::app::state::{REPLAY_SPEEDS, ActionQueue, AppData, ReplayView, UiAct};
 use crate::app::theme;
@@ -67,40 +67,48 @@ fn speed_label(speed: usize) -> String {
 
 /// Play or pause, step, and the speed ladder.
 fn transport(view: &ReplayView, actions: &ActionQueue) -> View {
-    let playback = Row(Modifier::new().gap(theme::dp(8.0)))
-        .child(accent_btn(
-            if view.playing { "Pause" } else { "Play" },
-            pusher(actions, UiAct::ReplayPlayPause),
-        ))
-        .child(ghost_btn(
-            "Start",
-            pusher(actions, UiAct::ReplayRestart),
-        ))
-        .child(ghost_btn(
-            "-1s",
-            pusher(actions, UiAct::ReplaySeek(-1)),
-        ))
-        .child(ghost_btn("+1s", pusher(actions, UiAct::ReplaySeek(1))));
+    // Both rows wrap: four buttons of a 150 minimum come to 624, which is wider than
+    // the panel's usable width once the playhead and the heading are accounted for.
+    let playback = FlowRow(
+        Modifier::new().gap(theme::dp(8.0)),
+        FlowRowConfig::default(),
+    )
+    .child(accent_btn(
+        if view.playing { "Pause" } else { "Play" },
+        pusher(actions, UiAct::ReplayPlayPause),
+    ))
+    .child(ghost_btn(
+        "Start",
+        pusher(actions, UiAct::ReplayRestart),
+    ))
+    .child(ghost_btn(
+        "-1s",
+        pusher(actions, UiAct::ReplaySeek(-1)),
+    ))
+    .child(ghost_btn("+1s", pusher(actions, UiAct::ReplaySeek(1))));
 
     // Both ends of the ladder stop at the edge rather than stepping off it:
     // indexing past the speed table would panic, and a live button that does
     // nothing is worse than one that reads as unavailable.
-    let speeds = Row(Modifier::new().gap(theme::dp(8.0)))
-        .child(match view.speed.checked_sub(1) {
-            Some(next) => ghost_btn(
-                &format!("Slower ({})", speed_label(next)),
-                pusher(actions, UiAct::ReplaySpeedStep(-1)),
-            ),
-            None => disabled_btn("Slower"),
-        })
-        .child(hud_text(&speed_label(view.speed)))
-        .child(match REPLAY_SPEEDS.get(view.speed + 1) {
-            Some(_) => ghost_btn(
-                &format!("Faster ({})", speed_label(view.speed + 1)),
-                pusher(actions, UiAct::ReplaySpeedStep(1)),
-            ),
-            None => disabled_btn("Faster"),
-        });
+    let speeds = FlowRow(
+        Modifier::new().gap(theme::dp(8.0)),
+        FlowRowConfig::default(),
+    )
+    .child(match view.speed.checked_sub(1) {
+        Some(next) => ghost_btn(
+            &format!("Slower ({})", speed_label(next)),
+            pusher(actions, UiAct::ReplaySpeedStep(-1)),
+        ),
+        None => disabled_btn("Slower"),
+    })
+    .child(hud_text(&speed_label(view.speed)))
+    .child(match REPLAY_SPEEDS.get(view.speed + 1) {
+        Some(_) => ghost_btn(
+            &format!("Faster ({})", speed_label(view.speed + 1)),
+            pusher(actions, UiAct::ReplaySpeedStep(1)),
+        ),
+        None => disabled_btn("Faster"),
+    });
 
     Column(Modifier::new().gap(theme::dp(8.0)))
         .child(playback)

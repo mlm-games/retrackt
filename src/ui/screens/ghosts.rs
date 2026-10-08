@@ -5,7 +5,7 @@ use std::rc::Rc;
 // structs); the `TextStyle` trait that styles `Text` views is repose-ui's, and
 // the two share a name. Both imports are needed and neither shadows the other.
 use repose_core::{AlignItems, Modifier, TextFieldLineLimits, View, remember_with_key};
-use repose_ui::scroll::{ScrollArea, remember_scroll_state};
+use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{
     BasicTextField, Box, Column, FlowRow, FlowRowConfig, Row, Text, TextFieldConfig,
     TextFieldState, TextStyle, ViewExt,
@@ -59,26 +59,35 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
             };
 
             rows.push(
-                Row(Modifier::new().gap(theme::dp(12.0)).align_items(AlignItems::CENTER))
-                    .child(
-                        Box(Modifier::new().width(theme::dp(260.0))).child(
-                            Text(label)
-                                .size(theme::sp(16.0))
-                                .color(theme::text())
-                                .single_line(),
-                        ),
-                    )
-                    .child(actions_row),
+                // Wrapping, because the name and three buttons together are wider
+                // than the list is: a plain row would run the last button off the
+                // edge with no way to reach it.
+                FlowRow(
+                    Modifier::new()
+                        .gap(theme::dp(12.0))
+                        .align_items(AlignItems::CENTER),
+                    FlowRowConfig::default(),
+                )
+                .child(
+                    Box(Modifier::new().width(theme::dp(260.0))).child(
+                        Text(label)
+                            .size(theme::sp(16.0))
+                            .color(theme::text())
+                            .single_line()
+                            .overflow_ellipsize(),
+                    ),
+                )
+                .child(actions_row),
             );
             if !playable {
                 rows.push(dim_text("  recorded on another track"));
             }
         }
-        children.push(ScrollArea(
+        children.push(ScrollAreaXY(
             Modifier::new()
                 .width(theme::dp(560.0))
                 .height(theme::dp(300.0)),
-            remember_scroll_state("ghosts.list"),
+            remember_scroll_state_xy("ghosts.list"),
             Column(Modifier::new().gap(theme::dp(8.0))).child(rows),
         ));
     }

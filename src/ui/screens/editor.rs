@@ -7,7 +7,7 @@ use std::rc::Rc;
 use repose_core::{
     AlignItems, Modifier, TextFieldLineLimits, View, remember_with_key,
 };
-use repose_ui::scroll::{ScrollArea, remember_scroll_state};
+use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{
     BasicTextField, Box, Column, FlowRow, FlowRowConfig, Row, Text, TextFieldConfig,
     TextFieldState, TextStyle, ViewExt,
@@ -18,8 +18,8 @@ use crate::app::state::{ActionQueue, AppData, EditorData, TrackRef, UiAct, push}
 use crate::app::theme;
 use crate::app::ParamKind;
 use crate::ui::widgets::{
-    accent_btn, danger_btn, dim_text, disabled_btn, ghost_btn, heading, hud_text, menu_btn, panel,
-    pusher,
+    accent_btn, danger_btn, dim_text, disabled_btn, ghost_btn, heading, hud_text, menu_btn,
+    pusher, side_panel,
 };
 
 /// Cursor steps for the six directional buttons.
@@ -42,8 +42,8 @@ const STEPS: [(&str, [i16; 3]); 6] = [
 pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     let editor = &data.editor;
 
-    let palette = panel("Palette", vec![palette_list(editor.armed, actions)]);
-    let track = panel(
+    let palette = side_panel("Palette", vec![palette_list(editor.armed, actions)]);
+    let track = side_panel(
         &format!("Track · {}", data.track.name),
         build_children(data, actions),
     );
@@ -65,11 +65,14 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     Row(Modifier::new().fill_max_size().align_items(AlignItems::START)).child([
         Box(Modifier::new().input_blocker()).child(palette),
         Box(Modifier::new().flex_grow(1.0)),
-        Box(Modifier::new().input_blocker()).child(ScrollArea(
+        Box(Modifier::new().input_blocker()).child(ScrollAreaXY(
+            // Height follows the window rather than a fixed 700: a column taller
+            // than the screen cuts off its own bottom, and the last thing down
+            // there is the row holding Playtest and Close.
             Modifier::new()
                 .width(theme::dp(660.0))
-                .height(theme::dp(700.0)),
-            remember_scroll_state("editor.side"),
+                .fill_max_height(),
+            remember_scroll_state_xy("editor.side"),
             Column(Modifier::new().gap(theme::dp(14.0)))
                 .child([track, diagnostics_panel(editor), share_panel(editor, actions)])
                 .child(side_buttons),
@@ -99,11 +102,11 @@ fn palette_list(armed: retrackt_format::PieceId, actions: &ActionQueue) -> View 
         }
     }
 
-    ScrollArea(
+    ScrollAreaXY(
         Modifier::new()
             .width(theme::dp(230.0))
             .height(theme::dp(420.0)),
-        remember_scroll_state("editor.palette"),
+        remember_scroll_state_xy("editor.palette"),
         Column(Modifier::new().gap(theme::dp(6.0))).child(children),
     )
 }
@@ -153,7 +156,12 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
                 ]
             };
 
-            let head = Row(Modifier::new().gap(theme::dp(8.0)).align_items(AlignItems::CENTER))
+            // Wrapping, because rank, label and four buttons together run to roughly 860 in a
+            // 620 list: a plain row would push Rotate and Remove off the edge.
+            let head = FlowRow(
+                Modifier::new().gap(theme::dp(8.0)).align_items(AlignItems::CENTER),
+                FlowRowConfig::default(),
+            )
                 .child(
                     Box(Modifier::new().width(theme::dp(30.0))).child(
                         Text(format!("{}.", rank(uid)))
@@ -162,14 +170,16 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
                             .single_line(),
                     ),
                 )
-                .child(hud_text(&format!(
-                    "{} [{} {} {}] yaw {}",
-                    piece.id.label(),
-                    piece.cell[0],
-                    piece.cell[1],
-                    piece.cell[2],
-                    piece.yaw,
-                )))
+                .child(
+                    hud_text(&format!(
+                        "{} [{} {} {}] yaw {}",
+                        piece.id.label(),
+                        piece.cell[0],
+                        piece.cell[1],
+                        piece.cell[2],
+                        piece.yaw,
+                    )),
+                )
                 .child(if selected {
                     accent_btn("Sel", select)
                 } else {
@@ -221,11 +231,11 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
 
     children.push(cursor_row(editor, actions));
 
-    children.push(ScrollArea(
+    children.push(ScrollAreaXY(
         Modifier::new()
             .width(theme::dp(620.0))
             .height(theme::dp(200.0)),
-        remember_scroll_state("editor.track"),
+        remember_scroll_state_xy("editor.track"),
         Column(Modifier::new().gap(theme::dp(4.0))).child(piece_rows(data, actions)),
     ));
 
@@ -370,7 +380,7 @@ fn history_btn(
 /// so a broken chain is visible while it is being made, not after a refused race.
 fn diagnostics_panel(editor: &EditorData) -> View {
     if editor.diagnostics.is_empty() {
-        return panel(
+        return side_panel(
             "Checks",
             vec![Text("No problems found")
                 .size(theme::sp(15.0))
@@ -393,7 +403,7 @@ fn diagnostics_panel(editor: &EditorData) -> View {
                 .single_line()
         })
         .collect();
-    panel("Checks", rows)
+    side_panel("Checks", rows)
 }
 
 /// Share-code export and import.
@@ -419,15 +429,20 @@ fn share_panel(editor: &EditorData, actions: &ActionQueue) -> View {
     );
 
     let mut children = vec![
-        Row(Modifier::new().gap(theme::dp(10.0)).align_items(AlignItems::CENTER))
-            .child(field)
-            .child(ghost_btn("Load Code", pusher(actions, UiAct::LoadShareCode)))
-            .child(accent_btn("Copy Code", pusher(actions, UiAct::CopyShareCode))),
+        // Wrapping: the field plus two buttons is about 840 against a panel content
+        // width of roughly 604.
+        FlowRow(
+            Modifier::new().gap(theme::dp(10.0)).align_items(AlignItems::CENTER),
+            FlowRowConfig::default(),
+        )
+        .child(field)
+        .child(ghost_btn("Load Code", pusher(actions, UiAct::LoadShareCode)))
+        .child(accent_btn("Copy Code", pusher(actions, UiAct::CopyShareCode))),
     ];
     if !editor.code_out.is_empty() {
         // Also shown on screen: a platform with no working clipboard still leaves
         // the player able to read the code out and paste it somewhere.
         children.push(dim_text(&format!("Code: {}", editor.code_out)));
     }
-    panel("Share", children)
+    side_panel("Share", children)
 }
