@@ -4,6 +4,14 @@ use repose_ui::{Box, Center, Column, Text, TextStyle, ViewExt};
 
 use crate::app::state::{ActionQueue, UiAct, push};
 use crate::app::theme;
+use crate::ui::fit;
+
+/// The width a dialog is happy at on a window with room to spare, in dp. Every
+/// modal panel is capped at this *and* at the window, which is what lets the rows
+/// inside one wrap instead of running off the side.
+const PANEL_WIDE_DP: f32 = 560.0;
+/// Comfortable height for a panel that is mostly one list.
+const PANEL_TALL_DP: f32 = 520.0;
 
 pub const CONTROLS: [(&str, &str); 9] = [
     ("WASD / Arrows", "drive"),
@@ -23,8 +31,11 @@ pub fn pusher(actions: &ActionQueue, act: UiAct) -> impl Fn() + 'static {
 }
 
 pub fn menu_btn(label: &str, on_click: impl Fn() + 'static) -> View {
+    // Grows to fill its row rather than sitting at a fixed 300 dp, which on a
+    // phone would be wider than the screen and on a desktop would leave the
+    // panel's own margin as the only thing bounding it.
     Button(
-        Modifier::new().width(theme::dp(300.0)),
+        Modifier::new().fill_max_width(),
         on_click,
         ButtonConfig {
             container_color: Some(theme::accent()),
@@ -36,25 +47,30 @@ pub fn menu_btn(label: &str, on_click: impl Fn() + 'static) -> View {
 }
 
 pub fn ghost_btn(label: &str, on_click: impl Fn() + 'static) -> View {
+    outlined(label, ButtonConfig::default(), on_click)
+}
+
+/// Every outlined button, since they differ only in colour: same width rules,
+/// so turning one into its accent or danger variant never resizes its row.
+fn outlined(label: &str, config: ButtonConfig, on_click: impl Fn() + 'static) -> View {
     OutlinedButton(
-        Modifier::new().min_width(theme::dp(150.0)),
+        Modifier::new().min_width(theme::dp(fit::button_width())),
         on_click,
-        ButtonConfig::default(),
+        config,
         || Text(label).size(theme::sp(16.0)).single_line(),
     )
 }
 
 pub fn danger_btn(label: &str, on_click: impl Fn() + 'static) -> View {
-    OutlinedButton(
-        Modifier::new().min_width(theme::dp(150.0)),
-        on_click,
+    outlined(
+        label,
         ButtonConfig {
             content_color: Some(theme::danger()),
             border: Some((theme::dp(1.0), theme::danger(), theme::dp(8.0))),
             shape_radius: theme::dp(8.0),
             ..ButtonConfig::default()
         },
-        || Text(label).size(theme::sp(16.0)).single_line(),
+        on_click,
     )
 }
 
@@ -62,16 +78,15 @@ pub fn danger_btn(label: &str, on_click: impl Fn() + 'static) -> View {
 /// the place button. Same shape as `ghost_btn` so a highlighted control does not
 /// resize its row when it turns on.
 pub fn accent_btn(label: &str, on_click: impl Fn() + 'static) -> View {
-    OutlinedButton(
-        Modifier::new().min_width(theme::dp(150.0)),
-        on_click,
+    outlined(
+        label,
         ButtonConfig {
             container_color: Some(theme::accent()),
             content_color: Some(theme::background()),
             shape_radius: theme::dp(8.0),
             ..ButtonConfig::default()
         },
-        || Text(label).size(theme::sp(16.0)).single_line(),
+        on_click,
     )
 }
 
@@ -80,16 +95,15 @@ pub fn accent_btn(label: &str, on_click: impl Fn() + 'static) -> View {
 /// Visible rather than hidden so the feature is discoverable, and inert rather
 /// than silent so the player learns why.
 pub fn disabled_btn(label: &str) -> View {
-    OutlinedButton(
-        Modifier::new().min_width(theme::dp(150.0)),
-        || {},
+    outlined(
+        label,
         ButtonConfig {
             enabled: false,
             content_color: Some(theme::text_dim()),
             shape_radius: theme::dp(8.0),
             ..ButtonConfig::default()
         },
-        || Text(label).size(theme::sp(16.0)).single_line(),
+        || {},
     )
 }
 
@@ -104,23 +118,40 @@ pub fn practice_toggle(practice: bool, actions: &ActionQueue) -> View {
     )
 }
 
-/// Ceiling for a panel's width, in dp. See `panel_inner`.
-pub const WIDE_DP: f32 = 900.0;
-
-/// A modal panel, for anything the player has to deal with before continuing.
+/// Width of a modal panel, in dp.
 ///
-/// Children are centred across it. Without that a button of a fixed width — every
-/// one of them is, or has a minimum — cannot stretch to fill, so it is placed at
-/// the cross-axis start and reads as hanging off the left edge of the panel.
+/// Every dialog uses this rather than a fixed number. A fixed width is a
+/// coordinate in a desktop window and nothing at all in a phone held upright,
+/// where the panel is most of the screen or wider than all of it.
+pub fn panel_width() -> repose_core::Dp {
+    theme::dp(fit::panel_width(PANEL_WIDE_DP))
+}
+
+/// Height cap for a panel, in dp.
+///
+/// Capped rather than left to its content because a panel taller than the window
+/// has no way to be scrolled — the backdrop it sits on is what receives input,
+/// not a scroll view — so its bottom controls would simply be unreachable.
+pub fn panel_height() -> repose_core::Dp {
+    theme::dp(fit::panel_height(PANEL_TALL_DP))
+}
+
+/// A dialog panel.
+///
+/// `children` are centred, and the panel itself is capped at a comfortable width
+/// *and* at the window. The cap is what lets the rows inside it wrap: without one,
+/// a panel is exactly as wide as its widest line, so a long name or a long time
+/// pushes the buttons off the side of a small screen instead of the line wrapping
+/// inside it.
 pub fn panel(title: &str, children: Vec<View>) -> View {
     panel_inner(title, children, AlignItems::CENTER)
 }
 
-/// The same panel for a workspace column beside the thing being worked on.
+/// A panel for a list screen, whose content is taller than it is wide.
 ///
-/// Left-aligned, because the rows here are a dense list that reads better flush to
-/// the same edge than as a column of independently centred fragments.
-pub fn side_panel(title: &str, children: Vec<View>) -> View {
+/// Left-aligned, because a row of a list is a row of columns and centring each of
+/// them separately would leave a ragged left edge down the length of it.
+pub fn list_panel(title: &str, children: Vec<View>) -> View {
     panel_inner(title, children, AlignItems::STRETCH)
 }
 
@@ -128,13 +159,10 @@ fn panel_inner(title: &str, children: Vec<View>, align: AlignItems) -> View {
     let mut column = Column(
         Modifier::new()
             .gap(theme::dp(14.0))
-            .padding(theme::dp(28.0))
+            .padding(theme::dp(20.0))
             .align_items(align)
-            // A ceiling, so a panel has a width its rows can wrap against rather
-            // than growing to whatever its widest line happens to be. Comfortably
-            // above the default window: this is here to bound content that would
-            // otherwise run away, not to shape the panel at normal sizes.
-            .max_width(theme::dp(WIDE_DP))
+            .width(panel_width())
+            .max_height(panel_height())
             .background(theme::surface())
             .border(
                 theme::dp(1.0),

@@ -5,8 +5,9 @@ use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Row, Text, TextStyle, ViewE
 use crate::app::state::{ActionQueue, AppData, TrackRef, UiAct};
 use crate::app::theme;
 use crate::ui::thumb;
+use crate::ui::fit;
 use crate::ui::widgets::{
-    CONTROLS, WIDE_DP, dim_text, fmt_ticks, ghost_btn, menu_btn, panel, practice_toggle, pusher,
+    CONTROLS, dim_text, fmt_ticks, ghost_btn, menu_btn, panel, practice_toggle, pusher,
 };
 
 /// Edge of a library thumbnail, in dp.
@@ -58,12 +59,22 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
         rows
     });
 
+    // Side by side when there is room for both, stacked when there is not: the
+    // library and the controls panel together want about 780, which is more than a
+    // phone held upright has. On a narrow window the library takes the whole row
+    // and the controls sit below it.
+    let stacked = fit::is_narrow();
+    let library_width = if stacked {
+        fit::panel_width(460.0)
+    } else {
+        fit::fit(420.0, fit::EDGE_DP * 2.0 + 340.0)
+    };
     let library = panel(
         "Tracks",
         vec![ScrollAreaXY(
             Modifier::new()
-                .width(theme::dp(420.0))
-                .height(theme::dp(240.0)),
+                .width(theme::dp(library_width))
+                .height(theme::dp(fit::panel_height(if stacked { 300.0 } else { 240.0 }))),
             remember_scroll_state_xy("title.library"),
             Column(Modifier::new().gap(theme::dp(6.0))).child(tracks),
         )],
@@ -82,22 +93,12 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
         info = info.child(dim_text("no pieces placed"));
     }
 
-    // Wrapping, so the two panels stack rather than run off the side of a window too
-    // narrow to hold both: together they want about 856.
-    let columns = FlowRow(
-        Modifier::new()
-            .gap(theme::dp(24.0))
-            .align_items(AlignItems::START),
-        FlowRowConfig::default(),
-    )
-    .child(library)
-    .child(controls_panel());
+    let controls = controls_panel(stacked);
 
     let menu = Column(
         Modifier::new()
             .gap(theme::dp(14.0))
-            .align_items(AlignItems::CENTER)
-            .max_width(theme::dp(WIDE_DP)),
+            .align_items(AlignItems::CENTER),
     )
     .child(
         Text("RETRACKT")
@@ -112,7 +113,8 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
     .child(menu_btn("Track Editor", pusher(actions, UiAct::OpenEditor)))
     .child(menu_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)))
     .child(thumbnail_toggle(thumbs, actions))
-    .child(columns);
+    .child(library)
+    .child(controls);
 
     crate::ui::widgets::screen_backdrop(menu)
 }
@@ -140,7 +142,7 @@ fn track_row(
     thumbs: bool,
 ) -> View {
     let click = pusher(actions, UiAct::LoadTrack(which));
-    let name = Box(Modifier::new().width(theme::dp(240.0))).child(
+    let name = Box(Modifier::new().width(theme::dp(fit::label_width(1)))).child(
         Text(doc.name.clone())
             .size(theme::sp(16.0))
             .color(theme::text())
@@ -169,7 +171,7 @@ fn track_row(
         .child(ghost_btn("Load", click))
 }
 
-fn controls_panel() -> View {
+fn controls_panel(stacked: bool) -> View {
     let mut rows: Vec<View> = Vec::new();
     for (key, action) in CONTROLS {
         rows.push(
@@ -194,8 +196,12 @@ fn controls_panel() -> View {
         "Controls",
         vec![ScrollAreaXY(
             Modifier::new()
-                .width(theme::dp(300.0))
-                .height(theme::dp(200.0)),
+                .width(theme::dp(if stacked {
+                    fit::panel_width(300.0)
+                } else {
+                    fit::fit(300.0, fit::EDGE_DP * 2.0 + 460.0)
+                }))
+                .height(theme::dp(fit::panel_height(if stacked { 240.0 } else { 200.0 }))),
             remember_scroll_state_xy("title.controls"),
             Column(Modifier::new().gap(theme::dp(10.0))).child(rows),
         )],

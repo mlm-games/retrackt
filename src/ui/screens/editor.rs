@@ -17,9 +17,10 @@ use retrackt_format::{PieceUid, catalog};
 use crate::app::state::{ActionQueue, AppData, EditorData, TrackRef, UiAct, push};
 use crate::app::theme;
 use crate::app::ParamKind;
+use crate::ui::fit;
 use crate::ui::widgets::{
-    accent_btn, danger_btn, dim_text, disabled_btn, ghost_btn, heading, hud_text, menu_btn,
-    pusher, side_panel,
+    accent_btn, danger_btn, dim_text, disabled_btn, ghost_btn, heading, hud_text, list_panel,
+    menu_btn, pusher,
 };
 
 /// Cursor steps for the six directional buttons.
@@ -42,10 +43,16 @@ const STEPS: [(&str, [i16; 3]); 6] = [
 pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     let editor = &data.editor;
 
-    let palette = side_panel("Palette", vec![palette_list(editor.armed, actions)]);
-    let track = side_panel(
+    // Three panes fit side by side on a desktop and do not fit on a phone held
+    // upright: the palette and the side column together want about 930, which is
+    // more than twice the width of a compact screen. Narrow, so they stack in one
+    // column and the whole thing scrolls, which is the only arrangement in which
+    // the viewport underneath is still reachable by dragging it.
+    let stacked = fit::is_narrow();
+    let palette = list_panel("Palette", vec![palette_list(editor.armed, actions, stacked)]);
+    let track = list_panel(
         &format!("Track · {}", data.track.name),
-        build_children(data, actions),
+        build_children(data, actions, stacked),
     );
 
     let side_buttons = FlowRow(
@@ -59,30 +66,47 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     ))
     .child(heading("Track Editor"));
 
+    let side_column = Column(Modifier::new().gap(theme::dp(14.0))).child([
+        track,
+        diagnostics_panel(editor),
+        share_panel(editor, actions),
+        side_buttons,
+    ]);
+
     // The row claims no input itself, so the empty middle falls through to the
     // viewport beneath. Each panel marks itself a blocker, which is what keeps a
     // drag that started over a button from orbiting the camera.
-    Row(Modifier::new().fill_max_size().align_items(AlignItems::START)).child([
-        Box(Modifier::new().input_blocker()).child(palette),
-        Box(Modifier::new().flex_grow(1.0)),
+    if stacked {
+        // Everything in one scroll column, full width. The spacer is gone: with the
+        // panels stacked there is no gap for the viewport to show through, so the
+        // viewport is reached by scrolling this column to the end and dragging
+        // wherever the background is visible between panels.
         Box(Modifier::new().input_blocker()).child(ScrollAreaXY(
-            // Height follows the window rather than a fixed 700: a column taller
-            // than the screen cuts off its own bottom, and the last thing down
-            // there is the row holding Playtest and Close.
-            Modifier::new()
-                .width(theme::dp(660.0))
-                .fill_max_height(),
-            remember_scroll_state_xy("editor.side"),
-            Column(Modifier::new().gap(theme::dp(14.0)))
-                .child([track, diagnostics_panel(editor), share_panel(editor, actions)])
-                .child(side_buttons),
-        )),
-    ])
+            Modifier::new().fill_max_size(),
+            remember_scroll_state_xy("editor.stack"),
+            side_column,
+        ))
+    } else {
+        Row(Modifier::new().fill_max_size().align_items(AlignItems::START)).child([
+            Box(Modifier::new().input_blocker()).child(palette),
+            Box(Modifier::new().flex_grow(1.0)),
+            Box(Modifier::new().input_blocker()).child(ScrollAreaXY(
+                // Width and height both follow the window rather than fixed numbers:
+                // a column taller than the screen cuts off its own bottom, and the
+                // last thing down there is the row holding Playtest and Close.
+                Modifier::new()
+                    .width(theme::dp(fit::fit(660.0, 260.0)))
+                    .fill_max_height(),
+                remember_scroll_state_xy("editor.side"),
+                side_column,
+            )),
+        ])
+    }
 }
 
 /// Palette rows. Clicking *arms* a piece rather than placing it, so the preview
 /// can be inspected first; placement is its own button.
-fn palette_list(armed: retrackt_format::PieceId, actions: &ActionQueue) -> View {
+fn palette_list(armed: retrackt_format::PieceId, actions: &ActionQueue, stacked: bool) -> View {
     let mut children: Vec<View> = Vec::new();
     let mut groups: Vec<&str> = Vec::new();
     for def in catalog() {
@@ -102,10 +126,21 @@ fn palette_list(armed: retrackt_format::PieceId, actions: &ActionQueue) -> View 
         }
     }
 
+    if stacked {
+        // Stacked, the palette has the full width of a compact screen, so the
+        // pieces flow across it instead of down a narrow column that would put the
+        // last group of them below the fold.
+        return FlowRow(
+            Modifier::new().gap(theme::dp(6.0)),
+            FlowRowConfig::default(),
+        )
+        .child(children);
+    }
+
     ScrollAreaXY(
         Modifier::new()
-            .width(theme::dp(230.0))
-            .height(theme::dp(420.0)),
+            .width(theme::dp(fit::fit(230.0, 690.0)))
+            .fill_max_height(),
         remember_scroll_state_xy("editor.palette"),
         Column(Modifier::new().gap(theme::dp(6.0))).child(children),
     )
@@ -215,7 +250,7 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
         .collect()
 }
 
-fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
+fn build_children(data: &AppData, actions: &ActionQueue, stacked: bool) -> Vec<View> {
     let editor = &data.editor;
     let mut children: Vec<View> = Vec::new();
     let count = data.track.pieces.len();
@@ -233,8 +268,8 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
 
     children.push(ScrollAreaXY(
         Modifier::new()
-            .width(theme::dp(620.0))
-            .height(theme::dp(200.0)),
+            .width(theme::dp(fit::fit(620.0, if stacked { fit::EDGE_DP * 2.0 } else { 60.0 })))
+            .height(theme::dp(if stacked { 240.0 } else { 200.0 })),
         remember_scroll_state_xy("editor.track"),
         Column(Modifier::new().gap(theme::dp(4.0))).child(piece_rows(data, actions)),
     ));
@@ -380,7 +415,7 @@ fn history_btn(
 /// so a broken chain is visible while it is being made, not after a refused race.
 fn diagnostics_panel(editor: &EditorData) -> View {
     if editor.diagnostics.is_empty() {
-        return side_panel(
+        return list_panel(
             "Checks",
             vec![Text("No problems found")
                 .size(theme::sp(15.0))
@@ -401,9 +436,10 @@ fn diagnostics_panel(editor: &EditorData) -> View {
                 .size(theme::sp(15.0))
                 .color(color)
                 .single_line()
+                .overflow_ellipsize()
         })
         .collect();
-    side_panel("Checks", rows)
+    list_panel("Checks", rows)
 }
 
 /// Share-code export and import.
@@ -414,9 +450,11 @@ fn share_panel(editor: &EditorData, actions: &ActionQueue) -> View {
     if draft.borrow().text != editor.code_draft {
         draft.borrow_mut().text = editor.code_draft.clone();
     }
+    // Fills the panel rather than sitting at a fixed 520 dp, which on a phone
+    // would be wider than the screen the field is on.
     let field = BasicTextField(
         draft.clone(),
-        Modifier::new().width(theme::dp(520.0)),
+        Modifier::new().fill_max_width(),
         "Paste a share code",
         TextFieldConfig {
             line_limits: TextFieldLineLimits::SingleLine,
@@ -444,5 +482,5 @@ fn share_panel(editor: &EditorData, actions: &ActionQueue) -> View {
         // the player able to read the code out and paste it somewhere.
         children.push(dim_text(&format!("Code: {}", editor.code_out)));
     }
-    side_panel("Share", children)
+    list_panel("Share", children)
 }

@@ -1,3 +1,4 @@
+pub mod fit;
 pub mod hud;
 pub mod library;
 pub mod screens;
@@ -45,7 +46,7 @@ fn notice_bar(data: &AppData, actions: &crate::app::state::ActionQueue) -> Optio
         Box(Modifier::new()
             .absolute()
             .offset(None, None, Some(theme::dp(20.0)), Some(theme::dp(20.0)))
-            .max_width(theme::dp(520.0))
+            .max_width(theme::dp(crate::ui::fit::fit(520.0, 24.0)))
             .background(theme::background().with_alpha_f32(0.9))
             .border(
                 theme::dp(1.0),

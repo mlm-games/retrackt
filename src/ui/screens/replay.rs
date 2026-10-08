@@ -3,6 +3,7 @@ use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Text, TextStyle, ViewExt};
 
 use crate::app::state::{REPLAY_SPEEDS, ActionQueue, AppData, ReplayView, UiAct};
 use crate::app::theme;
+use crate::ui::fit;
 use crate::ui::widgets::{
     accent_btn, dim_text, disabled_btn, fmt_ticks, ghost_btn, heading, hud_text, menu_btn, panel,
     pusher, screen_backdrop,
@@ -26,7 +27,17 @@ pub fn replay_ui(data: &AppData, actions: &ActionQueue) -> View {
         ));
     };
 
-    let mut children = vec![heading("Replay"), dim_text(&view.name)];
+    let mut children = vec![heading("Replay")];
+
+    // Single-line so the panel is not widened by an unbreakable name. Ellipsized
+    // rather than clipped so the truncation is visible as such.
+    children.push(
+        Text(view.name.clone())
+            .size(theme::sp(14.0))
+            .color(theme::text_dim())
+            .single_line()
+            .overflow_ellipsize(),
+    );
 
     // Position against the length, not the finish tick: a tape recorded past the
     // line has a finish time that is not where the recording stops, and a bar that
@@ -52,11 +63,30 @@ pub fn replay_ui(data: &AppData, actions: &ActionQueue) -> View {
     });
     children.push(playhead(view));
     children.push(transport(view, actions));
-    children.push(dim_text(
-        "Seeking re-runs the tape from the start line, so it lands on the exact \
-         frame rather than an approximation of one.",
-    ));
-    children.push(menu_btn("Back to Ghosts", pusher(actions, UiAct::CloseReplay)));
+    // Kept inside the panel rather than laid out at its natural width, so the
+    // wrapping button rows below it have a ceiling to wrap against instead of
+    // the panel being widened by this sentence.
+    children.push(
+        Text(
+            "Seeking re-runs the tape from the start line, so it lands on the exact \
+             frame rather than an approximation of one.",
+        )
+        .size(theme::sp(14.0))
+        .color(theme::text_dim())
+        .max_lines(4),
+    );
+    // Wrapped, so the last one is reachable rather than sitting below the fold of a
+    // panel that is already carrying the bar and the transport.
+    children.push(
+        FlowRow(
+            Modifier::new().gap(theme::dp(8.0)),
+            FlowRowConfig::default(),
+        )
+        .child(ghost_btn(
+            "Back to Ghosts",
+            pusher(actions, UiAct::CloseReplay),
+        )),
+    );
 
     screen_backdrop(panel("", children))
 }
@@ -118,15 +148,19 @@ fn transport(view: &ReplayView, actions: &ActionQueue) -> View {
 /// The playhead as a filled bar. Two nested boxes rather than a slider: repose-ui
 /// has no progress widget, and a drag would re-simulate the run on every pointer
 /// event, which is the one thing the seek is too expensive for.
+/// The playhead bar tracks the panel's width. It used to be a fixed 420 dp, which
+/// on a phone held upright is wider than the panel it sits in and pushes the
+/// transport controls off the side.
 fn playhead(view: &ReplayView) -> View {
     let filled = if view.len == 0 {
         0.0
     } else {
         (view.tick as f32 / view.len as f32).clamp(0.0, 1.0)
     };
+    let bar = fit::fit(BAR_DP, 40.0);
     let track = Box(
         Modifier::new()
-            .width(theme::dp(BAR_DP))
+            .width(theme::dp(bar))
             .height(theme::dp(BAR_H_DP))
             .background(theme::text_dim().with_alpha_f32(0.3))
             .clip_rounded(theme::dp(BAR_H_DP / 2.0))
@@ -134,7 +168,7 @@ fn playhead(view: &ReplayView) -> View {
     );
     let fill = Box(
         Modifier::new()
-            .width(theme::dp(BAR_DP * filled))
+            .width(theme::dp(bar * filled))
             .height(theme::dp(BAR_H_DP))
             .background(theme::accent())
             .clip_rounded(theme::dp(BAR_H_DP / 2.0))

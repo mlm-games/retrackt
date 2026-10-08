@@ -13,20 +13,30 @@ use repose_ui::{
 
 use crate::app::state::{ActionQueue, AppData, UiAct, push};
 use crate::app::theme;
+use crate::ui::fit;
 use crate::ui::widgets::{
-    danger_btn, dim_text, fmt_ticks, ghost_btn, heading, hud_text, menu_btn, panel, pusher,
+    danger_btn, dim_text, fmt_ticks, ghost_btn, heading, hud_text, list_panel, menu_btn, pusher,
     screen_backdrop,
 };
+
+/// Room the panel's own padding takes off its inner width, so a list inside it
+/// is narrower than the panel and does not touch its edges.
+const PANEL_GUTTER_DP: f32 = 40.0;
 
 /// The kept-tape library: every tape the player has kept, across all tracks.
 pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
     let mut children = vec![heading("Ghosts")];
 
     if data.ghosts.is_empty() {
-        children.push(dim_text(
-            "No ghosts yet. Every record is kept as one automatically, and a run can \
-             be saved by name from the results screen.",
-        ));
+        children.push(
+            Text(
+                "No ghosts yet. Every record is kept as one automatically, and a run can \
+                 be saved by name from the results screen.",
+            )
+            .size(theme::sp(14.0))
+            .color(theme::text_dim())
+            .max_lines(4),
+        );
     } else {
         children.push(dim_text(&format!("{} kept", data.ghosts.len())));
         let mut rows = Vec::with_capacity(data.ghosts.len());
@@ -43,6 +53,8 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
             // anything else, and a button that can only error is worse than none.
             // Watching is gated the same way and for the same reason — playback
             // re-simulates the run against this track's geometry.
+            let action_count = if playable { 3 } else { 1 };
+
             let actions_row = if playable {
                 Row(Modifier::new().gap(theme::dp(8.0)))
                     .child(ghost_btn(
@@ -69,7 +81,7 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
                     FlowRowConfig::default(),
                 )
                 .child(
-                    Box(Modifier::new().width(theme::dp(260.0))).child(
+                    Box(Modifier::new().width(theme::dp(fit::label_width(action_count)))).child(
                         Text(label)
                             .size(theme::sp(16.0))
                             .color(theme::text())
@@ -85,8 +97,8 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
         }
         children.push(ScrollAreaXY(
             Modifier::new()
-                .width(theme::dp(560.0))
-                .height(theme::dp(300.0)),
+                .width(theme::dp(fit::panel_width(560.0) - PANEL_GUTTER_DP))
+                .height(theme::dp(fit::panel_height(300.0))),
             remember_scroll_state_xy("ghosts.list"),
             Column(Modifier::new().gap(theme::dp(8.0))).child(rows),
         ));
@@ -94,7 +106,7 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
 
     children.push(menu_btn("Close", pusher(actions, UiAct::CloseGhosts)));
 
-    screen_backdrop(panel("", children))
+    screen_backdrop(list_panel("", children))
 }
 
 /// Name field and save button on the results screen. Its own function, and its
@@ -113,7 +125,9 @@ pub fn ghost_save_row(data: &AppData, actions: &ActionQueue) -> View {
 
     let field = BasicTextField(
         state.clone(),
-        Modifier::new().width(theme::dp(220.0)),
+        Modifier::new()
+            .width(theme::dp(fit::fit(220.0, PANEL_GUTTER_DP)))
+            .max_width(theme::dp(fit::fit(220.0, PANEL_GUTTER_DP))),
         "Ghost name",
         TextFieldConfig {
             line_limits: TextFieldLineLimits::SingleLine,

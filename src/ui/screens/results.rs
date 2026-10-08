@@ -1,9 +1,10 @@
 use repose_core::{Modifier, View};
 use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
-use repose_ui::{Box, Column, Row, Text, TextStyle, ViewExt};
+use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Row, Text, TextStyle, ViewExt};
 
 use crate::app::state::{ActionQueue, AppData, UiAct};
 use crate::app::theme;
+use crate::ui::fit;
 use crate::ui::screens::ghosts::ghost_save_row;
 use crate::ui::widgets::{
     badge, dim_text, fmt_delta, fmt_ticks, ghost_btn, heading, menu_btn, panel, practice_toggle,
@@ -68,22 +69,35 @@ pub fn results_ui(data: &AppData, actions: &ActionQueue) -> View {
         children.push(ghost_save_row(data, actions));
     }
     if data.practice {
-        children.push(dim_text(
-            "Practice: not recorded, and falls return to the last checkpoint",
-        ));
+        children.push(
+            Text("Practice: not recorded, and falls return to the last checkpoint")
+                .size(theme::sp(14.0))
+                .color(theme::text_dim())
+                .max_lines(3),
+        );
     }
 
-    children.push(menu_btn("Restart", pusher(actions, UiAct::Restart)));
-    children.push(practice_toggle(data.practice, actions));
-    children.push(ghost_btn(
-        "Track Editor",
-        pusher(actions, UiAct::OpenEditor),
-    ));
-    children.push(ghost_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)));
-    children.push(ghost_btn(
-        "Quit to Title",
-        pusher(actions, UiAct::QuitToTitle),
-    ));
+    // One wrapping row rather than five stacked buttons: at full height the panel
+    // is a column of controls taller than a compact window, with the last of them
+    // out of reach.
+    children.push(
+        FlowRow(
+            Modifier::new().gap(theme::dp(8.0)),
+            FlowRowConfig::default(),
+        )
+        .child([
+            menu_btn("Restart", pusher(actions, UiAct::Restart)),
+            practice_toggle(data.practice, actions),
+        ])
+        .child([
+            ghost_btn("Track Editor", pusher(actions, UiAct::OpenEditor)),
+            ghost_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)),
+        ])
+        .child(ghost_btn(
+            "Quit to Title",
+            pusher(actions, UiAct::QuitToTitle),
+        )),
+    );
 
     screen_backdrop(panel("", children))
 }
@@ -130,8 +144,8 @@ fn splits_body(splits: &[u32], theirs: Option<&[u32]>) -> View {
     if splits.len() > 5 {
         ScrollAreaXY(
             Modifier::new()
-                .width(theme::dp(300.0))
-                .height(theme::dp(160.0)),
+                .width(theme::dp(fit::panel_width(300.0) - 40.0))
+                .height(theme::dp(fit::panel_height(160.0))),
             remember_scroll_state_xy("results.splits"),
             Column(Modifier::new().gap(theme::dp(4.0))).child(rows),
         )
