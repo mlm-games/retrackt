@@ -52,9 +52,8 @@ fn piece_plan(doc: &TrackDocument, inst: &retrackt_format::PieceInstance) -> Vec
     let shape = retrackt_format::piece_shape(inst.id, &inst.params, doc.cell_size);
     shape
         .reserve_cells()
-        .iter()
         .map(|local| {
-            let w = retrackt_format::rotate_local_xz(*local, inst.yaw);
+            let w = retrackt_format::rotate_local_xz(local, inst.yaw);
             (inst.cell[0].saturating_add(w[0]), inst.cell[2].saturating_add(w[2]))
         })
         .collect()

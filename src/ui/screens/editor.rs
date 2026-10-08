@@ -42,7 +42,7 @@ const STEPS: [(&str, [i16; 3]); 6] = [
 pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     let editor = &data.editor;
 
-    let palette = panel("Palette", palette_list(editor.armed, actions));
+    let palette = panel("Palette", vec![palette_list(editor.armed, actions)]);
     let track = panel(
         &format!("Track · {}", data.track.name),
         build_children(data, actions),
@@ -289,7 +289,7 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
         .child(ghost_btn("bank+", pusher(actions, UiAct::AdjustSelection(ParamKind::Bank, 5)))),
     );
 
-    children.push(dim_text(format!(
+    children.push(dim_text(&format!(
         "Clipboard: {} piece{}",
         editor.clipboard.len(),
         if editor.clipboard.len() == 1 { "" } else { "s" }

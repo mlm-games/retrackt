@@ -194,7 +194,7 @@ mod tests {
     /// own facing. Bounded so a track whose gates cannot be reached this way fails
     /// the test rather than hanging it.
     fn drive_through(s: &mut RaceSession, w: &TrackWorld) {
-        for _ in 0..4 * w.checkpoint_count() + 4 {
+        for _ in 0..4 * (w.checkpoints.len() + usize::from(w.finish.is_some())) + 4 {
             if s.finished() {
                 return;
             }

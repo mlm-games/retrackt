@@ -583,6 +583,7 @@ fn frame_from(n: Vec3, fwd: Vec3, steer: f32, _tune: &CarTuning, _dt: f32) -> Qu
 #[cfg(test)]
 mod basis_tests {
     use super::*;
+    use super::tests::{DT, flat_track, fresh};
     use glam::{Mat3, Quat};
 
     #[test]
@@ -756,9 +757,9 @@ mod tests {
         PieceId, PieceInstance, PieceParams, PieceUid, TrackDocument, demo_track, stunt_track,
     };
 
-    const DT: f32 = 1.0 / 120.0;
+    pub(super) const DT: f32 = 1.0 / 120.0;
 
-    fn flat_track() -> TrackWorld {
+    pub(super) fn flat_track() -> TrackWorld {
         // A long straight, built explicitly: driving tests need road for as long
         // as they run, and a closed track's end is a cliff.
         let mut doc = TrackDocument::empty();
@@ -788,7 +789,7 @@ mod tests {
         }
     }
 
-    fn fresh(world: &TrackWorld) -> Car {
+    pub(super) fn fresh(world: &TrackWorld) -> Car {
         Car::at_spawn(world.spawn, world.spawn_yaw)
     }
 

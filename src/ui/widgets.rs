@@ -5,7 +5,7 @@ use repose_ui::{Box, Center, Column, Text, TextStyle, ViewExt};
 use crate::app::state::{ActionQueue, UiAct, push};
 use crate::app::theme;
 
-pub const CONTROLS: [(&str, &str); 8] = [
+pub const CONTROLS: [(&str, &str); 9] = [
     ("WASD / Arrows", "drive"),
     ("Space", "handbrake"),
     ("Shift", "boost"),
@@ -161,10 +161,10 @@ pub fn controls_hint() -> View {
             .clip_rounded(theme::dp(6.0))
             .hit_passthrough(),
     )
-    .child(dim_text(&line(0..3)))
-    .child(dim_text(&line(3..5)))
-    .child(dim_text(&line(5..6)))
-    .child(dim_text(&line(6..8)))
+    .child(dim_text(&line(0..4)))
+    .child(dim_text(&line(4..6)))
+    .child(dim_text(&line(6..7)))
+    .child(dim_text(&line(7..9)))
 }
 
 pub fn dim_text(text: &str) -> View {

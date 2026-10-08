@@ -347,13 +347,9 @@ mod tests {
             .iter()
             .find(|p| {
                 p.id == PieceId::Straight
-                    && retrackt_format::piece_shape(
-                        p.id,
-                        &p.params,
-                        doc.cell_size,
-                    )
-                    .occupied
-                    .len()
+                    && crate::geometry::piece_shape(p.id, &p.params, doc.cell_size)
+                        .occupied
+                        .len()
                         > 0
             })
             .expect("the demo circuit has a straight with a body");

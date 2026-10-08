@@ -907,10 +907,10 @@ mod tests {
         let mgr = mem_manager();
         let mut data = SaveData::default();
         data.ghosts
-            .insert(entry("two", "two", 1, [2u8; 16], 100))
+            .insert(entry("two", "two", 1, 2, 100))
             .unwrap();
         data.ghosts
-            .insert(entry("one", "one", 1, [2u8; 16], 200))
+            .insert(entry("one", "one", 1, 2, 200))
             .unwrap();
         save_with(&mgr, &data).expect("saves");
 

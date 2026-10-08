@@ -6,7 +6,9 @@
 //! before committing to it. A cursor plus snapping gives both, and keeps the
 //! chaining behaviour as the snap case rather than as a separate path.
 
-use retrackt_format::piece::{GridDir, PieceId, PieceParams, rotate_local_dir, rotate_local_xz};
+use retrackt_format::piece::{
+    GridDir, PieceId, PieceParams, catalog_by_id, rotate_local_dir, rotate_local_xz,
+};
 use retrackt_format::{PieceInstance, TrackDocument, piece_shape};
 
 /// Where the next piece will land, and whether it snapped to something.
@@ -89,7 +91,7 @@ fn open_exit_near(doc: &TrackDocument, cell: [i16; 3], reach: i32) -> Option<([i
         // every placement near the finish snap onto the end of the track.
         if doc
             .piece(uid)
-            .is_some_and(|inst| crate::piece::catalog_by_id(inst.id).is_finish)
+            .is_some_and(|inst| catalog_by_id(inst.id).is_finish)
         {
             continue;
         }
@@ -344,7 +346,7 @@ mod tests {
     #[test]
     fn exit_direction_follows_the_piece_own_yaw() {
         let doc = straight_doc();
-        let mut inst = *doc.pieces[0].as_ref();
+        let mut inst = doc.pieces[0];
         assert_eq!(exit_direction(&doc, &inst), GridDir::PosZ);
         inst.yaw = 1;
         assert_eq!(exit_direction(&doc, &inst), GridDir::PosX);
@@ -368,7 +370,7 @@ mod tests {
         let finish = doc
             .pieces
             .iter()
-            .find(|p| crate::piece::catalog_by_id(p.id).is_finish)
+            .find(|p| catalog_by_id(p.id).is_finish)
             .expect("the demo circuit has a finish");
         let at_finish = exit_cell(&doc, finish);
         assert_eq!(doc.next_piece(finish.uid), None, "the route ends there");
