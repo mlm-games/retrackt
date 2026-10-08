@@ -8,11 +8,24 @@ use repame_view3d::{Frame3d, MeshGroup, SceneLight, ShadowDesc};
 use retrackt_format::geometry::RawMesh;
 
 use super::App;
+use crate::app::state::Screen;
 
 const GROUND_Y: f32 = -0.5;
 const TILE: f32 = 8.0;
 const GROUND_TILES: i32 = 64;
 const GROUND_MARGIN: f32 = 64.0;
+
+/// Preview tints. Amber means the piece will join the road it is dropped beside;
+/// blue means it will sit where the cursor is, unattached. Two flat colours that
+/// no track surface uses, so the answer to "will this connect" is readable at a
+/// glance rather than inferred from alignment.
+const PREVIEW_SNAP: u32 = 0xFFB020;
+const PREVIEW_FREE: u32 = 0x45C3F0;
+/// Low enough to see the road through, high enough to read against it.
+const PREVIEW_ALPHA: f32 = 0.55;
+/// The cursor cell outline, in the editor accent.
+const CURSOR_TINT: u32 = 0xFFB020;
+const CURSOR_ALPHA: f32 = 0.30;
 
 const HORIZON: u32 = 0xCFE6F7;
 const ZENITH: u32 = 0x4E9BE0;
@@ -265,9 +278,17 @@ impl App {
             self.ground_mesh = Some(ground_group(bounds));
             self.track_mesh = Some(track);
         }
+        let editing = self.data.screen == Screen::Editor;
         let horizon = lin(HORIZON);
         let mut frame = Frame3d {
-            cam: self.cam.to_orbit(alpha),
+            // The editor frames the whole track and must not follow the car: the
+            // car is parked at the spawn, and a chase camera would drag the view
+            // there every time it was rebuilt.
+            cam: if editing {
+                self.editor_cam.clone()
+            } else {
+                self.cam.to_orbit(alpha)
+            },
             background: Some([horizon[0], horizon[1], horizon[2], 1.0]),
             light: SceneLight {
                 direction: [0.42, 0.78, 0.46],
@@ -287,7 +308,12 @@ impl App {
             }),
             ..Frame3d::default()
         };
-        frame.push(self.sky.at(car.pos));
+        let centre = if editing {
+            self.editor_cam.target
+        } else {
+            car.pos
+        };
+        frame.push(self.sky.at(centre));
         // Ground and track are handed over by value: `Frame3d` owns its groups
         // and repame-view3d has no shared-group handle, so a per-frame clone is
         // the price of them appearing in every frame. They stay separate groups
@@ -306,10 +332,41 @@ impl App {
         if let Some(ghost) = ghost {
             frame.push(car::ghost_group(ghost));
         }
-        let (body, head, tail) = car::groups(car);
-        frame.push(body);
-        frame.push(head);
-        frame.push(tail);
+        if editing {
+            for group in self.editor_overlay() {
+                frame.push(group);
+            }
+        } else {
+            let (body, head, tail) = car::groups(car);
+            frame.push(body);
+            frame.push(head);
+            frame.push(tail);
+        }
         frame
+    }
+
+    /// Editor furniture: the cursor cell and a translucent preview of the piece
+    /// the next placement would drop.
+    ///
+    /// Built per frame rather than cached with the track because both move with
+    /// the cursor, and both are a handful of triangles — caching would cost a
+    /// rebuild every time the cursor moved instead.
+    fn editor_overlay(&self) -> Vec<MeshGroup> {
+        let editor = &self.data.editor;
+        let place = crate::app::placement::placement_at(
+            &self.data.track,
+            editor.armed,
+            editor.cursor,
+            crate::app::SNAP_REACH,
+        );
+        vec![
+            track::preview_group(
+                &self.data.track,
+                &retrackt_format::PieceInstance::new(editor.armed, place.anchor)
+                    .with_yaw(place.yaw),
+                if place.snapped { PREVIEW_SNAP } else { PREVIEW_FREE },
+            ),
+            track::cursor_group(&self.data.track, editor.cursor),
+        ]
     }
 }

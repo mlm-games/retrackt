@@ -17,6 +17,13 @@ pub struct Settings {
     pub master_volume: f32,
     pub music_volume: f32,
     pub sfx_volume: f32,
+    /// Whether the library lists draw a schematic of each track.
+    #[serde(default = "default_thumbnails")]
+    pub thumbnails: bool,
+}
+
+fn default_thumbnails() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -25,6 +32,7 @@ impl Default for Settings {
             master_volume: 1.0,
             music_volume: 1.0,
             sfx_volume: 1.0,
+            thumbnails: default_thumbnails(),
         }
     }
 }

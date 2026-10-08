@@ -2,9 +2,12 @@ use glam::Vec3;
 use repame_view3d::MeshGroup;
 use retrackt_format::geometry::{Centerline, RawMesh};
 use retrackt_format::piece::catalog_by_id;
-use retrackt_format::{PieceId, TrackDocument, piece_shape};
+use retrackt_format::{PieceId, PieceInstance, TrackDocument, piece_shape};
 
-use super::{lin, merge, push_lit, push_obox, push_tri_lit, raw_mesh_to_group};
+use super::{
+    CURSOR_ALPHA, CURSOR_TINT, PREVIEW_ALPHA, lin, merge, push_lit, push_obox, push_tri_lit,
+    raw_mesh_to_group,
+};
 
 const ROAD: u32 = 0x9BA1A9;
 const EDGE_LINE: u32 = 0xF2F4F7;
@@ -39,6 +42,83 @@ pub(super) fn build_group(doc: &TrackDocument) -> (MeshGroup, ([f32; 3], [f32; 3
         .bounds()
         .unwrap_or(([-32.0, 0.0, -32.0], [32.0, 0.0, 32.0]));
     (raw_mesh_to_group(&merged, true), bounds)
+}
+
+/// One placed piece, drawn flat and translucent: the preview of what a
+/// placement would drop.
+///
+/// Built from the same `piece_shape` as the real mesh, so the preview is the
+/// piece rather than an approximation of it — a preview drawn any other way
+/// would be wrong exactly where the shape is unusual, which is the case the
+/// player is checking it for.
+pub(super) fn preview_group(doc: &TrackDocument, inst: &PieceInstance, tint: u32) -> MeshGroup {
+    let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
+    let xform = inst.world_matrix(doc.cell_size);
+    let mut mesh = shape.surface.transformed(xform, lin(tint));
+    let mut group = raw_mesh_to_group(&mesh, true);
+    // One flat albedo and no lighting: a shaded preview competes with the road
+    // it is being judged against.
+    group.colors.fill(lin(tint));
+    group.normals.clear();
+    group.transparent = true;
+    group.alpha = PREVIEW_ALPHA;
+    group.material.roughness = 1.0;
+    group.material.emissive = [0.10, 0.10, 0.10];
+    group
+}
+
+/// Flat outline of one grid cell, so the cursor is findable on a wide track.
+///
+/// A wireframe rather than a filled quad: a filled cell hides the road under it,
+/// and the cursor has to be readable *over* the piece it is about to join.
+pub(super) fn cursor_group(doc: &TrackDocument, cell: [i16; 3]) -> MeshGroup {
+    let centre = Vec3::from(doc.cell_origin(cell));
+    let half = doc.cell_size * 0.5;
+    // Thin enough to read as an outline, thick enough not to disappear at the
+    // distances the editor camera sits at.
+    let t = (doc.cell_size * 0.06).max(0.12);
+    let lift = doc.cell_size * 0.01;
+    let color = lin(CURSOR_TINT);
+    let mut mesh = RawMesh::default();
+
+    for (u, v) in [
+        (Vec3::X, Vec3::Z),
+        (Vec3::NEG_X, Vec3::Z),
+        (Vec3::X, Vec3::NEG_Z),
+        (Vec3::NEG_X, Vec3::NEG_Z),
+    ] {
+        push_lit(
+            &mut mesh,
+            [
+                centre + u * half - v * half + Vec3::Y * lift,
+                centre + u * half + v * half + Vec3::Y * lift,
+                centre + u * (half - t) + v * half + Vec3::Y * lift,
+                centre + u * (half - t) - v * half + Vec3::Y * lift,
+            ],
+            Vec3::Y,
+            color,
+        );
+        push_lit(
+            &mut mesh,
+            [
+                centre + u * half - v * half + Vec3::Y * lift,
+                centre + u * half + v * half + Vec3::Y * lift,
+                centre + u * half + v * half - Vec3::Y * lift,
+                centre + u * half - v * half - Vec3::Y * lift,
+            ],
+            u,
+            color,
+        );
+    }
+
+    let mut group = raw_mesh_to_group(&mesh, true);
+    group.normals.clear();
+    group.transparent = true;
+    group.alpha = CURSOR_ALPHA;
+    // Depth test on: the cursor sits on the road surface, and drawing through it
+    // would put an outline on top of scenery the piece is behind.
+    group.depth_test = true;
+    group
 }
 
 /// Replaces the stripe mask (white/black per quad) baked into decor colours

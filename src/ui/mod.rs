@@ -1,6 +1,7 @@
 pub mod hud;
 pub mod library;
 pub mod screens;
+pub mod thumb;
 pub mod widgets;
 
 use repose_core::{Modifier, View};

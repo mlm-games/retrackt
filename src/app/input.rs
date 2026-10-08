@@ -112,6 +112,136 @@ impl TouchStick {
     }
 }
 
+/// Cursor movement and one-shot editor commands, resolved from held keys.
+///
+/// Separate from the vehicle map because the editor reuses the arrow and WASD
+/// keys: while the editor is up the car is parked, and every key here moves the
+/// cursor or edits a piece instead.
+#[derive(Default)]
+struct EditorKeys {
+    /// Cell step to apply this frame, summed over the axes held. Screen up is
+    /// -Z and right is +X, so the axis and its sign live in one table and the two
+    /// cannot disagree.
+    step: [i16; 3],
+    /// How long each axis has been held, for the repeat delay.
+    held: [u32; 3],
+    /// One-shot commands, all edge-latched. Level-triggered, a held Ctrl+C would
+    /// copy once per frame and flood the notice bar.
+    pressed: EditorCommand,
+    down: EditorCommand,
+}
+
+/// The editor's one-shot commands. Public because the runtime reads them to turn
+/// them into actions; the type is what crosses the module boundary.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EditorCommand {
+    pub place: bool,
+    pub delete: bool,
+    pub rotate: bool,
+    pub duplicate: bool,
+    pub copy: bool,
+    pub paste: bool,
+    pub undo: bool,
+    pub redo: bool,
+    pub select_all: bool,
+    pub select_route: bool,
+    pub select_none: bool,
+}
+
+impl EditorCommand {
+    fn is_empty(self) -> bool {
+        self == Self::default()
+    }
+}
+
+/// Frames a direction must be held before it repeats, and then how often.
+///
+/// Without a repeat, crossing a long track means one key press per cell; without
+/// a delay the first repeat lands while the key is still going down.
+const REPEAT_DELAY_FRAMES: u32 = 18;
+const REPEAT_PERIOD_FRAMES: u32 = 4;
+
+/// Axis and direction of each cursor key, as `(key, axis, step)`.
+const CURSOR_KEYS: [(PhysicalKey, usize, i16); 8] = [
+    (PhysicalKey::ArrowUp, 2, -1),
+    (PhysicalKey::KeyW, 2, -1),
+    (PhysicalKey::ArrowRight, 0, 1),
+    (PhysicalKey::KeyD, 0, 1),
+    (PhysicalKey::ArrowDown, 2, 1),
+    (PhysicalKey::KeyS, 2, 1),
+    (PhysicalKey::ArrowLeft, 0, -1),
+    (PhysicalKey::KeyA, 0, -1),
+];
+
+impl EditorKeys {
+    /// Resolve the held keys into this frame's commands.
+    fn poll(&mut self, sched: &Scheduler) {
+        let held = |key: PhysicalKey| sched.held_keys.contains(&key);
+        let ctrl = held(PhysicalKey::ControlLeft) || held(PhysicalKey::ControlRight);
+        let shift = held(PhysicalKey::ShiftLeft) || held(PhysicalKey::ShiftRight);
+
+        self.step = [0; 3];
+        for (key, axis, direction) in CURSOR_KEYS {
+            // A modified key is not a cursor key. Ctrl+D duplicates and Shift+A
+            // selects the route; neither should also slide the cursor, or holding
+            // a modifier would quietly move the piece about to be placed.
+            if (ctrl || shift) || !held(key) {
+                self.held[axis] = 0;
+                continue;
+            }
+            self.held[axis] += 1;
+            let n = self.held[axis];
+            let repeats = n >= REPEAT_DELAY_FRAMES
+                && (n - REPEAT_DELAY_FRAMES) % REPEAT_PERIOD_FRAMES == 0;
+            if n == 1 || repeats {
+                self.step[axis] += direction;
+            }
+        }
+
+        let now = EditorCommand {
+            place: held(PhysicalKey::Enter) || held(PhysicalKey::NumpadEnter),
+            delete: held(PhysicalKey::Delete) || held(PhysicalKey::Backspace),
+            rotate: held(PhysicalKey::KeyR),
+            duplicate: ctrl && held(PhysicalKey::KeyD),
+            copy: ctrl && held(PhysicalKey::KeyC),
+            paste: ctrl && held(PhysicalKey::KeyV),
+            undo: ctrl && held(PhysicalKey::KeyZ),
+            redo: ctrl && held(PhysicalKey::KeyY),
+            select_all: ctrl && held(PhysicalKey::KeyA),
+            select_route: shift && held(PhysicalKey::KeyA),
+            select_none: held(PhysicalKey::Escape),
+        };
+        // Newly down this frame only. A command whose key is released clears the
+        // latch, so it can be pressed again without an intervening release.
+        self.pressed = EditorCommand {
+            place: now.place && !self.down.place,
+            delete: now.delete && !self.down.delete,
+            rotate: now.rotate && !self.down.rotate,
+            duplicate: now.duplicate && !self.down.duplicate,
+            copy: now.copy && !self.down.copy,
+            paste: now.paste && !self.down.paste,
+            undo: now.undo && !self.down.undo,
+            redo: now.redo && !self.down.redo,
+            select_all: now.select_all && !self.down.select_all,
+            select_route: now.select_route && !self.down.select_route,
+            select_none: now.select_none && !self.down.select_none,
+        };
+        self.down = now;
+    }
+
+    /// Reset the repeat counters when the editor closes.
+    ///
+    /// `down` is deliberately kept. It is the record of which keys were held on
+    /// the frame the editor was last polled, and clearing it would make a key
+    /// still held at that moment read as a *fresh* press the next time the editor
+    /// opens — a command fired by the player letting go of nothing.
+    fn release(&mut self) {
+        self.held = [0; 3];
+        self.step = [0; 3];
+        self.pressed = EditorCommand::default();
+    }
+}
+
 pub struct InputState {
     /// Signed forward speed of the car, refreshed by the app each frame so
     /// `poll` can tell "stopped" from "still braking".
@@ -120,6 +250,8 @@ pub struct InputState {
     pub restart: bool,
     /// Edge-latched: true only on the frame the quit key went down.
     pub quit: bool,
+    /// Editor keys, edge-latched and repeated while held.
+    editor: EditorKeys,
     vehicle: VehicleInput,
     reverse_latched: bool,
     restart_latched: bool,
@@ -135,6 +267,7 @@ impl InputState {
             forward_speed: 0.0,
             restart: false,
             quit: false,
+            editor: EditorKeys::default(),
             vehicle: VehicleInput::neutral(),
             reverse_latched: false,
             restart_latched: false,
@@ -227,6 +360,32 @@ impl InputState {
             knob: self.stick.knob,
         })
     }
+
+    /// Editor commands for this frame, edge-latched and repeated as held.
+    ///
+    /// Only called while the editor is up. Every other frame calls
+    /// [`Self::release_editor`] so a key held on the way out of the editor is
+    /// not still "down" when it is next pressed.
+    pub fn poll_editor(&mut self, sched: &Scheduler) -> EditorFrame {
+        self.editor.poll(sched);
+        EditorFrame {
+            step: self.editor.step,
+            pressed: self.editor.pressed,
+        }
+    }
+
+    pub fn release_editor(&mut self) {
+        self.editor.release();
+    }
+}
+
+/// One frame of editor input.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EditorFrame {
+    /// Cell step for the cursor, in grid axes.
+    pub step: [i16; 3],
+    /// Commands whose key went down this frame.
+    pub pressed: EditorCommand,
 }
 
 impl Default for InputState {
@@ -321,5 +480,191 @@ mod tests {
         assert_eq!(stick.finger, None);
         assert_eq!(stick.knob, (0.0, 0.0));
         assert!(stick.visible);
+    }
+
+    fn sched_with(keys: &[PhysicalKey]) -> Scheduler {
+        let mut sched = Scheduler::new();
+        sched.held_keys = keys.iter().copied().collect();
+        sched
+    }
+
+    /// Hold `keys` for `frames` polls and collect every step produced.
+    fn steps_while_held(keys: &[PhysicalKey], frames: u32) -> Vec<[i16; 3]> {
+        let sched = sched_with(keys);
+        let mut input = InputState::new();
+        (0..frames).map(|_| input.poll_editor(&sched).step).collect()
+    }
+
+    #[test]
+    fn a_direction_key_steps_once_then_repeats_after_a_delay() {
+        let frames = steps_while_held(&[PhysicalKey::ArrowUp], 40);
+
+        assert_eq!(frames[0], [0, 0, -1], "the press itself fires");
+        // Silent until the delay has elapsed, counting from the frame *after* the
+        // press: frame 0 already fired, so the quiet run is 1..DELAY.
+        for (n, step) in frames.iter().enumerate().take(REPEAT_DELAY_FRAMES as usize).skip(1) {
+            assert_eq!(*step, [0, 0, 0], "frame {n} must be inside the delay");
+        }
+        // Then it fires exactly once per period.
+        assert_eq!(
+            frames[REPEAT_DELAY_FRAMES as usize], [0, 0, -1],
+            "the first repeat lands on the delay"
+        );
+        for n in 1..REPEAT_PERIOD_FRAMES {
+            assert_eq!(
+                frames[(REPEAT_DELAY_FRAMES + n) as usize],
+                [0, 0, 0],
+                "frame {n} of the period must be silent"
+            );
+        }
+        assert_eq!(
+            frames[(REPEAT_DELAY_FRAMES + REPEAT_PERIOD_FRAMES) as usize],
+            [0, 0, -1],
+            "and then it repeats"
+        );
+    }
+
+    #[test]
+    fn the_repeat_stays_on_its_period_rather_than_drifting() {
+        let frames = steps_while_held(&[PhysicalKey::ArrowRight], 80);
+        for (n, step) in frames.iter().enumerate() {
+            let expected = n == 0
+                || (n as u32 >= REPEAT_DELAY_FRAMES
+                    && (n as u32 - REPEAT_DELAY_FRAMES) % REPEAT_PERIOD_FRAMES == 0);
+            assert_eq!(
+                *step == [1, 0, 0],
+                expected,
+                "frame {n}: step {:?} but expected a step = {expected}",
+                step
+            );
+        }
+    }
+
+    #[test]
+    fn releasing_a_direction_resets_its_repeat() {
+        let mut input = InputState::new();
+        for _ in 0..REPEAT_DELAY_FRAMES + 2 {
+            input.poll_editor(&sched_with(&[PhysicalKey::ArrowRight]));
+        }
+        assert_eq!(input.poll_editor(&sched_with(&[])).step, [0, 0, 0]);
+        assert_eq!(
+            input.poll_editor(&sched_with(&[PhysicalKey::ArrowRight])).step,
+            [1, 0, 0],
+            "held again, it must fire at once rather than waiting out the delay"
+        );
+    }
+
+    #[test]
+    fn the_wasd_letters_mirror_the_arrow_keys() {
+        // A separate input each time: the repeat counter is state, so the second
+        // poll on the same instance would be a different frame, not a comparison.
+        for (letter, arrow) in [
+            (PhysicalKey::KeyW, PhysicalKey::ArrowUp),
+            (PhysicalKey::KeyS, PhysicalKey::ArrowDown),
+            (PhysicalKey::KeyA, PhysicalKey::ArrowLeft),
+            (PhysicalKey::KeyD, PhysicalKey::ArrowRight),
+        ] {
+            assert_eq!(
+                steps_while_held(&[letter], 1),
+                steps_while_held(&[arrow], 1),
+                "{letter:?} must move the cursor the way {arrow:?} does"
+            );
+        }
+    }
+
+    #[test]
+    fn opposite_directions_cancel_rather_than_accelerate_the_cursor() {
+        assert_eq!(
+            steps_while_held(&[PhysicalKey::ArrowUp, PhysicalKey::ArrowDown], 1),
+            vec![[0, 0, 0]],
+            "a cursor cannot move two ways at once"
+        );
+    }
+
+    #[test]
+    fn a_command_fires_on_the_press_and_not_while_held() {
+        let mut input = InputState::new();
+        let sched = sched_with(&[PhysicalKey::ControlLeft, PhysicalKey::KeyC]);
+
+        assert!(input.poll_editor(&sched).pressed.copy, "the press itself");
+        for _ in 0..5 {
+            assert!(
+                !input.poll_editor(&sched).pressed.copy,
+                "a held Ctrl+C must not copy once per frame"
+            );
+        }
+        input.poll_editor(&sched_with(&[]));
+        assert!(
+            input.poll_editor(&sched).pressed.copy,
+            "and again once released"
+        );
+    }
+
+    #[test]
+    fn a_modified_direction_key_does_not_move_the_cursor() {
+        let mut input = InputState::new();
+        let frame =
+            input.poll_editor(&sched_with(&[PhysicalKey::ControlLeft, PhysicalKey::KeyD]));
+        assert_eq!(
+            frame.step, [0, 0, 0],
+            "Ctrl+D duplicates; it is not cursor-right"
+        );
+        assert!(frame.pressed.duplicate);
+    }
+
+    #[test]
+    fn shift_a_selects_the_route_and_plain_a_moves_the_cursor() {
+        let shifted =
+            steps_while_held(&[PhysicalKey::ShiftLeft, PhysicalKey::KeyA], 1);
+        assert_eq!(shifted, vec![[0, 0, 0]], "a modified key is not a cursor key");
+
+        let mut input = InputState::new();
+        let frame = input.poll_editor(&sched_with(&[PhysicalKey::ShiftLeft, PhysicalKey::KeyA]));
+        assert!(frame.pressed.select_route);
+    }
+
+    #[test]
+    fn undo_and_redo_accept_either_control_side() {
+        for ctrl in [PhysicalKey::ControlLeft, PhysicalKey::ControlRight] {
+            let mut input = InputState::new();
+            assert!(input.poll_editor(&sched_with(&[ctrl, PhysicalKey::KeyZ])).pressed.undo);
+            assert!(input.poll_editor(&sched_with(&[ctrl, PhysicalKey::KeyY])).pressed.redo);
+        }
+    }
+
+    #[test]
+    fn leaving_the_editor_does_not_fire_a_key_that_was_still_held() {
+        let mut input = InputState::new();
+        let sched = sched_with(&[PhysicalKey::Enter]);
+        assert!(input.poll_editor(&sched).pressed.place);
+
+        input.release_editor();
+        assert!(
+            !input.poll_editor(&sched).pressed.place,
+            "a key held while leaving the editor must not act on the next press"
+        );
+        // But releasing and pressing again does fire it.
+        input.poll_editor(&sched_with(&[]));
+        assert!(input.poll_editor(&sched).pressed.place);
+    }
+
+    #[test]
+    fn leaving_the_editor_resets_the_repeat_so_a_held_key_does_not_run() {
+        let mut input = InputState::new();
+        let sched = sched_with(&[PhysicalKey::ArrowRight]);
+        for _ in 0..REPEAT_DELAY_FRAMES + 2 {
+            input.poll_editor(&sched);
+        }
+        input.release_editor();
+        // Quiet, because the key was already down when the editor closed.
+        assert_eq!(input.poll_editor(&sched).step, [0, 0, 0]);
+    }
+
+    #[test]
+    fn nothing_is_pressed_when_no_editor_key_is_held() {
+        let mut input = InputState::new();
+        let frame = input.poll_editor(&sched_with(&[]));
+        assert_eq!(frame.step, [0, 0, 0]);
+        assert!(frame.pressed.is_empty());
     }
 }

@@ -24,6 +24,12 @@ pub fn danger() -> Color {
     Color::from_rgb(224, 72, 72)
 }
 
+/// Passed a check. Only used where a check passing is news, so it stays
+/// distinct from the accent rather than reusing it.
+pub fn ok() -> Color {
+    Color::from_rgb(96, 208, 128)
+}
+
 pub fn dp(v: f32) -> Dp {
     v.dp()
 }

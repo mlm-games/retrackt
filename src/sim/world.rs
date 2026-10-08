@@ -357,10 +357,15 @@ impl TrackWorld {
         let mut checkpoints = Vec::new();
         let mut finish = None;
 
-        // Sort by uid: the fingerprint hashes pieces by uid, so a reordered file
-        // would keep its fingerprint yet race a different gate sequence.
-        let mut ordered: Vec<_> = doc.pieces.iter().collect();
-        ordered.sort_by_key(|p| p.uid);
+        // Race order, from the connected chain: gate sequence is what a run is
+        // measured against, and taking it from the piece array made it a
+        // function of the order pieces happened to be created in. Pieces the
+        // chain never reaches come back uid-sorted, so this is total and stable.
+        let ordered: Vec<&PieceInstance> = doc
+            .race_order()
+            .iter()
+            .filter_map(|uid| doc.piece(*uid))
+            .collect();
 
         for inst in ordered {
             let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
@@ -598,6 +603,105 @@ mod tests {
             assert!(!w.checkpoints.is_empty(), "{}: needs checkpoints", doc.name);
             assert!(!w.boost_zones.is_empty(), "{}: needs a boost pad", doc.name);
         }
+    }
+
+    #[test]
+    fn gates_come_out_in_race_order_not_uid_order() {
+        for doc in builtin_tracks() {
+            let w = TrackWorld::from_doc(&doc);
+            let order = doc.race_order();
+            let rank = |uid: PieceUid| {
+                order
+                    .iter()
+                    .position(|u| *u == uid)
+                    .expect("a gate piece is always in race order")
+            };
+            for pair in w.checkpoints.windows(2) {
+                assert!(
+                    rank(pair[0].piece) < rank(pair[1].piece),
+                    "{}: gates {:?} then {:?} run backwards",
+                    doc.name,
+                    pair[0].piece,
+                    pair[1].piece
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gates_follow_the_road_when_the_uids_do_not() {
+        // The built-in circuits chain in creation order, so their uids already run
+        // in race order and cannot show a difference. Reverse them: the gate
+        // sequence must still come out in road order.
+        let mut doc = builtin_tracks().remove(0);
+        let route = doc.route();
+        let reversed: Vec<u32> = route.iter().rev().map(|u| u.0).collect();
+        for piece in &mut doc.pieces {
+            let rank = route.iter().position(|u| *u == piece.uid);
+            let Some(rank) = rank.and_then(|r| reversed.get(r)).copied() else {
+                continue;
+            };
+            piece.uid = retrackt_format::PieceUid(rank);
+        }
+        doc.normalize_uids();
+
+        let world = TrackWorld::from_doc(&doc);
+        let order = doc.race_order();
+        let rank = |uid: PieceUid| {
+            order
+                .iter()
+                .position(|u| *u == uid)
+                .expect("a gate piece is always in race order")
+        };
+
+        // Same number of gates as the untouched document...
+        assert_eq!(
+            world.checkpoints.len(),
+            TrackWorld::from_doc(&retrackt_format::demo_track())
+                .checkpoints
+                .len()
+        );
+        // ...and ascending in road order...
+        for pair in world.checkpoints.windows(2) {
+            assert!(rank(pair[0].piece) < rank(pair[1].piece));
+        }
+        // ...which is not ascending uid, or none of this would test anything.
+        let uids: Vec<u32> = world.checkpoints.iter().map(|g| g.piece.0).collect();
+        let mut sorted = uids.clone();
+        sorted.sort_unstable();
+        assert_ne!(uids, sorted, "the fixture must not be uid-sorted");
+    }
+
+    #[test]
+    fn gate_indices_number_the_sequence_the_player_drives() {
+        for doc in builtin_tracks() {
+            let w = TrackWorld::from_doc(&doc);
+            for (i, gate) in w.checkpoints.iter().enumerate() {
+                assert_eq!(
+                    gate.index, i,
+                    "{}: gate index must be its position in the run",
+                    doc.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_shuffled_file_builds_the_same_gate_sequence() {
+        let doc = builtin_tracks().remove(0);
+        let mut shuffled = doc.clone();
+        shuffled.pieces.reverse();
+        let (a, b) = (
+            TrackWorld::from_doc(&doc),
+            TrackWorld::from_doc(&shuffled),
+        );
+        let order = |w: &TrackWorld| {
+            w.checkpoints
+                .iter()
+                .map(|g| (g.piece, g.centre))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&a), order(&b));
     }
 
     #[test]

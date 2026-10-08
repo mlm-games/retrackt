@@ -57,6 +57,41 @@ pub fn danger_btn(label: &str, on_click: impl Fn() + 'static) -> View {
     )
 }
 
+/// The emphasised state of a toggle: the armed palette piece, the selected row,
+/// the place button. Same shape as `ghost_btn` so a highlighted control does not
+/// resize its row when it turns on.
+pub fn accent_btn(label: &str, on_click: impl Fn() + 'static) -> View {
+    OutlinedButton(
+        Modifier::new().min_width(theme::dp(150.0)),
+        on_click,
+        ButtonConfig {
+            container_color: Some(theme::accent()),
+            content_color: Some(theme::background()),
+            shape_radius: theme::dp(8.0),
+            ..ButtonConfig::default()
+        },
+        || Text(label).size(theme::sp(16.0)).single_line(),
+    )
+}
+
+/// A control that is present but not live, for undo and redo with nothing to step.
+///
+/// Visible rather than hidden so the feature is discoverable, and inert rather
+/// than silent so the player learns why.
+pub fn disabled_btn(label: &str) -> View {
+    OutlinedButton(
+        Modifier::new().min_width(theme::dp(150.0)),
+        || {},
+        ButtonConfig {
+            enabled: false,
+            content_color: Some(theme::text_dim()),
+            shape_radius: theme::dp(8.0),
+            ..ButtonConfig::default()
+        },
+        || Text(label).size(theme::sp(16.0)).single_line(),
+    )
+}
+
 pub fn panel(title: &str, children: Vec<View>) -> View {
     let mut column = Column(
         Modifier::new()

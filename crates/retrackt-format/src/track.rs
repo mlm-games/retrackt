@@ -218,15 +218,53 @@ impl TrackDocument {
         }
     }
 
-    /// Start, finish and checkpoint pieces, in track order.
+    /// Start, finish and checkpoint pieces, in race order.
     pub fn zones(&self) -> Vec<&PieceInstance> {
-        self.pieces
-            .iter()
+        self.race_order()
+            .into_iter()
+            .filter_map(|uid| self.piece(uid))
             .filter(|p| {
                 let def = crate::piece::catalog_by_id(p.id);
                 def.is_start || def.is_finish || def.is_checkpoint || def.is_boost
             })
             .collect()
+    }
+
+    /// Every piece, in the order a car meets them.
+    ///
+    /// The connected chain from [`Self::route`] first, then whatever the chain
+    /// does not reach, ordered by uid. Route order is a property of the geometry
+    /// rather than of the file: the piece array is an unordered set whose order
+    /// only ever reflected the order pieces happened to be created in, and every
+    /// consumer that read it as race order inherited that.
+    ///
+    /// Pieces outside the chain are still returned, because a track being built
+    /// has plenty of them and dropping them would make this a partial answer.
+    /// Their relative order carries no meaning, so uid keeps it stable across a
+    /// save and load.
+    pub fn race_order(&self) -> Vec<PieceUid> {
+        let route = self.route();
+        let mut on_route: BTreeSet<PieceUid> = BTreeSet::new();
+        let mut ordered = Vec::with_capacity(self.pieces.len());
+        // Filtered rather than pushed: a document with a repeated uid would
+        // otherwise name the same piece twice, and this feeds the collision
+        // build. `normalize_uids` clears that on every load path, but the world
+        // is built from whatever document it is handed.
+        for uid in route {
+            if on_route.insert(uid) {
+                ordered.push(uid);
+            }
+        }
+        let mut rest: Vec<_> = self
+            .pieces
+            .iter()
+            .map(|p| p.uid)
+            .filter(|uid| !on_route.contains(uid))
+            .collect();
+        rest.sort_unstable();
+        rest.dedup();
+        ordered.extend(rest);
+        ordered
     }
 
     pub fn to_ron(&self) -> Result<String, ron::Error> {
@@ -282,12 +320,18 @@ impl TrackDocument {
             let mates = |port: &WorldPort| {
                 port.point == exit.point && port.outward == exit.outward.opposite()
             };
+            // Uid order, not the order `all_ports` happened to walk the piece
+            // array in: race order is derived from this chain, so a tie-break
+            // that read array order would let shuffling the file change which
+            // gates a car meets while its fingerprint stayed identical.
             let mut candidates: Vec<PieceUid> = ports
                 .iter()
                 .filter(|(_, port, i)| *i == 0 && mates(port))
                 .map(|(other_uid, _, _)| *other_uid)
                 .filter(|u| *u != uid)
                 .collect();
+            candidates.sort_unstable();
+            candidates.dedup();
 
             // A loop's own entry sits on its exit, so it is a candidate for
             // continuing itself. It never is: a piece cannot follow itself.
@@ -298,13 +342,12 @@ impl TrackDocument {
                 // beyond it.
                 return None;
             }
-            candidates.dedup();
 
             match candidates.len() {
                 0 => {}
                 1 => return Some(candidates[0]),
                 // Contested join: two pieces share this cell. Prefer the one
-                // that continues the current heading.
+                // that continues the current heading, then the lowest uid.
                 _ => {
                     let heading = self.exit_heading(uid);
                     return candidates
@@ -364,19 +407,28 @@ impl TrackDocument {
     /// Ordered chain of piece UIDs from the Start piece, following exits to
     /// entries. Stops at the first dead end.
     pub fn route(&self) -> Vec<PieceUid> {
+        // Lowest uid, not the first Start in the array: a shuffled file is the
+        // same track, so which Start the chain begins at cannot depend on where
+        // it happens to sit in the file.
         let Some(start) = self
             .pieces
             .iter()
-            .find(|p| crate::piece::catalog_by_id(p.id).is_start)
+            .filter(|p| crate::piece::catalog_by_id(p.id).is_start)
+            .min_by_key(|p| p.uid)
         else {
             return Vec::new();
         };
         let mut out = vec![start.uid];
+        // Set alongside the list: the loop below asks "have I been here" once per
+        // step, and scanning the whole chain each time made route building
+        // quadratic on the long tracks it exists to order.
+        let mut seen: BTreeSet<PieceUid> = BTreeSet::new();
+        seen.insert(start.uid);
         let mut cur = start.uid;
         let mut guard = 0;
         while let Some(next) = self.next_piece(cur) {
             // Already visited: the route has closed, so it ends here.
-            if out.contains(&next) {
+            if !seen.insert(next) {
                 break;
             }
             out.push(next);
@@ -579,5 +631,115 @@ mod tests {
             let p = from_grid(c, 4.0);
             assert_eq!(to_grid(p, 4.0), c);
         }
+    }
+
+    #[test]
+    fn race_order_follows_the_road_not_the_file() {
+        let doc = crate::demo::demo_track();
+        let route = doc.route();
+        // Every piece the chain reaches comes first, in chain order.
+        let order = doc.race_order();
+        assert_eq!(&order[..route.len()], route.as_slice());
+        assert_eq!(order.len(), doc.pieces.len(), "no piece may be dropped");
+    }
+
+    #[test]
+    fn race_order_differs_from_uid_order_when_the_file_says_otherwise() {
+        // The built-in circuits are built by chaining, so their uids happen to
+        // run in race order and cannot show the difference. Hand them uids that
+        // do not: this is what an edited or hand-written document looks like, and
+        // it is the case the decoupling exists for.
+        let mut doc = crate::demo::demo_track();
+        let route = doc.route();
+        let reversed: Vec<u32> = route.iter().rev().map(|u| u.0).collect();
+        for piece in &mut doc.pieces {
+            let rank = route.iter().position(|u| *u == piece.uid);
+            let Some(rank) = rank.and_then(|r| reversed.get(r)).copied() else {
+                continue;
+            };
+            piece.uid = PieceUid(rank);
+        }
+        doc.normalize_uids();
+
+        // Compared against ascending uid, not against array order: the array is
+        // still in chain order, so array order would coincide with race order
+        // and prove nothing.
+        let mut ascending: Vec<u32> = doc.pieces.iter().map(|p| p.uid.0).collect();
+        ascending.sort_unstable();
+        let order: Vec<u32> = doc.race_order().iter().map(|u| u.0).collect();
+        assert_ne!(order, ascending, "race order must not read the uids");
+        assert_eq!(order.len(), doc.pieces.len(), "no piece may be dropped");
+    }
+
+    #[test]
+    fn race_order_includes_pieces_the_road_never_reaches() {
+        let mut doc = crate::demo::demo_track();
+        let uid = doc.next_piece_uid();
+        let orphan = PieceInstance::new(PieceId::Straight, [500, 0, 500]).with_uid(uid);
+        doc.pieces.push(orphan);
+        doc.normalize_uids();
+
+        let order = doc.race_order();
+        assert_eq!(order.len(), doc.pieces.len());
+        assert!(order.contains(&orphan.uid), "a detached piece is still a piece");
+        assert!(
+            !doc.route().contains(&orphan.uid),
+            "and it is still not part of the chain"
+        );
+    }
+
+    #[test]
+    fn shuffling_the_file_does_not_change_race_order() {
+        // The property the fingerprint already promised and the world now relies
+        // on: an identical track stored in a different order is the same track.
+        let doc = crate::demo::demo_track();
+        let mut shuffled = doc.clone();
+        shuffled.pieces.reverse();
+        assert_eq!(
+            doc.race_order(),
+            shuffled.race_order(),
+            "piece array order must not reach race order"
+        );
+        assert_eq!(doc.route(), shuffled.route());
+        assert_eq!(
+            crate::fingerprint::gameplay_fingerprint(&doc),
+            crate::fingerprint::gameplay_fingerprint(&shuffled)
+        );
+    }
+
+    #[test]
+    fn a_contested_join_resolves_the_same_either_way_round() {
+        // Two straights whose entries both mate head-on with the same exit. The
+        // tie-break used to read the piece array, so which one the chain picked
+        // could change under a shuffle while the fingerprint stayed put — and
+        // race order is derived from this chain.
+        let mut doc = TrackDocument::empty();
+        doc.pieces = vec![
+            PieceInstance::new(PieceId::Start, [0, 0, 0]).with_uid(PieceUid(1)),
+            PieceInstance::new(PieceId::Straight, [0, 0, 2]).with_uid(PieceUid(2)),
+            PieceInstance::new(PieceId::Straight, [0, 0, 2]).with_uid(PieceUid(3)),
+        ];
+        doc.normalize_uids();
+        let forward = doc.route();
+        assert!(
+            forward.len() >= 3,
+            "the fixture must actually present a contested join: {forward:?}"
+        );
+        doc.pieces.reverse();
+        assert_eq!(forward, doc.route(), "the chain may not depend on file order");
+    }
+
+    #[test]
+    fn zones_come_back_in_race_order() {
+        let doc = crate::demo::demo_track();
+        let zones: Vec<PieceUid> = doc.zones().iter().map(|p| p.uid).collect();
+        let order = doc.race_order();
+        let ranks: Vec<usize> = zones
+            .iter()
+            .map(|uid| order.iter().position(|u| u == uid).expect("zone is a piece"))
+            .collect();
+        let mut sorted = ranks.clone();
+        sorted.sort_unstable();
+        assert_eq!(ranks, sorted, "zones must not come back in file order");
     }
 }

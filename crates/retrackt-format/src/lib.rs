@@ -12,6 +12,7 @@ pub mod geometry;
 pub mod piece;
 pub mod replay;
 pub mod track;
+pub mod validate;
 
 pub use code::{CodeError, export_code, import_code};
 pub use demo::{ChainBuilder, builtin_tracks, demo_track, stunt_track};
@@ -20,6 +21,7 @@ pub use geometry::{Centerline, RawMesh, piece_shape};
 pub use piece::{PieceDef, PieceId, PieceParams, catalog, catalog_by_id, rotate_local_xz};
 pub use replay::{PackedInput, ReplayError, ReplayTape, decode_replay, encode_replay};
 pub use track::{FORMAT_VERSION, MAX_PIECES, PieceInstance, PieceUid, TrackDocument, TrackError};
+pub use validate::{Diagnostic, Severity, is_unraceable, validate};
 
 /// Half the drivable road width, in cells. Road is one cell wide.
 pub const ROAD_HALF_CELLS: f32 = 0.5;
