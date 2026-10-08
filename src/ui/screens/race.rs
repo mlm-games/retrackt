@@ -107,16 +107,14 @@ fn stick_layers(stick: StickView) -> Vec<View> {
 fn disc(center: (f32, f32), radius_dp: f32, color: Color) -> View {
     let size = theme::dp(radius_dp * 2.0);
     let (top, bottom, left, right) = at(center, radius_dp);
-    Box(
-        Modifier::new()
-            .absolute()
-            .offset(top, bottom, left, right)
-            .width(size)
-            .height(size)
-            .background(color)
-            .clip_rounded(size / 2.0)
-            .hit_passthrough(),
-    )
+    Box(Modifier::new()
+        .absolute()
+        .offset(top, bottom, left, right)
+        .width(size)
+        .height(size)
+        .background(color)
+        .clip_rounded(size / 2.0)
+        .hit_passthrough())
     .child(Spacer())
 }
 
@@ -125,15 +123,13 @@ fn disc(center: (f32, f32), radius_dp: f32, color: Color) -> View {
 fn ring(center: (f32, f32), radius_dp: f32, color: Color) -> View {
     let size = theme::dp(radius_dp * 2.0);
     let (top, bottom, left, right) = at(center, radius_dp);
-    Box(
-        Modifier::new()
-            .absolute()
-            .offset(top, bottom, left, right)
-            .width(size)
-            .height(size)
-            .border(theme::dp(2.0), color, size / 2.0)
-            .hit_passthrough(),
-    )
+    Box(Modifier::new()
+        .absolute()
+        .offset(top, bottom, left, right)
+        .width(size)
+        .height(size)
+        .border(theme::dp(2.0), color, size / 2.0)
+        .hit_passthrough())
     .child(Spacer())
 }
 
@@ -161,7 +157,11 @@ mod tests {
             anchor: (100.0, 200.0),
             knob: (0.0, 0.0),
         });
-        assert_eq!(layers.len(), 7, "shadow, base, well, ring, centre, knob rim, knob");
+        assert_eq!(
+            layers.len(),
+            7,
+            "shadow, base, well, ring, centre, knob rim, knob"
+        );
     }
 
     /// The ring has to sit outside the knob's own radius or it is invisible while the

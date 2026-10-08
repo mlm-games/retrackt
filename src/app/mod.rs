@@ -303,13 +303,21 @@ impl App {
                     self.prev_ghost = None;
                     Some(ghost_car)
                 } else {
-                    Some(blend(&mut self.prev_ghost, ghost_car, ghost_car.respawned, alpha))
+                    Some(blend(
+                        &mut self.prev_ghost,
+                        ghost_car,
+                        ghost_car.respawned,
+                        alpha,
+                    ))
                 }
             } else {
                 self.prev_ghost = None;
                 None
             };
-            (blend(&mut self.prev_car, car, car.respawned, alpha), translucent)
+            (
+                blend(&mut self.prev_car, car, car.respawned, alpha),
+                translucent,
+            )
         };
 
         let followed = if watching { ghost_car } else { car };
@@ -790,7 +798,12 @@ impl App {
         // viewer is about to take, so it goes first rather than arming over the top.
         self.leave_run();
         let world = self.sim.world.resource::<TrackRes>().0.clone();
-        if let Err(e) = self.sim.world.resource_mut::<GhostRes>().arm(tape, track, &world) {
+        if let Err(e) = self
+            .sim
+            .world
+            .resource_mut::<GhostRes>()
+            .arm(tape, track, &world)
+        {
             self.data.notice = Some(e);
             return;
         }

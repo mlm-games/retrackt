@@ -1,7 +1,7 @@
 use repose_core::{Modifier, View};
 use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Text, TextStyle, ViewExt};
 
-use crate::app::state::{REPLAY_SPEEDS, ActionQueue, AppData, ReplayView, UiAct};
+use crate::app::state::{ActionQueue, AppData, REPLAY_SPEEDS, ReplayView, UiAct};
 use crate::app::theme;
 use crate::ui::fit;
 use crate::ui::widgets::{
@@ -43,10 +43,14 @@ pub fn replay_ui(data: &AppData, actions: &ActionQueue) -> View {
     // line has a finish time that is not where the recording stops, and a bar that
     // filled at the line would claim there was nothing after it.
     children.push(
-        Text(format!("{}  /  {}", fmt_ticks(view.tick), fmt_ticks(view.len)))
-            .size(theme::sp(24.0))
-            .color(theme::accent())
-            .single_line(),
+        Text(format!(
+            "{}  /  {}",
+            fmt_ticks(view.tick),
+            fmt_ticks(view.len)
+        ))
+        .size(theme::sp(24.0))
+        .color(theme::accent())
+        .single_line(),
     );
     // A tape with no finish tick was recorded but never crossed the line. Saying so
     // beats printing a zero the player has to interpret.
@@ -107,14 +111,8 @@ fn transport(view: &ReplayView, actions: &ActionQueue) -> View {
         if view.playing { "Pause" } else { "Play" },
         pusher(actions, UiAct::ReplayPlayPause),
     ))
-    .child(ghost_btn(
-        "Start",
-        pusher(actions, UiAct::ReplayRestart),
-    ))
-    .child(ghost_btn(
-        "-1s",
-        pusher(actions, UiAct::ReplaySeek(-1)),
-    ))
+    .child(ghost_btn("Start", pusher(actions, UiAct::ReplayRestart)))
+    .child(ghost_btn("-1s", pusher(actions, UiAct::ReplaySeek(-1))))
     .child(ghost_btn("+1s", pusher(actions, UiAct::ReplaySeek(1))));
 
     // Both ends of the ladder stop at the edge rather than stepping off it:
@@ -158,22 +156,18 @@ fn playhead(view: &ReplayView) -> View {
         (view.tick as f32 / view.len as f32).clamp(0.0, 1.0)
     };
     let bar = fit::fit(BAR_DP, 40.0);
-    let track = Box(
-        Modifier::new()
-            .width(theme::dp(bar))
-            .height(theme::dp(BAR_H_DP))
-            .background(theme::text_dim().with_alpha_f32(0.3))
-            .clip_rounded(theme::dp(BAR_H_DP / 2.0))
-            .hit_passthrough(),
-    );
-    let fill = Box(
-        Modifier::new()
-            .width(theme::dp(bar * filled))
-            .height(theme::dp(BAR_H_DP))
-            .background(theme::accent())
-            .clip_rounded(theme::dp(BAR_H_DP / 2.0))
-            .hit_passthrough(),
-    );
+    let track = Box(Modifier::new()
+        .width(theme::dp(bar))
+        .height(theme::dp(BAR_H_DP))
+        .background(theme::text_dim().with_alpha_f32(0.3))
+        .clip_rounded(theme::dp(BAR_H_DP / 2.0))
+        .hit_passthrough());
+    let fill = Box(Modifier::new()
+        .width(theme::dp(bar * filled))
+        .height(theme::dp(BAR_H_DP))
+        .background(theme::accent())
+        .clip_rounded(theme::dp(BAR_H_DP / 2.0))
+        .hit_passthrough());
     // The fill goes inside the track rather than overlapping it, so it cannot spill
     // past the end however the corner rounding works out.
     track.child(fill)

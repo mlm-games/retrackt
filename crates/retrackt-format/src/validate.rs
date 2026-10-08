@@ -173,12 +173,7 @@ pub fn validate(doc: &TrackDocument) -> Vec<Diagnostic> {
         }
     }
 
-    if reaches_finish
-        && !doc
-            .pieces
-            .iter()
-            .any(|p| catalog_by_id(p.id).is_checkpoint)
-    {
+    if reaches_finish && !doc.pieces.iter().any(|p| catalog_by_id(p.id).is_checkpoint) {
         out.push(Diagnostic::warning(
             "No checkpoints: the run is one unbroken line to the Finish.",
         ));
@@ -196,9 +191,7 @@ pub fn validate(doc: &TrackDocument) -> Vec<Diagnostic> {
 
 /// True when the track cannot be raced, i.e. at least one error.
 pub fn is_unraceable(diagnostics: &[Diagnostic]) -> bool {
-    diagnostics
-        .iter()
-        .any(|d| d.severity == Severity::Error)
+    diagnostics.iter().any(|d| d.severity == Severity::Error)
 }
 
 #[cfg(test)]
@@ -251,8 +244,7 @@ mod tests {
     #[test]
     fn a_document_without_a_start_or_a_finish_says_so() {
         let mut doc = TrackDocument::empty();
-        doc.pieces = vec![PieceInstance::new(PieceId::Straight, [0, 0, 0])
-            .with_uid(PieceUid(1))];
+        doc.pieces = vec![PieceInstance::new(PieceId::Straight, [0, 0, 0]).with_uid(PieceUid(1))];
         let found = errors(&doc);
         assert!(found.contains(&"No Start piece: there is nowhere to begin.".to_string()));
         assert!(found.contains(&"No Finish piece: the run has no end.".to_string()));
@@ -265,10 +257,7 @@ mod tests {
             PieceInstance::new(PieceId::Start, [0, 0, 0]).with_uid(PieceUid(1)),
             PieceInstance::new(PieceId::Start, [0, 0, 4]).with_uid(PieceUid(2)),
         ];
-        assert!(
-            errors(&doc)
-                .contains(&"2 Start pieces: a run begins in one place.".to_string())
-        );
+        assert!(errors(&doc).contains(&"2 Start pieces: a run begins in one place.".to_string()));
     }
 
     #[test]
@@ -313,14 +302,11 @@ mod tests {
         let mut doc = demo_track();
         // A second finish, parked where no road reaches it.
         let uid = doc.next_piece_uid();
-        doc.pieces.push(
-            PieceInstance::new(PieceId::Checkpoint, [200, 0, 200]).with_uid(uid),
-        );
+        doc.pieces
+            .push(PieceInstance::new(PieceId::Checkpoint, [200, 0, 200]).with_uid(uid));
         doc.normalize_uids();
         assert!(
-            errors(&doc)
-                .iter()
-                .any(|m| m.contains("not on the route")),
+            errors(&doc).iter().any(|m| m.contains("not on the route")),
             "an unreachable gate must be reported, not ignored"
         );
     }
@@ -359,7 +345,11 @@ mod tests {
         doc.normalize_uids();
 
         let found = validate(&doc);
-        assert!(errors(&doc).is_empty(), "overlap is not fatal: {:?}", errors(&doc));
+        assert!(
+            errors(&doc).is_empty(),
+            "overlap is not fatal: {:?}",
+            errors(&doc)
+        );
         assert!(
             warnings(&doc).iter().any(|m| m.contains("share cells")),
             "{:?}",
@@ -376,9 +366,7 @@ mod tests {
         doc.normalize_uids();
         assert!(errors(&doc).is_empty(), "{:?}", errors(&doc));
         assert!(
-            warnings(&doc)
-                .iter()
-                .any(|m| m.contains("off the route")),
+            warnings(&doc).iter().any(|m| m.contains("off the route")),
             "{:?}",
             warnings(&doc)
         );

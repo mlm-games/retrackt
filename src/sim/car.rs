@@ -416,13 +416,7 @@ pub fn step_car(
 
 /// Motion on a surface with normal `n`, in surface coordinates: a heading
 /// angle plus forward/sideways speed; rotating world velocity instead destroys the turn.
-fn ground_step(
-    car: &mut Car,
-    input: &VehicleInput,
-    c: Contact,
-    tune: &CarTuning,
-    dt: f32,
-) {
+fn ground_step(car: &mut Car, input: &VehicleInput, c: Contact, tune: &CarTuning, dt: f32) {
     let n = c.normal;
     let speed = car.speed();
 
@@ -582,8 +576,8 @@ fn frame_from(n: Vec3, fwd: Vec3, steer: f32, _tune: &CarTuning, _dt: f32) -> Qu
 
 #[cfg(test)]
 mod basis_tests {
-    use super::*;
     use super::tests::{DT, flat_track, fresh};
+    use super::*;
     use glam::{Mat3, Quat};
 
     #[test]
@@ -599,14 +593,8 @@ mod basis_tests {
         let inputs: Vec<VehicleInput> = (0..(120 * 6))
             .map(|t| {
                 let steer = ((t as f32) * 0.017).sin() * 0.7;
-                let packed = retrackt_format::PackedInput::new(
-                    steer,
-                    1.0,
-                    0.0,
-                    t % 211 == 0,
-                    false,
-                    false,
-                );
+                let packed =
+                    retrackt_format::PackedInput::new(steer, 1.0, 0.0, t % 211 == 0, false, false);
                 VehicleInput {
                     steer: packed.steer_f32(),
                     throttle: packed.throttle_f32(),

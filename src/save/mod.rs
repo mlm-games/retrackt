@@ -906,12 +906,8 @@ mod tests {
     fn deleting_a_ghost_removes_it_from_the_save_round_trip() {
         let mgr = mem_manager();
         let mut data = SaveData::default();
-        data.ghosts
-            .insert(entry("two", "two", 1, 2, 100))
-            .unwrap();
-        data.ghosts
-            .insert(entry("one", "one", 1, 2, 200))
-            .unwrap();
+        data.ghosts.insert(entry("two", "two", 1, 2, 100)).unwrap();
+        data.ghosts.insert(entry("one", "one", 1, 2, 200)).unwrap();
         save_with(&mgr, &data).expect("saves");
 
         let mut loaded = load_with(&mgr).0;

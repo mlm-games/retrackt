@@ -54,7 +54,10 @@ fn piece_plan(doc: &TrackDocument, inst: &retrackt_format::PieceInstance) -> Vec
         .reserve_cells()
         .map(|local| {
             let w = retrackt_format::rotate_local_xz(local, inst.yaw);
-            (inst.cell[0].saturating_add(w[0]), inst.cell[2].saturating_add(w[2]))
+            (
+                inst.cell[0].saturating_add(w[0]),
+                inst.cell[2].saturating_add(w[2]),
+            )
         })
         .collect()
 }
@@ -121,7 +124,10 @@ pub fn thumbnail(doc: &TrackDocument, size: f32) -> Option<View> {
             cells.push(Box(cell_modifier(plan.get(&(x, z)).copied())));
         }
         rows.push(
-            Row(Modifier::new().align_items(AlignItems::CENTER).flex_shrink(0.0)).child(cells),
+            Row(Modifier::new()
+                .align_items(AlignItems::CENTER)
+                .flex_shrink(0.0))
+            .child(cells),
         );
     }
 

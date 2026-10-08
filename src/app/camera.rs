@@ -81,7 +81,10 @@ impl ChaseCamera {
         self.prev = self.pose();
         let follow = 1.0 - (-FOLLOW_RATE * dt.max(0.0)).exp();
         self.target += (car.pos - self.target) * follow;
-        if let Some(turn) = self.last_heading.and_then(|from| turned(from, car.heading_dir)) {
+        if let Some(turn) = self
+            .last_heading
+            .and_then(|from| turned(from, car.heading_dir))
+        {
             // Accumulated from the turns that actually happened, never read back off
             // the car: a heading has no readable direction while the car is vertical
             // on a loop wall, and the reading either side of that is a half turn out,
@@ -314,11 +317,7 @@ mod tests {
 
         for step in 1..240 {
             // A steady turn, then straight again: both phases, and the change between.
-            let yaw = if step < 120 {
-                step as f32 * 0.01
-            } else {
-                1.19
-            };
+            let yaw = if step < 120 { step as f32 * 0.01 } else { 1.19 };
             car.orient = Quat::from_rotation_y(yaw);
             car.heading_dir = Vec3::new(yaw.sin(), 0.0, yaw.cos());
             cam.update(1.0 / 60.0, &car);

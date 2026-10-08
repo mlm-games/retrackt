@@ -151,11 +151,7 @@ impl History {
 /// A param nudge already at its limit must not push an entry: undoing it would
 /// land on the same state and the button would appear to do nothing.
 pub fn changed(uid: PieceUid, before: PieceInstance, after: PieceInstance) -> Option<Edit> {
-    (before != after).then_some(Edit::Changed {
-        uid,
-        before,
-        after,
-    })
+    (before != after).then_some(Edit::Changed { uid, before, after })
 }
 
 #[cfg(test)]
@@ -198,10 +194,7 @@ mod tests {
         let mut h = History::new();
         let at = 1;
         let removed = doc.pieces.remove(at);
-        h.push(Edit::Removed {
-            at,
-            piece: removed,
-        });
+        h.push(Edit::Removed { at, piece: removed });
 
         h.undo(&mut doc).expect("an edit to undo");
         assert_eq!(doc.pieces, three().pieces);

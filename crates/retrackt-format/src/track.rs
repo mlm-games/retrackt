@@ -124,7 +124,12 @@ impl TrackDocument {
         // two must be tracked apart: deciding which piece keeps an identity
         // consumes it, so `assigned` only ever grows and is what a fresh value
         // is checked against.
-        let present: BTreeSet<u32> = self.pieces.iter().map(|p| p.uid.0).filter(|u| *u != 0).collect();
+        let present: BTreeSet<u32> = self
+            .pieces
+            .iter()
+            .map(|p| p.uid.0)
+            .filter(|u| *u != 0)
+            .collect();
         let mut assigned: BTreeSet<u32> = BTreeSet::new();
         // Fresh ids start above the highest one claimed, so a document carrying
         // an enormous uid costs no walk across the gap below it. A saturated
@@ -528,8 +533,12 @@ mod tests {
     fn an_oversized_document_is_refused_at_parse() {
         let mut doc = TrackDocument::empty();
         doc.pieces = vec![PieceInstance::new(PieceId::Straight, [0, 0, 0]); MAX_PIECES];
-        assert!(doc.check_piece_count().is_ok(), "the limit itself is allowed");
-        doc.pieces.push(PieceInstance::new(PieceId::Straight, [0, 0, 1]));
+        assert!(
+            doc.check_piece_count().is_ok(),
+            "the limit itself is allowed"
+        );
+        doc.pieces
+            .push(PieceInstance::new(PieceId::Straight, [0, 0, 1]));
         assert!(doc.check_piece_count().is_err());
         assert!(TrackDocument::from_ron(&doc.to_ron().unwrap()).is_err());
     }
@@ -553,7 +562,11 @@ mod tests {
         let mut distinct = uids.clone();
         distinct.sort_unstable();
         distinct.dedup();
-        assert_eq!(distinct.len(), uids.len(), "no identity may repeat: {uids:?}");
+        assert_eq!(
+            distinct.len(),
+            uids.len(),
+            "no identity may repeat: {uids:?}"
+        );
 
         let before = doc.pieces.clone();
         doc.normalize_uids();
@@ -681,7 +694,10 @@ mod tests {
 
         let order = doc.race_order();
         assert_eq!(order.len(), doc.pieces.len());
-        assert!(order.contains(&orphan.uid), "a detached piece is still a piece");
+        assert!(
+            order.contains(&orphan.uid),
+            "a detached piece is still a piece"
+        );
         assert!(
             !doc.route().contains(&orphan.uid),
             "and it is still not part of the chain"
@@ -731,7 +747,11 @@ mod tests {
             "the fixture must actually present a contested join: {forward:?}"
         );
         doc.pieces.reverse();
-        assert_eq!(forward, doc.route(), "the chain may not depend on file order");
+        assert_eq!(
+            forward,
+            doc.route(),
+            "the chain may not depend on file order"
+        );
     }
 
     #[test]
@@ -741,7 +761,12 @@ mod tests {
         let order = doc.race_order();
         let ranks: Vec<usize> = zones
             .iter()
-            .map(|uid| order.iter().position(|u| u == uid).expect("zone is a piece"))
+            .map(|uid| {
+                order
+                    .iter()
+                    .position(|u| u == uid)
+                    .expect("zone is a piece")
+            })
             .collect();
         let mut sorted = ranks.clone();
         sorted.sort_unstable();

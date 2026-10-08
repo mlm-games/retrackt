@@ -64,16 +64,18 @@ fn notice_bar(data: &AppData, actions: &crate::app::state::ActionQueue) -> Optio
             )
             .clip_rounded(theme::dp(8.0)))
         .child(
-            Row(Modifier::new().gap(theme::dp(12.0)).padding(theme::dp(10.0)))
-                .child(
-                    Box(Modifier::new().flex_grow(1.0)).child(
-                        Text(text)
-                            .size(theme::sp(15.0))
-                            .color(theme::text())
-                            .single_line(),
-                    ),
-                )
-                .child(dismiss),
+            Row(Modifier::new()
+                .gap(theme::dp(12.0))
+                .padding(theme::dp(10.0)))
+            .child(
+                Box(Modifier::new().flex_grow(1.0)).child(
+                    Text(text)
+                        .size(theme::sp(15.0))
+                        .color(theme::text())
+                        .single_line(),
+                ),
+            )
+            .child(dismiss),
         ),
     )
 }

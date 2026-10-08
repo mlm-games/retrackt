@@ -20,7 +20,11 @@ pub fn invalidate() {
 /// that grows with the player's own library. The borrow cannot outlive the
 /// closure, which is enough because every caller reads and drops it.
 pub fn with_saved<R>(f: impl FnOnce(&[TrackDocument]) -> R) -> R {
-    SAVED.with(|slot| f(slot.borrow_mut().get_or_insert_with(crate::save::stored_tracks)))
+    SAVED.with(|slot| {
+        f(slot
+            .borrow_mut()
+            .get_or_insert_with(crate::save::stored_tracks))
+    })
 }
 
 /// Names only, deduplicated in stored order.
@@ -51,10 +55,11 @@ mod tests {
     fn doc(name: &str, pieces: usize) -> TrackDocument {
         let mut d = TrackDocument::empty();
         d.name = name.into();
-        d.pieces = vec![retrackt_format::PieceInstance::new(
-            retrackt_format::PieceId::Straight,
-            [0, 0, 0],
-        ); pieces];
+        d.pieces =
+            vec![
+                retrackt_format::PieceInstance::new(retrackt_format::PieceId::Straight, [0, 0, 0],);
+                pieces
+            ];
         d
     }
 

@@ -289,7 +289,8 @@ mod tests {
         let p = placement_at(&doc, PieceId::Straight, [0, 0, 4], 2);
         assert!(p.snapped, "placement: {p:?}");
         assert_eq!(
-            p.anchor, [0, 0, 3],
+            p.anchor,
+            [0, 0, 3],
             "z=3 is nearer than z=2, so it is the one to join"
         );
     }
@@ -380,7 +381,10 @@ mod tests {
         doc.pieces.remove(finish);
 
         let placement = placement_at(&doc, PieceId::Checkpoint, cursor_home(&doc), 1);
-        assert!(placement.snapped, "the tail of an open route is somewhere to build");
+        assert!(
+            placement.snapped,
+            "the tail of an open route is somewhere to build"
+        );
     }
 
     #[test]

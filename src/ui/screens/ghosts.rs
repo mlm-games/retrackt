@@ -114,9 +114,8 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
 /// holds: a text field in the middle of a conditional subtree would otherwise
 /// renumber everything after it.
 pub fn ghost_save_row(data: &AppData, actions: &ActionQueue) -> View {
-    let state: Rc<RefCell<TextFieldState>> = remember_with_key("ghosts.name", {
-        || RefCell::new(TextFieldState::new())
-    });
+    let state: Rc<RefCell<TextFieldState>> =
+        remember_with_key("ghosts.name", { || RefCell::new(TextFieldState::new()) });
     // The field is the source of truth while it has focus; the draft on
     // `AppData` is what survives leaving the screen.
     if state.borrow().text != data.ghost_draft {
@@ -151,7 +150,9 @@ pub fn ghost_save_row(data: &AppData, actions: &ActionQueue) -> View {
     };
 
     FlowRow(
-        Modifier::new().gap(theme::dp(10.0)).align_items(AlignItems::CENTER),
+        Modifier::new()
+            .gap(theme::dp(10.0))
+            .align_items(AlignItems::CENTER),
         FlowRowConfig::default(),
     )
     .child([

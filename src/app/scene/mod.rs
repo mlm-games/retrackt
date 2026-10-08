@@ -364,7 +364,11 @@ impl App {
                 &self.data.track,
                 &retrackt_format::PieceInstance::new(editor.armed, place.anchor)
                     .with_yaw(place.yaw),
-                if place.snapped { PREVIEW_SNAP } else { PREVIEW_FREE },
+                if place.snapped {
+                    PREVIEW_SNAP
+                } else {
+                    PREVIEW_FREE
+                },
             ),
             track::cursor_group(&self.data.track, editor.cursor),
         ]

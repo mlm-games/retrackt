@@ -587,7 +587,11 @@ mod tests {
 
         sched.touch_points = vec![(5, 100.0 + travel * 0.5, 200.0)];
         stick.update(&sched, true);
-        assert_eq!(stick.anchor, (100.0, 200.0), "a short drag must not drag the ring");
+        assert_eq!(
+            stick.anchor,
+            (100.0, 200.0),
+            "a short drag must not drag the ring"
+        );
         assert!((stick.knob.0 - travel * 0.5).abs() < 1e-3);
     }
 
@@ -680,7 +684,9 @@ mod tests {
     fn steps_while_held(keys: &[PhysicalKey], frames: u32) -> Vec<[i16; 3]> {
         let sched = sched_with(keys);
         let mut input = InputState::new();
-        (0..frames).map(|_| input.poll_editor(&sched).step).collect()
+        (0..frames)
+            .map(|_| input.poll_editor(&sched).step)
+            .collect()
     }
 
     #[test]
@@ -690,12 +696,18 @@ mod tests {
         assert_eq!(frames[0], [0, 0, -1], "the press itself fires");
         // Silent until the delay has elapsed, counting from the frame *after* the
         // press: frame 0 already fired, so the quiet run is 1..DELAY.
-        for (n, step) in frames.iter().enumerate().take(REPEAT_DELAY_FRAMES as usize).skip(1) {
+        for (n, step) in frames
+            .iter()
+            .enumerate()
+            .take(REPEAT_DELAY_FRAMES as usize)
+            .skip(1)
+        {
             assert_eq!(*step, [0, 0, 0], "frame {n} must be inside the delay");
         }
         // Then it fires exactly once per period.
         assert_eq!(
-            frames[REPEAT_DELAY_FRAMES as usize], [0, 0, -1],
+            frames[REPEAT_DELAY_FRAMES as usize],
+            [0, 0, -1],
             "the first repeat lands on the delay"
         );
         for n in 1..REPEAT_PERIOD_FRAMES {
@@ -736,7 +748,9 @@ mod tests {
         }
         assert_eq!(input.poll_editor(&sched_with(&[])).step, [0, 0, 0]);
         assert_eq!(
-            input.poll_editor(&sched_with(&[PhysicalKey::ArrowRight])).step,
+            input
+                .poll_editor(&sched_with(&[PhysicalKey::ArrowRight]))
+                .step,
             [1, 0, 0],
             "held again, it must fire at once rather than waiting out the delay"
         );
@@ -791,10 +805,10 @@ mod tests {
     #[test]
     fn a_modified_direction_key_does_not_move_the_cursor() {
         let mut input = InputState::new();
-        let frame =
-            input.poll_editor(&sched_with(&[PhysicalKey::ControlLeft, PhysicalKey::KeyD]));
+        let frame = input.poll_editor(&sched_with(&[PhysicalKey::ControlLeft, PhysicalKey::KeyD]));
         assert_eq!(
-            frame.step, [0, 0, 0],
+            frame.step,
+            [0, 0, 0],
             "Ctrl+D duplicates; it is not cursor-right"
         );
         assert!(frame.pressed.duplicate);
@@ -802,9 +816,12 @@ mod tests {
 
     #[test]
     fn shift_a_selects_the_route_and_plain_a_moves_the_cursor() {
-        let shifted =
-            steps_while_held(&[PhysicalKey::ShiftLeft, PhysicalKey::KeyA], 1);
-        assert_eq!(shifted, vec![[0, 0, 0]], "a modified key is not a cursor key");
+        let shifted = steps_while_held(&[PhysicalKey::ShiftLeft, PhysicalKey::KeyA], 1);
+        assert_eq!(
+            shifted,
+            vec![[0, 0, 0]],
+            "a modified key is not a cursor key"
+        );
 
         let mut input = InputState::new();
         let frame = input.poll_editor(&sched_with(&[PhysicalKey::ShiftLeft, PhysicalKey::KeyA]));
@@ -815,8 +832,18 @@ mod tests {
     fn undo_and_redo_accept_either_control_side() {
         for ctrl in [PhysicalKey::ControlLeft, PhysicalKey::ControlRight] {
             let mut input = InputState::new();
-            assert!(input.poll_editor(&sched_with(&[ctrl, PhysicalKey::KeyZ])).pressed.undo);
-            assert!(input.poll_editor(&sched_with(&[ctrl, PhysicalKey::KeyY])).pressed.redo);
+            assert!(
+                input
+                    .poll_editor(&sched_with(&[ctrl, PhysicalKey::KeyZ]))
+                    .pressed
+                    .undo
+            );
+            assert!(
+                input
+                    .poll_editor(&sched_with(&[ctrl, PhysicalKey::KeyY]))
+                    .pressed
+                    .redo
+            );
         }
     }
 

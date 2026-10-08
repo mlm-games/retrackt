@@ -78,7 +78,8 @@ pub fn import_code(code: &str) -> Result<TrackDocument, CodeError> {
         return Err(CodeError::FutureFormat);
     }
     let mut doc = env.doc;
-    doc.check_piece_count().map_err(|_| CodeError::TooManyPieces)?;
+    doc.check_piece_count()
+        .map_err(|_| CodeError::TooManyPieces)?;
     doc.normalize_uids();
     Ok(doc)
 }
