@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use repose_core::ImageHandle;
 use retrackt_format::TrackDocument;
 
 use crate::session::result::RaceResult;
@@ -232,10 +231,9 @@ pub struct AppData {
     /// a failed save or load). Cleared when a race starts or the track changes.
     pub notice: Option<String>,
     pub actions: ActionQueue,
-    /// Set once the player first touches during a race.
+    /// Set while a finger is holding the touch stick during a race. Drawn from
+    /// shapes rather than textures, so there is nothing to upload.
     pub stick: Option<StickView>,
-    /// Base and knob textures, uploaded on the frame the stick first shows.
-    pub stick_images: Option<(ImageHandle, ImageHandle)>,
     pub editor: EditorData,
 }
 

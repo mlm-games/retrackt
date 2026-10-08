@@ -57,15 +57,6 @@ fn travel_px() -> f32 {
     dp_to_px(Dp(STICK_TRAVEL_DP)).0
 }
 
-fn clamp_to_circle(x: f32, y: f32, r: f32) -> (f32, f32) {
-    let len = (x * x + y * y).sqrt();
-    if len > r && len > 0.0 {
-        (x * r / len, y * r / len)
-    } else {
-        (x, y)
-    }
-}
-
 /// `(steer, throttle, brake)` from a knob offset in physical px. Screen y
 /// grows downward, so up is negative.
 fn stick_axis(knob: (f32, f32), travel: f32) -> (f32, bool, bool) {
@@ -80,12 +71,12 @@ fn stick_axis(knob: (f32, f32), travel: f32) -> (f32, bool, bool) {
 }
 
 /// Anchored at the first touch of a race and grabbed by whichever finger is
-/// down; the knob returns to centre on release but the anchor stays put.
+/// down; the knob returns to centre on release.
 ///
 /// Shown only while a finger holds it, so the stick is not left sitting on the
-/// track between runs. The anchor outliving the touch is what makes the next one
-/// land where the last one was released rather than wherever the player happened
-/// to tap.
+/// track between runs. The anchor outlives the touch — it is wherever the ring
+/// had slid to — so the next touch continues from the last one's position rather
+/// than jumping back to wherever the player happened to tap.
 #[derive(Default)]
 struct TouchStick {
     anchor: (f32, f32),
@@ -107,7 +98,20 @@ impl TouchStick {
             match sched.touch_points.iter().find(|(tid, _, _)| *tid == id) {
                 Some((_, x, y)) => {
                     let (dx, dy) = (x - self.anchor.0, y - self.anchor.1);
-                    self.knob = clamp_to_circle(dx, dy, travel_px());
+                    let travel = travel_px();
+                    let len = (dx * dx + dy * dy).sqrt();
+                    // Past full travel the ring comes along with the finger instead
+                    // of pinning to where the drag began, so a thumb that runs out
+                    // of room keeps steering rather than jamming against a stop that
+                    // never moves.
+                    let (dx, dy) = if len > travel && len > 0.0 {
+                        let k = travel / len;
+                        self.anchor = (x - dx * k, y - dy * k);
+                        (dx * k, dy * k)
+                    } else {
+                        (dx, dy)
+                    };
+                    self.knob = (dx, dy);
                 }
                 None => {
                     self.finger = None;
@@ -524,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn touch_track_stays_put_and_releases_cleanly() {
+    fn the_knob_recentres_when_the_finger_lifts() {
         let mut sched = Scheduler::new();
         let mut stick = TouchStick::default();
         assert_eq!(stick.finger, None);
@@ -534,19 +538,86 @@ mod tests {
         assert_eq!(stick.anchor, (100.0, 200.0));
         assert_eq!(stick.finger, Some(7));
 
-        sched.touch_points = vec![(7, 10_000.0, 200.0)];
+        sched.touch_points = vec![(7, 130.0, 200.0)];
         stick.update(&sched, true);
-        let travel = travel_px();
-        assert!((stick.knob.0 - travel).abs() < 1e-3);
-        assert_eq!(stick.knob.1, 0.0);
+        assert!(stick.knob.0 > 0.0, "a drag right steers right");
 
-        // Released: the knob centres, and the anchor is kept so the next touch lands
-        // where this one was released.
+        // Released: the knob centres and the finger is let go.
         sched.touch_points.clear();
         stick.update(&sched, true);
         assert_eq!(stick.finger, None);
         assert_eq!(stick.knob, (0.0, 0.0));
-        assert_eq!(stick.anchor, (100.0, 200.0));
+    }
+
+    #[test]
+    fn the_ring_slides_with_a_finger_that_runs_past_full_travel() {
+        // Beyond full travel the ring comes along, so a thumb that reaches the edge
+        // of the screen keeps steering instead of jamming against a fixed stop.
+        let mut sched = Scheduler::new();
+        let mut stick = TouchStick::default();
+        let travel = travel_px();
+
+        sched.touch_points.push((2, 100.0, 200.0));
+        stick.update(&sched, true);
+
+        // A drag well past the travel: the ring should have moved, and the knob
+        // should still be exactly one travel from it.
+        sched.touch_points = vec![(2, 100.0 + travel * 3.0, 200.0)];
+        stick.update(&sched, true);
+        assert!(
+            stick.anchor.0 > 100.0 + travel,
+            "the ring did not follow the finger: anchor {:?}",
+            stick.anchor
+        );
+        let (dx, dy) = stick.knob;
+        assert!(((dx * dx + dy * dy).sqrt() - travel).abs() < 1e-3);
+        assert_eq!(dy, 0.0);
+        // The knob sits between the ring and the finger, not at the finger.
+        assert!(stick.knob.0 < 100.0 + travel * 3.0);
+    }
+
+    #[test]
+    fn a_drag_within_travel_leaves_the_ring_where_it_was() {
+        let mut sched = Scheduler::new();
+        let mut stick = TouchStick::default();
+        let travel = travel_px();
+
+        sched.touch_points.push((5, 100.0, 200.0));
+        stick.update(&sched, true);
+
+        sched.touch_points = vec![(5, 100.0 + travel * 0.5, 200.0)];
+        stick.update(&sched, true);
+        assert_eq!(stick.anchor, (100.0, 200.0), "a short drag must not drag the ring");
+        assert!((stick.knob.0 - travel * 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_knob_never_leaves_the_ring_however_far_the_finger_goes() {
+        // The knob is a position on the ring, not a free vector, so full deflection
+        // is the ceiling however far the drag runs — and a drag short of it is
+        // proportional rather than clamped.
+        let mut sched = Scheduler::new();
+        let mut stick = TouchStick::default();
+        let travel = travel_px();
+
+        sched.touch_points.push((8, 50.0, 50.0));
+        stick.update(&sched, true);
+
+        // Short of full travel, along one axis: the knob tracks the finger exactly.
+        sched.touch_points = vec![(8, 50.0 + travel * 0.5, 50.0)];
+        stick.update(&sched, true);
+        assert!((stick.knob.0 - travel * 0.5).abs() < 1e-3);
+
+        for reach in [travel * 1.5, travel * 3.0, 10_000.0, 1.0e6] {
+            sched.touch_points = vec![(8, 50.0 + reach, 50.0 - reach)];
+            stick.update(&sched, true);
+            let (dx, dy) = stick.knob;
+            let len = (dx * dx + dy * dy).sqrt();
+            assert!(
+                (len - travel).abs() < 1e-3,
+                "reach {reach}: knob {len} vs travel {travel}"
+            );
+        }
     }
 
     #[test]

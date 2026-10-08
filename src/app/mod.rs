@@ -155,7 +155,10 @@ impl App {
         app
     }
 
-    pub fn view(&mut self, sched: &mut Scheduler, ctx: &RenderContext) -> View {
+    /// `ctx` is the frame's render context, part of the runner's signature. Nothing
+    /// uploads through it any more — the touch stick used to, back when it was two
+    /// PNGs.
+    pub fn view(&mut self, sched: &mut Scheduler, _ctx: &RenderContext) -> View {
         repose_core::request_frame();
         let now = Instant::now();
         let frame = now.duration_since(self.last);
@@ -167,18 +170,6 @@ impl App {
         self.input.forward_speed = car.forward_speed();
         self.input.poll(sched, self.data.screen == Screen::Race);
         self.data.stick = self.input.stick_view();
-        if self.data.stick.is_some() && self.data.stick_images.is_none() {
-            self.data.stick_images = Some((
-                ctx.image_from_encoded(
-                    include_bytes!("../../assets/touch/joystick_outer.png").to_vec(),
-                    true,
-                ),
-                ctx.image_from_encoded(
-                    include_bytes!("../../assets/touch/joystick_inner.png").to_vec(),
-                    true,
-                ),
-            ));
-        }
         // Queued for every tick this frame could run, so a hitch that catches up
         // several ticks still gives each one its own entry to consume.
         let packed = self.input.packed();
