@@ -14,6 +14,8 @@ pub enum Screen {
     Results,
     Editor,
     Ghosts,
+    /// A kept tape being watched, with the playhead and speed under it.
+    Replay,
 }
 
 /// Which copy of a track a menu row refers to. Built-ins and saved files share
@@ -118,6 +120,20 @@ pub enum UiAct {
     SetThumbnails(bool),
     OpenGhosts,
     CloseGhosts,
+    /// Watch a kept tape by its library file stem.
+    WatchGhost(String),
+    /// Leave the viewer, returning to the screen it was opened from.
+    CloseReplay,
+    /// Pause or resume playback.
+    ReplayPlayPause,
+    /// Step to the next or previous speed in the playback ladder.
+    ReplaySpeedStep(i8),
+    /// Move the playhead by a signed number of seconds, re-simulating to get
+    /// there. Backwards included: the tape is inputs, not poses, so any tick is
+    /// reachable by running the ticks before it.
+    ReplaySeek(i32),
+    /// Back to the start line.
+    ReplayRestart,
     /// Race a kept tape by its library file stem.
     RaceGhost(String),
     /// Keep the tape of the run that just finished, under this name.
@@ -132,6 +148,34 @@ pub enum UiAct {
 }
 
 pub type ActionQueue = Rc<RefCell<Vec<UiAct>>>;
+
+/// The playback speeds offered, in order. A ladder rather than free choices so
+/// the next and previous buttons step through values that are known to run well
+/// on the target frame rate.
+pub const REPLAY_SPEEDS: [f32; 6] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0];
+
+/// A kept tape being watched rather than raced: where it is, and how it plays.
+///
+/// The position lives here rather than in the viewer because it is simulation
+/// state the runtime advances every tick, and the screen only reads it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplayView {
+    pub file: String,
+    pub name: String,
+    /// Race time the tape was recorded in, in ticks. `None` for a tape with no
+    /// finish tick, which is one recorded but never finished.
+    pub finish_tick: Option<u32>,
+    /// Length of the tape itself, which is longer than the finish tick when a run
+    /// was recorded past the line. Playback stops here, so it is the end of the
+    /// thing being watched rather than the number on the results screen.
+    pub len: u32,
+    /// Where playback is, in ticks from the start line.
+    pub tick: u32,
+    pub playing: bool,
+    /// Index into [`REPLAY_SPEEDS`], so a change is a step rather than a float
+    /// the UI has to recognise to label it.
+    pub speed: usize,
+}
 
 /// On-screen touch stick geometry, in physical px with a top-left origin.
 #[derive(Clone, Copy, Debug)]
@@ -178,9 +222,12 @@ pub struct AppData {
     pub practice: bool,
     /// Live race readout, refreshed by the runtime every frame for the HUD.
     pub race_ticks: u32,
+    /// Speed of the car on screen, which during playback is the tape's.
     pub speed_kmh: f32,
     pub checkpoint: usize,
     pub checkpoint_count: usize,
+    /// The tape being watched, or `None` outside the viewer.
+    pub replay: Option<ReplayView>,
     /// Last runtime message for the UI to surface (a rejected race start,
     /// a failed save or load). Cleared when a race starts or the track changes.
     pub notice: Option<String>,

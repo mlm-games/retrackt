@@ -23,10 +23,10 @@ use crate::sim::world::TrackWorld;
 use history::{Edit, History, changed};
 use placement::placement_at;
 use schedule::{
-    ActiveRes, CarRes, FinishedRes, GhostRes, InputRes, PracticeRes, RecoverRes, SessionRes,
-    TapeRes, TrackRes,
+    ActiveRes, CarRes, FinishedRes, GhostRes, InputRes, PracticeRes, RecoverRes, ReplayRes,
+    SessionRes, TapeRes, TrackRes,
 };
-use state::{Screen, TrackRef, UiAct};
+use state::{REPLAY_SPEEDS, ReplayView, Screen, TrackRef, UiAct};
 
 /// How many cells away a placement will reach for an open connector port.
 pub const SNAP_REACH: i32 = 1;
@@ -158,9 +158,7 @@ impl App {
     pub fn view(&mut self, sched: &mut Scheduler, ctx: &RenderContext) -> View {
         repose_core::request_frame();
         let now = Instant::now();
-        let dt = now
-            .duration_since(self.last)
-            .min(MAX_CATCHUP_TICKS * crate::SIM_STEP);
+        let frame = now.duration_since(self.last);
         self.last = now;
 
         self.drain_actions();
@@ -204,9 +202,26 @@ impl App {
             self.input.release_editor();
         }
 
+        // Playback speed scales the wall clock, not the step. `Sim::time_scale`
+        // would be the obvious field to reach for and is wrong here: it multiplies
+        // `SimTime.delta_secs`, so every tick would be a longer slice of physics and
+        // the tape would replay as a different run than the one recorded. Retiring
+        // more of the accumulator per frame is the same thing without touching the
+        // physics. Clamped after scaling, so a slow display at 4x drops the excess
+        // rather than falling further behind every frame.
+        let dt = frame
+            .mul_f32(self.playback_rate())
+            .min(MAX_CATCHUP_TICKS * crate::SIM_STEP);
+
         // Stepped only once this frame's intent is queued, so the car reacts to
         // the input the player just gave rather than to the previous frame's.
         self.sim.step(dt);
+
+        // A watch is the same simulation running the other systems' absence, so its
+        // playhead is the ghost's tick rather than a clock of its own.
+        if self.data.replay.is_some() {
+            self.advance_playhead();
+        }
 
         // Consumed before the keys below so a same-frame restart cannot overwrite
         // a finish; only `start_race`/`leave_run` reset `race_done`.
@@ -233,9 +248,19 @@ impl App {
             if self.input.restart && matches!(screen, Screen::Race | Screen::Results) {
                 self.start_race();
             }
-            if self.input.quit && matches!(screen, Screen::Race | Screen::Results | Screen::Editor)
+            if self.input.quit
+                && matches!(
+                    screen,
+                    Screen::Race | Screen::Results | Screen::Editor | Screen::Replay
+                )
             {
-                self.leave_run();
+                if screen == Screen::Replay {
+                    // Back to the library the tape was picked from, not to the title:
+                    // the viewer's only purpose is choosing what to watch next.
+                    self.close_replay();
+                } else {
+                    self.leave_run();
+                }
             }
             // Queued rather than applied here: this block runs after the step, and the
             // runtime clears `respawned` before the view is built, so a flag set at
@@ -251,52 +276,71 @@ impl App {
         // newest tick holds one pose per tick and judders between them.
         let alpha = self.sim.alpha();
         let car = self.sim.world.resource::<CarRes>().0;
-        let draw_car = if car.respawned {
-            // A kill-height respawn teleports the car. Blending across that jump
-            // draws the car sliding across the map for one frame, so the pose is
-            // drawn as it landed and the history is dropped.
-            self.sim.world.resource_mut::<CarRes>().0.respawned = false;
-            self.prev_car = None;
-            self.cam.snap(&car);
-            car
-        } else {
-            Car::render_lerp(&self.prev_car.unwrap_or(car), &car, alpha)
-        };
-        self.prev_car = Some(car);
-
-        let session = self.sim.world.resource::<SessionRes>();
-        self.data.race_ticks = session.0.ticks();
-        self.data.speed_kmh = car.speed_kmh();
-        self.data.checkpoint = session.0.checkpoint();
-        self.data.checkpoint_count = session.0.checkpoint_count();
-        self.data.split_delta = split_delta(session.0.splits(), self.data.ghost_splits.as_deref());
-
-        // Eased toward the current tick, not the drawn one: `to_orbit` applies
-        // `alpha` itself, so blending here as well would put the view a frame
-        // behind the car it is following.
-        self.cam.update(dt.as_secs_f32(), &car);
-
-        // The ghost is drawn from its own history, dropped whenever it teleports for
-        // the same reason the player's is. Read through a block so the borrow
-        // ends before the flag is cleared: `Res` drops at scope end, and a
-        // `resource_mut` inside its lifetime would be a second overlapping
-        // borrow of the world.
+        // Read through a block so the borrow ends before a flag is cleared: `Res`
+        // drops at scope end, and a `resource_mut` inside its lifetime would be a
+        // second overlapping borrow of the world.
         let (ghost_armed, ghost_car) = {
             let ghost = self.sim.world.resource::<GhostRes>();
             (ghost.armed(), ghost.car)
         };
-        let draw_ghost = if !ghost_armed {
-            self.prev_ghost = None;
-            None
-        } else if ghost_car.respawned {
-            self.sim.world.resource_mut::<GhostRes>().car.respawned = false;
-            self.prev_ghost = None;
-            Some(ghost_car)
+        let watching = self.data.replay.is_some();
+
+        // A kill-height respawn teleports the car. Blending across that jump draws
+        // it sliding across the map for one frame, so the pose is drawn as it landed
+        // and the history is dropped. The subject also takes the camera with it; the
+        // ghost is only ever a reference, so it just drops its history.
+        let (draw_car, draw_ghost) = if watching {
+            // The tape is the subject rather than a reference beside the player: it
+            // is drawn solid, and the camera follows it.
+            self.prev_car = None;
+            if ghost_car.respawned {
+                self.sim.world.resource_mut::<GhostRes>().car.respawned = false;
+                self.cam.snap(&ghost_car);
+            }
+            (
+                blend(&mut self.prev_ghost, ghost_car, ghost_car.respawned, alpha),
+                None,
+            )
         } else {
-            let drawn = Car::render_lerp(&self.prev_ghost.unwrap_or(ghost_car), &ghost_car, alpha);
-            self.prev_ghost = Some(ghost_car);
-            Some(drawn)
+            if car.respawned {
+                self.sim.world.resource_mut::<CarRes>().0.respawned = false;
+                self.cam.snap(&car);
+            }
+            let translucent = if ghost_armed {
+                if ghost_car.respawned {
+                    self.sim.world.resource_mut::<GhostRes>().car.respawned = false;
+                    self.prev_ghost = None;
+                    Some(ghost_car)
+                } else {
+                    Some(blend(&mut self.prev_ghost, ghost_car, ghost_car.respawned, alpha))
+                }
+            } else {
+                self.prev_ghost = None;
+                None
+            };
+            (blend(&mut self.prev_car, car, car.respawned, alpha), translucent)
         };
+
+        let followed = if watching { ghost_car } else { car };
+        if watching {
+            // The viewer shows the tape's own numbers; the race readout would keep
+            // reporting a run that is not happening.
+            self.data.speed_kmh = ghost_car.speed_kmh();
+        } else {
+            let session = self.sim.world.resource::<SessionRes>();
+            self.data.race_ticks = session.0.ticks();
+            self.data.speed_kmh = car.speed_kmh();
+            self.data.checkpoint = session.0.checkpoint();
+            self.data.checkpoint_count = session.0.checkpoint_count();
+            self.data.split_delta =
+                split_delta(session.0.splits(), self.data.ghost_splits.as_deref());
+        }
+
+        // Eased toward the current tick, not the drawn one: `to_orbit` applies
+        // `alpha` itself, so blending here as well would put the view a frame
+        // behind the car it is following.
+        self.cam.update(dt.as_secs_f32(), &followed);
+
         let frame = self.build_frame(&draw_car, draw_ghost.as_ref(), alpha);
         let viewport = self.viewport(frame);
         crate::ui::root_view(&self.data, &self.data.actions, viewport)
@@ -380,6 +424,12 @@ impl App {
                 self.save.settings.practice = on;
                 let _ = crate::save::save(&self.save);
             }
+            UiAct::WatchGhost(file) => self.watch_ghost(&file),
+            UiAct::CloseReplay => self.close_replay(),
+            UiAct::ReplayPlayPause => self.replay_play_pause(),
+            UiAct::ReplaySpeedStep(dir) => self.replay_speed_step(dir),
+            UiAct::ReplaySeek(seconds) => self.replay_seek_seconds(seconds),
+            UiAct::ReplayRestart => self.replay_restart(),
             UiAct::RecoverToCheckpoint => self.recover_to_checkpoint(),
             UiAct::QuitToTitle | UiAct::RaceAbandoned => self.leave_run(),
             UiAct::OpenEditor => self.open_editor(),
@@ -522,6 +572,10 @@ impl App {
         self.data.speed_kmh = 0.0;
         self.data.checkpoint = 0;
         self.data.split_delta = None;
+        // A playback is watching something on this same track, and `arm_ghost`
+        // below takes the ghost slot it is using.
+        self.data.replay = None;
+        self.sim.world.insert_resource(ReplayRes(false));
         // Practice and the recovery request are per-run state, set here so a run
         // cannot start under the rules of the one before it.
         self.sim
@@ -708,6 +762,177 @@ impl App {
         }
     }
 
+    /// Watch a kept tape on the track it was recorded on, with nothing to race.
+    ///
+    /// The same ghost machinery the race uses, with the race stood down: watching
+    /// a run and racing it are the same simulation, reached by a different set of
+    /// systems being live.
+    fn watch_ghost(&mut self, file: &str) {
+        let Some(tape) = crate::save::load_ghost(file) else {
+            self.data.notice = Some(format!("Could not read ghost \"{file}\""));
+            return;
+        };
+        let name = self
+            .save
+            .ghosts
+            .get(file)
+            .map(|e| e.name.clone())
+            .unwrap_or_else(|| file.to_string());
+        // Checked here as well as in `arm`, for the reason `race_ghost` checks it:
+        // a tape from another track is refused before anything is torn down, rather
+        // than leaving the player on an error screen.
+        let track = gameplay_fingerprint(&self.data.track);
+        if tape.header.track != track {
+            self.data.notice = Some("That tape was recorded on a different track.".into());
+            return;
+        }
+        // Read before the tape is handed over, which takes it by value. `len` is the
+        // end of what there is to watch; the finish tick is the number the run was
+        // scored at, and a tape recorded past the line runs on past it.
+        let len = tape.tick_len();
+        if len == 0 {
+            self.data.notice = Some("That tape records no ticks.".into());
+            return;
+        }
+        let finish_tick = (tape.header.finish_tick != 0).then_some(tape.header.finish_tick);
+        // Any run in progress is over, and `leave_run` clears the ghost slot the
+        // viewer is about to take, so it goes first rather than arming over the top.
+        self.leave_run();
+        let world = self.sim.world.resource::<TrackRes>().0.clone();
+        if let Err(e) = self.sim.world.resource_mut::<GhostRes>().arm(tape, track, &world) {
+            self.data.notice = Some(e);
+            return;
+        }
+        self.sim.world.insert_resource(ReplayRes(true));
+        self.sim.world.insert_resource(ActiveRes(true));
+        self.data.replay = Some(ReplayView {
+            file: file.to_string(),
+            name,
+            finish_tick,
+            len,
+            tick: 0,
+            playing: true,
+            // The ladder index rather than the rate, so the viewer's label and its
+            // effect cannot disagree about which speed is current.
+            speed: REPLAY_SPEEDS
+                .iter()
+                .position(|s| *s == 1.0)
+                .unwrap_or_default(),
+        });
+        self.data.screen = Screen::Replay;
+        let ghost = self.sim.world.resource::<GhostRes>().car;
+        self.prev_car = None;
+        self.prev_ghost = None;
+        self.cam.snap(&ghost);
+    }
+
+    fn close_replay(&mut self) {
+        self.sim.world.insert_resource(ReplayRes(false));
+        // The player is not driving here, and `step_vehicle` only reads
+        // `ActiveRes` — without this the parked car would keep rolling around the
+        // library behind the panel.
+        self.sim.world.insert_resource(ActiveRes(false));
+        self.sim.world.insert_resource(FinishedRes(false));
+        self.sim.world.resource_mut::<GhostRes>().disarm();
+        self.data.replay = None;
+        self.prev_ghost = None;
+        // The viewer is a consumer of the library, so closing it lists the library.
+        // The tape may have been deleted from under it while it was playing.
+        self.refresh_ghosts();
+        self.data.screen = Screen::Ghosts;
+    }
+
+    /// Simulated seconds per wall second: one everywhere except in the viewer,
+    /// where the playhead sets the pace. Zero while paused, which banks nothing, so
+    /// resuming does not fire a burst of catch-up ticks.
+    fn playback_rate(&self) -> f32 {
+        match &self.data.replay {
+            Some(view) if view.playing => REPLAY_SPEEDS[view.speed],
+            Some(_) => 0.0,
+            None => 1.0,
+        }
+    }
+
+    /// The playhead is the ghost's own tick rather than a second clock: the two
+    /// would only ever be able to disagree.
+    fn advance_playhead(&mut self) {
+        let tick = self.sim.world.resource::<GhostRes>().tick;
+        if let Some(view) = self.data.replay.as_mut() {
+            view.tick = tick.min(view.len);
+            // Past the last recorded input there is nothing to play, and a viewer
+            // left running would sit on the final frame looking paused for a reason
+            // the controls do not show.
+            if tick >= view.len {
+                view.playing = false;
+            }
+        }
+    }
+
+    fn replay_play_pause(&mut self) {
+        let Some(view) = self.data.replay.as_mut() else {
+            return;
+        };
+        // Play on a finished tape restarts it. "Play" on something that has ended
+        // means play it again, not sit on the last frame.
+        let restart = view.tick >= view.len;
+        if restart {
+            view.tick = 0;
+        }
+        view.playing = !view.playing || restart;
+        if restart {
+            self.sim.world.resource_mut::<GhostRes>().restart();
+        }
+    }
+
+    fn replay_speed_step(&mut self, dir: i8) {
+        let last = REPLAY_SPEEDS.len() as isize - 1;
+        if let Some(view) = self.data.replay.as_mut() {
+            view.speed = (view.speed as isize + isize::from(dir)).clamp(0, last) as usize;
+        }
+    }
+
+    fn replay_seek_seconds(&mut self, seconds: i32) {
+        let Some(view) = self.data.replay.as_ref() else {
+            return;
+        };
+        let target = (i64::from(view.tick) + i64::from(seconds) * i64::from(crate::SIM_HZ))
+            .clamp(0, i64::from(view.len));
+        self.replay_seek_to(target as u32);
+    }
+
+    fn replay_restart(&mut self) {
+        self.replay_seek_to(0);
+    }
+
+    /// Put the playhead on `target`, in ticks from the start line.
+    ///
+    /// A tape is inputs, not poses, so there is no index to seek into: any tick is
+    /// reached by running the ones before it. Forward covers only the distance
+    /// asked for; a step back re-runs from the line, which is the one direction with
+    /// no shortcut. A seek to the far end of a long run is therefore proportional to
+    /// the run — worth it to land on the exact frame rather than an approximation,
+    /// and it is why the control steps in seconds rather than dragging.
+    fn replay_seek_to(&mut self, target: u32) {
+        let Some(view) = self.data.replay.as_ref() else {
+            return;
+        };
+        let target = target.min(view.len);
+        let here = self.sim.world.resource::<GhostRes>().tick;
+        if target < here {
+            self.sim.world.resource_mut::<GhostRes>().restart();
+        }
+        let from = self.sim.world.resource::<GhostRes>().tick;
+        for _ in 0..(target - from) {
+            self.sim.tick();
+        }
+        let ghost = self.sim.world.resource::<GhostRes>().car;
+        self.prev_ghost = None;
+        self.cam.snap(&ghost);
+        if let Some(view) = self.data.replay.as_mut() {
+            view.tick = target;
+        }
+    }
+
     /// Keep the tape of the run that just finished, under `name`.
     fn save_ghost(&mut self, name: &str) {
         let name = name.trim();
@@ -732,17 +957,17 @@ impl App {
         };
         match crate::save::save_ghost(&tape, name) {
             Ok(entry) => {
-                let entry = match self.save.ghosts.insert(entry) {
-                    Ok(()) => entry,
-                    Err(e) => {
-                        // The tape is on disk with nothing pointing at it.
-                        crate::save::delete_ghost(&entry.file);
-                        self.data.notice = Some(e);
-                        return;
-                    }
-                };
+                // Read before the row is moved into the library: this is the stem
+                // of the file just written, and it has to go if no row points at it.
+                let file = entry.file.clone();
+                let name = entry.name.clone();
+                if let Err(e) = self.save.ghosts.insert(entry) {
+                    crate::save::delete_ghost(&file);
+                    self.data.notice = Some(e);
+                    return;
+                }
                 let _ = crate::save::save(&self.save);
-                self.data.notice = Some(format!("Saved ghost \"{}\".", entry.name));
+                self.data.notice = Some(format!("Saved ghost \"{name}\"."));
                 self.refresh_ghosts();
             }
             Err(e) => self.data.notice = Some(format!("Save failed: {e}")),
@@ -790,6 +1015,11 @@ impl App {
         self.sim.world.insert_resource(FinishedRes(false));
         // A recovery request that outlived its run must not fire on the next one.
         self.sim.world.insert_resource(RecoverRes(false));
+        // A playback is a run of the same chain, so leaving it stands its systems
+        // down too. Without this the ghost would keep being stepped under a player
+        // who is no longer driving.
+        self.sim.world.insert_resource(ReplayRes(false));
+        self.data.replay = None;
         // Leaving a race drops its ghost: the tape stays in the library, but a
         // title screen must not leave the sim replaying a car nobody is racing.
         self.ghost = None;
@@ -877,6 +1107,11 @@ impl App {
         if self.data.screen != Screen::Race || !self.start_race() {
             self.sim.world.insert_resource(ActiveRes(false));
             self.sim.world.insert_resource(FinishedRes(false));
+            // A tape cannot be played on geometry it was not recorded on, and the
+            // ghost slot above has just been dropped, so a watcher would be left
+            // holding a playhead with nothing behind it.
+            self.sim.world.insert_resource(ReplayRes(false));
+            self.data.replay = None;
             self.race_done = false;
         }
     }
@@ -912,7 +1147,7 @@ impl App {
                 .ok_or_else(|| format!("Could not load track \"{name}\"")),
         };
         match loaded {
-            Some(doc) => self.set_track(doc),
+            Ok(doc) => self.set_track(doc),
             Err(e) => self.data.notice = Some(e),
         }
     }
@@ -1389,6 +1624,21 @@ impl App {
     }
 }
 
+/// One car, blended across the tick just taken, with its render history replaced.
+///
+/// `jumped` draws the pose as it landed and drops the history: a teleport is not
+/// motion, and blending across one draws the car sliding across the map for a
+/// frame.
+fn blend(prev: &mut Option<Car>, current: Car, jumped: bool, alpha: f32) -> Car {
+    let drawn = if jumped {
+        current
+    } else {
+        Car::render_lerp(&prev.unwrap_or(current), &current, alpha)
+    };
+    *prev = Some(current);
+    drawn
+}
+
 impl Default for App {
     fn default() -> Self {
         Self::new()
@@ -1428,7 +1678,7 @@ fn describe_edit(edit: &Edit, verb: &str) -> String {
     match edit {
         Edit::Added { piece, .. } => format!("{verb} placing {}.", piece.id.label()),
         Edit::Removed { piece, .. } => format!("{verb} removing {}.", piece.id.label()),
-        Edit::Changed { before, after } if before.id != after.id => {
+        Edit::Changed { before, after, .. } if before.id != after.id => {
             format!(
                 "{verb} changing {} to {}.",
                 before.id.label(),

@@ -1,4 +1,5 @@
 use game_utils_vehicle::VehicleInput;
+use glam::Vec3;
 use repame_sim::SimTime;
 use retrackt_format::{PackedInput, ReplayTape};
 // The `bevy_ecs` binding is what `#[derive(Resource)]` resolves against:
@@ -74,6 +75,12 @@ pub struct GhostRes {
     pub tick: u32,
     /// Empty when no ghost is selected, or once its tape has run out.
     pub tape: Option<ReplayTape>,
+    /// Where this ghost started. Kept rather than read back from the world on a
+    /// rewind, so a rewind cannot put the car somewhere a different track's world
+    /// would say — the one case where the viewer would silently desync from the
+    /// tape it is showing.
+    spawn: Vec3,
+    spawn_yaw: f32,
 }
 
 impl Default for GhostRes {
@@ -82,6 +89,8 @@ impl Default for GhostRes {
             car: Car::default(),
             tick: 0,
             tape: None,
+            spawn: Vec3::ZERO,
+            spawn_yaw: 0.0,
         }
     }
 }
@@ -107,10 +116,21 @@ impl GhostRes {
         if !tape.compatible(track, physics, hz) {
             return Err("That ghost was recorded on a different track or build.".into());
         }
-        self.car = Car::at_spawn(world.spawn, world.spawn_yaw);
-        self.tick = 0;
+        self.spawn = world.spawn;
+        self.spawn_yaw = world.spawn_yaw;
+        self.restart();
         self.tape = Some(tape);
         Ok(())
+    }
+
+    /// Back to the start line, keeping the tape.
+    ///
+    /// Playback re-simulates from inputs rather than reading back stored poses, so
+    /// this is how a viewer goes backwards: restart, then run the ticks again. The
+    /// pose it lands on is the same to the bit, not an approximation.
+    pub fn restart(&mut self) {
+        self.car = Car::at_spawn(self.spawn, self.spawn_yaw);
+        self.tick = 0;
     }
 
     pub fn disarm(&mut self) {
@@ -142,6 +162,16 @@ pub struct PracticeRes(pub bool);
 #[derive(Resource, Default)]
 pub struct RecoverRes(pub bool);
 
+/// What is stepping: the player, or a tape being watched.
+///
+/// Not a mode of the race but a separate thing that runs beside nothing else, so
+/// every system that would advance a *race* stands down while it is set and only
+/// `step_ghost` keeps going. It reads as a modifier of [`ActiveRes`] because the
+/// invariant is the important part: `ActiveRes(false)` runs nothing, whatever this
+/// says.
+#[derive(Resource, Default)]
+pub struct ReplayRes(pub bool);
+
 #[derive(Resource)]
 pub struct FinishedRes(pub bool);
 
@@ -161,6 +191,7 @@ pub fn insert_resources(world: &mut World) {
     world.insert_resource(TapeRes(None));
     world.insert_resource(PracticeRes(false));
     world.insert_resource(RecoverRes(false));
+    world.insert_resource(ReplayRes(false));
 }
 
 /// Decode a packed tick back into the vehicle's own input type, clamped to the
@@ -182,9 +213,10 @@ fn step_vehicle(
     mut input: ResMut<InputRes>,
     track: Res<TrackRes>,
     active: Res<ActiveRes>,
+    replay: Res<ReplayRes>,
     mut car: ResMut<CarRes>,
 ) {
-    if !active.0 {
+    if !active.0 || replay.0 {
         return;
     }
     step_car(
@@ -240,6 +272,7 @@ fn step_ghost(
 fn recover_to_checkpoint(
     active: Res<ActiveRes>,
     practice: Res<PracticeRes>,
+    replay: Res<ReplayRes>,
     session: Res<SessionRes>,
     mut recover: ResMut<RecoverRes>,
     mut car: ResMut<CarRes>,
@@ -247,7 +280,7 @@ fn recover_to_checkpoint(
     // Taken first, so the request is consumed whether or not it is honoured: a request
     // left set would fire on the next run, wherever that was.
     let asked = std::mem::take(&mut recover.0);
-    if !active.0 || !practice.0 || (!asked && !car.0.respawned) {
+    if !active.0 || !practice.0 || replay.0 || (!asked && !car.0.respawned) {
         // Practice only, and only while a run is going.
         return;
     }
@@ -268,8 +301,13 @@ fn recover_to_checkpoint(
 /// every gate between the two. The tick is still counted — the run took that step
 /// and the tape records it — so the clock and the tape stay the same length and
 /// every split keeps its own index into the tape.
-fn advance_session(active: Res<ActiveRes>, car: Res<CarRes>, mut session: ResMut<SessionRes>) {
-    if !active.0 {
+fn advance_session(
+    active: Res<ActiveRes>,
+    replay: Res<ReplayRes>,
+    car: Res<CarRes>,
+    mut session: ResMut<SessionRes>,
+) {
+    if !active.0 || replay.0 {
         return;
     }
     if car.0.respawned {
@@ -281,10 +319,11 @@ fn advance_session(active: Res<ActiveRes>, car: Res<CarRes>, mut session: ResMut
 
 fn signal_finish(
     active: Res<ActiveRes>,
+    replay: Res<ReplayRes>,
     session: Res<SessionRes>,
     mut finished: ResMut<FinishedRes>,
 ) {
-    finished.0 = active.0 && session.0.finished();
+    finished.0 = active.0 && !replay.0 && session.0.finished();
 }
 
 /// One tape tick per simulated tick, holding exactly what `step_vehicle`
@@ -293,11 +332,12 @@ fn signal_finish(
 /// the tape.
 fn record_replay(
     active: Res<ActiveRes>,
+    replay: Res<ReplayRes>,
     input: Res<InputRes>,
     finished: Res<FinishedRes>,
     mut tape: ResMut<TapeRes>,
 ) {
-    if !active.0 {
+    if !active.0 || replay.0 {
         return;
     }
     let Some(tape) = tape.0.as_mut() else {
@@ -321,6 +361,10 @@ fn record_replay(
 /// car and the session so a tape tick is consumed on the same step it was
 /// recorded on, and `record_replay` still runs last and reads the input
 /// `step_vehicle` actually consumed.
+///
+/// A tape being *watched* runs the same chain with [`ReplayRes`] set, which stands
+/// everything but `step_ghost` down: watching a run and racing it are the same
+/// simulation, reached by a different set of systems being live.
 pub fn register(sim: &mut repame_sim::Sim) {
     sim.add_chained_systems(
         (
@@ -338,7 +382,6 @@ pub fn register(sim: &mut repame_sim::Sim) {
 #[cfg(test)]
 mod chain_tests {
     use super::*;
-    use glam::Vec3;
     use retrackt_format::{ReplayTape, demo_track, gameplay_fingerprint};
 
     #[test]
@@ -461,14 +504,15 @@ mod chain_tests {
     }
 
     /// Drive 120 ticks of fixed input, optionally recording it to `tape`.
-    fn drive_recorded_run(tape: Option<&mut ReplayTape>) -> Car {
+    fn drive_recorded_run(mut tape: Option<&mut ReplayTape>) -> Car {
         let world = TrackWorld::from_doc(&demo_track());
         let mut car = Car::at_spawn(world.spawn, world.spawn_yaw);
         let tune = CarTuning::default();
         let steer = PackedInput::new(0.25, 1.0, 0.0, false, false, false);
+        let dt = crate::SIM_STEP.as_secs_f32();
         for _ in 0..120 {
-            step_car(&mut car, &decode(steer), &world, &tune, crate::SIM_STEP);
-            if let Some(tape) = tape {
+            step_car(&mut car, &decode(steer), &world, &tune, dt);
+            if let Some(tape) = tape.as_deref_mut() {
                 tape.push(steer);
             }
         }
@@ -498,7 +542,7 @@ mod chain_tests {
                 &decode(packed),
                 &world,
                 &CarTuning::default(),
-                crate::SIM_STEP,
+                crate::SIM_STEP.as_secs_f32(),
             );
             ghost.tick += 1;
         }
@@ -536,7 +580,7 @@ mod chain_tests {
                 &decode(packed),
                 &world,
                 &CarTuning::default(),
-                crate::SIM_STEP,
+                crate::SIM_STEP.as_secs_f32(),
             );
             ghost.tick += 1;
         }

@@ -18,6 +18,7 @@ pub fn root_view(data: &AppData, actions: &crate::app::state::ActionQueue, viewp
         Screen::Results => over_viewport(viewport, screens::results::results_ui(data, actions)),
         Screen::Editor => over_viewport(viewport, screens::editor::editor_ui(data, actions)),
         Screen::Ghosts => over_viewport(viewport, screens::ghosts::ghosts_ui(data, actions)),
+        Screen::Replay => over_viewport(viewport, screens::replay::replay_ui(data, actions)),
     };
     match notice_bar(data, actions) {
         Some(bar) => ZStack(Modifier::new().fill_max_size()).child([base, bar]),

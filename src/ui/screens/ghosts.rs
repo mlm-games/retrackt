@@ -41,11 +41,17 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
             });
             // Racing is offered only for the tape's own track: `race_ghost` refuses
             // anything else, and a button that can only error is worse than none.
+            // Watching is gated the same way and for the same reason — playback
+            // re-simulates the run against this track's geometry.
             let actions_row = if playable {
                 Row(Modifier::new().gap(theme::dp(8.0)))
                     .child(ghost_btn(
                         "Race",
                         pusher(actions, UiAct::RaceGhost(entry.file.clone())),
+                    ))
+                    .child(ghost_btn(
+                        "Watch",
+                        pusher(actions, UiAct::WatchGhost(entry.file.clone())),
                     ))
                     .child(remove)
             } else {
