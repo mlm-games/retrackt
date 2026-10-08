@@ -17,7 +17,9 @@ use crate::app::ParamKind;
 use crate::app::state::{ActionQueue, AppData, EditorData, TrackRef, UiAct, push};
 use crate::app::theme;
 use crate::ui::dims;
-use crate::ui::widgets::{dim_text, heading, hud_text, list_panel_w, outlined_at, pusher};
+use crate::ui::widgets::{
+    dim_text, heading, hud_text, list_panel_w, outlined_at, panel_height, pusher,
+};
 
 /// Cursor steps for the six directional buttons.
 const STEPS: [(&str, [i16; 3]); 6] = [
@@ -142,7 +144,11 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
             palette_body
         } else {
             ScrollAreaXY(
-                Modifier::new().fill_max_height(),
+                // Side by side the palette is a *sibling* of the column's scroller
+                // rather than inside it, so nothing above it bounds its height. An
+                // explicit one is what keeps its list scrolling instead of running
+                // the panel past the bottom of the window.
+                Modifier::new().fill_max_width().height(panel_height()),
                 remember_scroll_state_xy("editor.palette"),
                 palette_body,
             )
@@ -169,7 +175,7 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
         heading("Track Editor"),
     ]);
 
-    let side_column = Column(Modifier::new().gap(dims::SPACE_SECTION)).child([
+    let track_column = Column(Modifier::new().gap(dims::SPACE_SECTION)).child([
         track,
         diagnostics_panel(editor),
         share_panel(editor, actions),
@@ -185,13 +191,20 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
         // it can never be zoomed and only becomes reachable by scrolling past the
         // end of the panels. The strip below is left to the viewport, which is
         // where orbit, pan and the wheel-zoom live.
+        //
+        // The palette leads, because without it there is nothing to place: arming a
+        // piece is the first thing the editor is for, and it was in the tree only
+        // in the side-by-side branch, so on a handset the editor could not place
+        // anything at all.
+        let side_column =
+            Column(Modifier::new().gap(dims::SPACE_SECTION)).child([palette, track_column]);
         Column(Modifier::new().fill_max_size()).child([
             Box(Modifier::new().input_blocker().weight(1.0)).child(ScrollAreaXY(
                 Modifier::new().fill_max_size(),
                 remember_scroll_state_xy("editor.stack"),
                 side_column,
             )),
-            Box(Modifier::new().fill_max_height_frac(dims::STACKED_VIEWPORT_FRAC)),
+            Box(Modifier::new().fill_max_height_frac(dims::viewport_frac())),
         ])
     } else {
         let (palette_w, side_w) = dims::split().expect("not stacked means a split");
@@ -214,7 +227,7 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
             .child(ScrollAreaXY(
                 Modifier::new().fill_max_size(),
                 remember_scroll_state_xy("editor.side"),
-                side_column,
+                track_column,
             )),
         ])
     }

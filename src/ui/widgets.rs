@@ -193,18 +193,39 @@ pub fn list_panel(title: &str, children: Vec<View>) -> View {
 ///
 /// A panel wider than the column holding it scrolls sideways inside that column,
 /// which on the editor's side column is a horizontal scrollbar over a list.
+///
+/// Deliberately *not* capped at [`panel_height`], unlike [`panel`] and
+/// [`list_panel`]. Those sit over a backdrop that takes input rather than over a
+/// scroll view, so a cap is the only thing keeping their contents on screen. This
+/// one is inside the editor's own scroller, which already owns the overflow, and a
+/// cap here is worse than none: the panel clips at the cap while the scroller
+/// measures the column from those capped heights, so it has no range reaching the
+/// clipped part. The piece list, taller than any cap, went missing that way.
 pub fn list_panel_w(title: &str, width: Dp, children: Vec<View>) -> View {
-    panel_inner(title, width, children, AlignItems::STRETCH)
+    panel_body(title, width, children, AlignItems::STRETCH, false)
 }
 
 fn panel_inner(title: &str, width: Dp, children: Vec<View>, align: AlignItems) -> View {
+    panel_body(title, width, children, align, true)
+}
+
+fn panel_body(
+    title: &str,
+    width: Dp,
+    children: Vec<View>,
+    align: AlignItems,
+    capped: bool,
+) -> View {
+    let mut modifier = Modifier::new()
+        .gap(PANEL_GAP)
+        .padding(PANEL_INSET_DP)
+        .align_items(align)
+        .width(width);
+    if capped {
+        modifier = modifier.max_height(panel_height());
+    }
     let mut column = Column(
-        Modifier::new()
-            .gap(PANEL_GAP)
-            .padding(PANEL_INSET_DP)
-            .align_items(align)
-            .width(width)
-            .max_height(panel_height())
+        modifier
             .background(theme::surface())
             .border(
                 theme::dp(1.0),

@@ -39,6 +39,20 @@ pub fn is_narrow() -> bool {
     matches!(window_size_class().width, WidthClass::Compact)
 }
 
+/// Shortest height the side-by-side layouts are laid out at, in dp.
+///
+/// A second breakpoint, and needed because width alone answers the wrong question
+/// on a window that is wide but short: a phone held sideways is 800 dp of width
+/// and 360 dp of height, which is wide enough for two panes and far too short for
+/// the track between them to be anything but a letterbox. Stacking there gives the
+/// height back to the track instead of spending it on two tall panes.
+pub const SHORT_H_DP: f32 = 480.0;
+
+/// Whether vertical room, rather than width, is what the window is short of.
+pub fn is_short() -> bool {
+    height() < SHORT_H_DP
+}
+
 /// Margin left against each window edge, in dp. Wide enough that a panel does
 /// not touch the bezel, small enough to leave a usable area on a 320 dp screen.
 pub const EDGE_DP: f32 = 12.0;
@@ -115,65 +129,79 @@ pub(crate) mod tests {
     /// state, because one module's lock cannot serialise the other's.
     pub(crate) static WINDOW: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// Held for as long as a test reads the window it asked for.
+    type Turn = std::sync::MutexGuard<'static, ()>;
+
     /// Compose against a specific window, as the layout engine would.
     ///
     /// Without this the tests read whatever the ambient engine state happens to
     /// be, which is either a real window or the 360x800 default — so the desktop
     /// half of the behaviour would never be exercised at all.
-    fn window(px_w: u32, px_h: u32, scale: f32) {
-        let _turn = WINDOW.lock().unwrap_or_else(|e| e.into_inner());
+    ///
+    /// The guard is returned rather than dropped here, because setting the window
+    /// and reading it back are two halves of one operation: releasing between them
+    /// leaves the assertions racing whatever other test set the size meanwhile.
+    fn window(px_w: u32, px_h: u32, scale: f32) -> Turn {
+        let turn = WINDOW.lock().unwrap_or_else(|e| e.into_inner());
         set_window_container_size(px_w as f32 / scale, px_h as f32 / scale);
-        repose_core::set_window_size_class_default(calculate_window_size_class(
-            px_w, px_h, scale,
-        ));
+        repose_core::set_window_size_class_default(calculate_window_size_class(px_w, px_h, scale));
+        turn
     }
 
     /// A phone held upright, at a plausible 2x density: 360x780 dp.
-    fn portrait() {
-        window(720, 1560, 2.0);
+    fn portrait() -> Turn {
+        window(720, 1560, 2.0)
     }
 
     /// The desktop default: 1024x576 dp.
-    fn desktop() {
-        window(1280, 720, 1.25);
+    fn desktop() -> Turn {
+        window(1280, 720, 1.25)
     }
 
     #[test]
     fn a_phone_in_portrait_is_treated_as_narrow() {
-        portrait();
+        let _turn = portrait();
         assert!(is_narrow());
         assert!(width() < 600.0, "{}", width());
     }
 
     #[test]
     fn a_desktop_window_is_not_treated_as_narrow() {
-        desktop();
+        let _turn = desktop();
         assert!(!is_narrow());
     }
 
     #[test]
     fn a_panel_fits_a_phone_in_portrait() {
-        portrait();
+        let _turn = portrait();
         // The comfortable width is 560; the window is 360 less two 12 dp margins.
-        assert!((panel_width(560.0) - 336.0).abs() < 0.001, "{}", panel_width(560.0));
+        assert!(
+            (panel_width(560.0) - 336.0).abs() < 0.001,
+            "{}",
+            panel_width(560.0)
+        );
     }
 
     #[test]
     fn a_panel_keeps_its_comfortable_width_on_a_desktop() {
-        desktop();
-        assert!((panel_width(560.0) - 560.0).abs() < 0.001, "{}", panel_width(560.0));
+        let _turn = desktop();
+        assert!(
+            (panel_width(560.0) - 560.0).abs() < 0.001,
+            "{}",
+            panel_width(560.0)
+        );
     }
 
     #[test]
     fn a_panel_is_never_taller_than_a_phone_screen() {
-        portrait();
+        let _turn = portrait();
         assert!(panel_height(520.0) <= height());
         assert!(panel_height(520.0) < 780.0);
     }
 
     #[test]
     fn buttons_narrow_enough_for_two_to_share_a_phone_row() {
-        portrait();
+        let _turn = portrait();
         // Three buttons at the desktop's 150 dp cannot wrap on 360; at this width
         // two fit, which is what makes a wrapped row read as deliberate.
         assert!(button_width() * 2.0 + 8.0 <= width());
@@ -183,45 +211,51 @@ pub(crate) mod tests {
     #[test]
     fn no_single_part_of_a_list_row_is_wider_than_the_list() {
         // A wrapping row can only be as wide as its widest *line*, so the guarantee
-    // is that every indivisible part fits: the label, and the group of buttons that
-    // share a line. A plain row instead had the whole of label-plus-buttons as one
-    // unbreakable line, which is exactly how Delete ended up off the edge.
-    portrait();
-    let list = panel_width(560.0) - 40.0;
-    for buttons in 1..=4 {
-        let label = label_width(buttons);
-        assert!(label <= list, "{buttons} buttons: label of {label} exceeds {list}");
-        let group = button_width() * buttons as f32 + 8.0 * (buttons as f32 - 1.0);
+        // is that every indivisible part fits: the label, and the group of buttons that
+        // share a line. A plain row instead had the whole of label-plus-buttons as one
+        // unbreakable line, which is exactly how Delete ended up off the edge.
+        let _turn = portrait();
+        let list = panel_width(560.0) - 40.0;
+        for buttons in 1..=4 {
+            let label = label_width(buttons);
+            assert!(
+                label <= list,
+                "{buttons} buttons: label of {label} exceeds {list}"
+            );
+            let group = button_width() * buttons as f32 + 8.0 * (buttons as f32 - 1.0);
+            assert!(
+                group <= list || buttons > (list / (button_width() + 8.0)).floor() as usize,
+                "{buttons} buttons: group of {group} exceeds {list} and cannot wrap"
+            );
+        }
+    }
+
+    #[test]
+    fn three_buttons_wrap_to_two_lines_rather_than_overflowing() {
+        // What the tight case actually resolves to on a phone: the label on its own
+        // line, then two buttons and one. Stated so the shape is deliberate rather
+        // than whatever the wrapping happens to produce.
+        let _turn = portrait();
+        let list = panel_width(560.0) - 40.0;
+        let pair = button_width() * 2.0 + 8.0;
         assert!(
-            group <= list || buttons > (list / (button_width() + 8.0)).floor() as usize,
-            "{buttons} buttons: group of {group} exceeds {list} and cannot wrap"
+            pair <= list,
+            "a pair must fit, else buttons go one per line"
+        );
+        // Three happen to fit at the narrow width, which is why it was chosen: a row of
+        // Race / Watch / Delete costs one line beside the label's two rather than three
+        // lines of one button each.
+        assert!(
+            button_width() * 3.0 + 8.0 * 2.0 <= list,
+            "three buttons should still fit a phone's list width"
         );
     }
-}
-
-#[test]
-    fn three_buttons_wrap_to_two_lines_rather_than_overflowing() {
-    // What the tight case actually resolves to on a phone: the label on its own
-    // line, then two buttons and one. Stated so the shape is deliberate rather
-    // than whatever the wrapping happens to produce.
-    portrait();
-    let list = panel_width(560.0) - 40.0;
-    let pair = button_width() * 2.0 + 8.0;
-    assert!(pair <= list, "a pair must fit, else buttons go one per line");
-    // Three happen to fit at the narrow width, which is why it was chosen: a row of
-    // Race / Watch / Delete costs one line beside the label's two rather than three
-    // lines of one button each.
-    assert!(
-        button_width() * 3.0 + 8.0 * 2.0 <= list,
-        "three buttons should still fit a phone's list width"
-    );
-}
 
     #[test]
     fn a_label_gives_way_before_a_button_does() {
         // The label is capped by the buttons' width rather than the other way
         // round, so adding a control never pushes the row off the edge.
-        portrait();
+        let _turn = portrait();
         let one = label_width(1);
         let three = label_width(3);
         assert!(three <= one, "more buttons must not widen the label");
@@ -230,7 +264,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_label_is_roomy_on_a_desktop() {
-        desktop();
+        let _turn = desktop();
         assert!(label_width(3) >= 240.0);
     }
 
@@ -238,7 +272,7 @@ pub(crate) mod tests {
     fn a_narrow_list_row_wraps_rather_than_overflowing() {
         // Two buttons per line is the widest line that must fit; anything wider has
         // to wrap onto the next one.
-        portrait();
+        let _turn = portrait();
         let list = panel_width(560.0) - 40.0;
         let two_buttons = button_width() * 2.0 + 8.0;
         assert!(two_buttons <= list, "{two_buttons} exceeds {list}");
@@ -310,4 +344,3 @@ pub(crate) mod tests {
         assert!(panel_height(10_000.0) <= height().max(MIN_DP));
     }
 }
-

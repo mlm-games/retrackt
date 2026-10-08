@@ -80,6 +80,14 @@ const CTRLS_PER_LINE: f32 = 4.0;
 /// wheel, which is the only way to zoom once the panels are up.
 pub const STACKED_VIEWPORT_FRAC: f32 = 0.34;
 
+/// The same share for a window that is short rather than narrow.
+///
+/// Larger, because the whole point of stacking a short window is that its height
+/// went scarce: taking a third of a 360 dp window leaves a letterbox that cannot
+/// be dragged usefully, so the track is given the majority and the panels scroll
+/// within what is left.
+pub const SHORT_VIEWPORT_FRAC: f32 = 0.55;
+
 /// The editor's lengths for one window, all of them derived together.
 ///
 /// Derived in one place rather than one function at a time because the old numbers
@@ -169,11 +177,23 @@ fn at(window_w: f32) -> Layout {
 
 /// True when the two panes cannot both be shown without starving the track.
 ///
-/// Derived rather than taken from the engine's width class, because Compact asks
-/// the wrong question: it is true at 600 dp, where the editor still fits two panes
-/// with a narrow palette, and false at 700 dp, where it does not.
+/// Derived from the width rather than taken from the engine's width class, because
+/// Compact asks the wrong question: it is true at 600 dp, where the editor still
+/// fits two panes with a narrow palette, and false at 700 dp, where it does not.
+///
+/// Height is asked as well, since a window wide enough for the panes can still be
+/// too short for the track between them to be worth having.
 pub fn stacked() -> bool {
-    at(fit::width()).stacked
+    at(fit::width()).stacked || fit::is_short()
+}
+
+/// Share of a stacked window's height the track keeps, which is what decides
+/// whether there is anything left of it to drag.
+pub fn viewport_frac() -> f32 {
+    match fit::is_short() {
+        true => SHORT_VIEWPORT_FRAC,
+        false => STACKED_VIEWPORT_FRAC,
+    }
 }
 
 /// The two pane widths, or `None` when the editor is stacked and there is no
@@ -292,6 +312,114 @@ mod tests {
     const WIDTHS: [f32; 9] = [
         320.0, 360.0, 414.0, 600.0, 768.0, 855.0, 856.0, 1024.0, 2560.0,
     ];
+
+    /// The editor laid out at this window, with `pieces` pieces placed in it.
+    fn editor_at(dp_w: f32, dp_h: f32, pieces: usize) -> repose_core::Scene {
+        let _turn = crate::ui::fit::tests::WINDOW
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        set_window_container_size(dp_w, dp_h);
+        set_window_size_class_default(calculate_window_size_class(dp_w as u32, dp_h as u32, 1.0));
+        let mut data = AppData::default();
+        for i in 0..pieces {
+            data.track.pieces.push(
+                retrackt_format::PieceInstance::new(
+                    retrackt_format::PieceId::Straight,
+                    [0, 0, i as i16],
+                )
+                .with_uid(retrackt_format::PieceUid(i as u32 + 1)),
+            );
+        }
+        let view = editor_ui(&data, &Rc::new(RefCell::new(Vec::new())) as &ActionQueue);
+        repose_ui::layout_and_paint(
+            &view,
+            (dp_w as u32, dp_h as u32),
+            &HashMap::new(),
+            &Default::default(),
+            None,
+        )
+        .0
+    }
+
+    /// The editor's track panel: the tallest wide solid block in the side column.
+    fn track_panel_h(scene: &repose_core::Scene) -> f32 {
+        scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                SceneNode::Rect {
+                    rect,
+                    brush: repose_core::Brush::Solid(_),
+                    ..
+                } if rect.w > 300.0 => Some(rect.h),
+                _ => None,
+            })
+            .fold(0.0f32, f32::max)
+    }
+
+    #[test]
+    fn the_palette_is_in_the_tree_at_every_size() {
+        // The palette was built and then mounted only in the side-by-side branch, so
+        // a stacked editor had no way to arm a piece and could place nothing at all.
+        // Arming is the first thing the editor is for, so this is not a cosmetic
+        // difference between layouts.
+        for (w, h) in [(360.0f32, 780.0f32), (800.0, 360.0), (1024.0, 576.0)] {
+            let scene = editor_at(w, h, 0);
+            let texts: Vec<String> = scene
+                .nodes
+                .iter()
+                .filter_map(|n| match n {
+                    SceneNode::Text { text, .. } => Some(text.to_string()),
+                    _ => None,
+                })
+                .collect();
+            assert!(texts.iter().any(|t| t == "Palette"), "{w}x{h}: no palette");
+            for piece in retrackt_format::catalog() {
+                assert!(
+                    texts.iter().any(|t| *t == piece.id.label()),
+                    "{w}x{h}: {} cannot be armed, its control is not in the tree",
+                    piece.id.label()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_piece_list_grows_with_the_number_of_pieces() {
+        // The editor's panels sit inside its own scroller, so they must not be
+        // capped: a capped panel clips at the cap while the scroller measures the
+        // column from those capped heights, so the surplus is painted inside the
+        // clip rect and cannot be scrolled to. The symptom is the panel refusing to
+        // grow — the layout engine still measures the list at full height either
+        // way, so it is the panel's own height that gives the cap away.
+        let few = track_panel_h(&editor_at(1024.0, 576.0, 4));
+        let many = track_panel_h(&editor_at(1024.0, 576.0, 24));
+        assert!(
+            many > few + 1000.0,
+            "the track panel is {:.0} dp for 24 pieces and {:.0} for 4: it is capped, so the \
+             surplus is clipped where the column's scroller cannot reach it",
+            many,
+            few
+        );
+    }
+
+    #[test]
+    fn a_window_wide_but_short_stacks_and_gives_its_height_to_the_track() {
+        // 800x360 dp is a phone held sideways: wide enough for two panes, and far
+        // too short for the track between them to be more than a letterbox.
+        let _turn = crate::ui::fit::tests::WINDOW
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        set_window_container_size(800.0, 360.0);
+        set_window_size_class_default(calculate_window_size_class(800, 360, 1.0));
+        assert!(fit::is_short());
+        assert!(stacked());
+        assert!(
+            viewport_frac() > STACKED_VIEWPORT_FRAC,
+            "a short window keeps {:.0}% of its height for the track",
+            viewport_frac() * 100.0
+        );
+    }
 
     #[test]
     fn no_width_the_editor_can_be_shown_at_asks_for_more_than_the_window_has() {
