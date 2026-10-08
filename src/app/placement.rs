@@ -353,13 +353,34 @@ mod tests {
     }
 
     #[test]
-    fn placement_on_a_built_in_track_finds_the_chain_end() {
+    fn a_closed_circuit_offers_nowhere_to_snap_to() {
+        // The demo circuit ends in a Finish, and by the rule in `open_exit_near` a
+        // Finish is not an open port — so on a closed circuit every exit is spoken
+        // for and a placement must report that it is not snapping. Claiming a snap
+        // it did not get would put the piece somewhere the player did not choose.
         let doc = retrackt_format::demo_track();
-        let home = cursor_home(&doc);
+        let placement = placement_at(&doc, PieceId::Checkpoint, cursor_home(&doc), 1);
         assert!(
-            placement_at(&doc, PieceId::Checkpoint, home, 1).snapped,
-            "the built-in circuits must leave somewhere to build"
+            !placement.snapped,
+            "a closed circuit has no open exit, so nothing may snap"
         );
+    }
+
+    #[test]
+    fn the_tail_of_an_open_route_is_somewhere_to_build() {
+        // The demo circuit with its Finish taken off the end: the piece that used
+        // to feed it now has nothing leaving from it, which is exactly the open
+        // port the editor homes the cursor on.
+        let mut doc = retrackt_format::demo_track();
+        let finish = doc
+            .pieces
+            .iter()
+            .position(|p| catalog_by_id(p.id).is_finish)
+            .expect("the demo circuit has a finish");
+        doc.pieces.remove(finish);
+
+        let placement = placement_at(&doc, PieceId::Checkpoint, cursor_home(&doc), 1);
+        assert!(placement.snapped, "the tail of an open route is somewhere to build");
     }
 
     #[test]

@@ -713,11 +713,16 @@ mod tests {
         // tie-break used to read the piece array, so which one the chain picked
         // could change under a shuffle while the fingerprint stayed put — and
         // race order is derived from this chain.
+        //
+        // A Start is two cells long, so its exit is the third cell, not the
+        // second. Both straights sit there and both leave into the same cell, so
+        // the route is three long whichever one is taken.
         let mut doc = TrackDocument::empty();
         doc.pieces = vec![
             PieceInstance::new(PieceId::Start, [0, 0, 0]).with_uid(PieceUid(1)),
             PieceInstance::new(PieceId::Straight, [0, 0, 2]).with_uid(PieceUid(2)),
             PieceInstance::new(PieceId::Straight, [0, 0, 2]).with_uid(PieceUid(3)),
+            PieceInstance::new(PieceId::Straight, [0, 0, 3]).with_uid(PieceUid(4)),
         ];
         doc.normalize_uids();
         let forward = doc.route();

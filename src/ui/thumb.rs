@@ -164,15 +164,19 @@ mod tests {
 
     #[test]
     fn each_kind_of_piece_is_told_apart_by_colour() {
+        // Road is what a track is mostly made of, so the question is whether
+        // anything worth spotting is *not* that colour — not whether every piece
+        // differs from every other. A straight is road, and cannot be told apart
+        // from it, because it is it.
+        let road = cell_color(PieceId::Straight);
         for id in [
             PieceId::Checkpoint,
             PieceId::Start,
             PieceId::Finish,
             PieceId::Boost,
-            PieceId::Straight,
+            PieceId::Wall,
         ] {
-            let road = cell_color(PieceId::Straight);
-            assert_ne!(cell_color(id), road, "{id:?} must not look like road");
+            assert_ne!(cell_color(id), road, "{id:?} must be told apart from road");
         }
     }
 

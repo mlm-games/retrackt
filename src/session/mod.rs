@@ -337,7 +337,12 @@ mod tests {
             pos.x > 12.0,
             "recovered past the box, not inside it: {pos:?}"
         );
-        assert!(yaw.abs() < 1e-5, "+X forward is a yaw of zero, got {yaw}");
+        // `heading_dir` is `(sin yaw, 0, cos yaw)`, so +X is a quarter turn, not
+        // zero: the convention is measured from +Z.
+        assert!(
+            (yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-5,
+            "+X forward is a quarter turn, got {yaw}"
+        );
 
         // Recovering to it must not cross it a second time.
         s.teleport(pos);

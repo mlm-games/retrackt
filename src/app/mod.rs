@@ -1660,9 +1660,17 @@ mod tests {
 
     #[test]
     fn there_is_no_delta_before_a_shared_checkpoint_or_without_a_ghost() {
-        assert_eq!(split_delta(&[100, 200], Some(&[300])), None);
+        assert_eq!(split_delta(&[100, 200], Some(&[])), None);
         assert_eq!(split_delta(&[100], None), None);
         assert_eq!(split_delta(&[], Some(&[100])), None);
+    }
+
+    #[test]
+    fn a_delta_falls_back_to_the_last_checkpoint_the_ghost_also_reached() {
+        // The ghost has one split and the player three: the only comparison on
+        // offer is the first, and it is stale but not wrong. Reporting it beats
+        // showing nothing while the ghost is visibly ahead on the road.
+        assert_eq!(split_delta(&[100, 150, 190], Some(&[120])), Some(-20));
     }
 
     #[test]

@@ -127,6 +127,9 @@ struct EditorKeys {
     step: [i16; 3],
     /// How long each axis has been held, for the repeat delay.
     held: [u32; 3],
+    /// Axes whose keys were already down when the editor opened or closed, and so
+    /// are not a press. Cleared per axis by a frame that releases it.
+    muted: [bool; 3],
     /// One-shot commands, all edge-latched. Level-triggered, a held Ctrl+C would
     /// copy once per frame and flood the notice bar.
     pressed: EditorCommand,
@@ -175,6 +178,21 @@ const CURSOR_KEYS: [(PhysicalKey, usize, i16); 8] = [
     (PhysicalKey::KeyA, 0, -1),
 ];
 
+/// The direction an axis should step on this frame: every held key of that axis,
+/// summed, so opposite directions cancel rather than doubling up.
+///
+/// The pair of keys sharing an axis is why this cannot be done per key. Counting
+/// them separately cleared the shared counter on whichever key happened to be up,
+/// so the hold never lasted past one frame and hold-to-repeat became an
+/// unconditional slide.
+fn axis_step(axis: usize, held: &impl Fn(PhysicalKey) -> bool) -> i16 {
+    CURSOR_KEYS
+        .iter()
+        .filter(|(key, a, _)| *a == axis && held(*key))
+        .map(|(_, _, direction)| *direction)
+        .sum()
+}
+
 impl EditorKeys {
     /// Resolve the held keys into this frame's commands.
     fn poll(&mut self, sched: &Scheduler) {
@@ -183,18 +201,33 @@ impl EditorKeys {
         let shift = held(PhysicalKey::ShiftLeft) || held(PhysicalKey::ShiftRight);
 
         self.step = [0; 3];
-        for (key, axis, direction) in CURSOR_KEYS {
+        for axis in 0..self.step.len() {
             // A modified key is not a cursor key. Ctrl+D duplicates and Shift+A
             // selects the route; neither should also slide the cursor, or holding
             // a modifier would quietly move the piece about to be placed.
-            if (ctrl || shift) || !held(key) {
+            let plain = |key: PhysicalKey| held(key) && !ctrl && !shift;
+            let direction = axis_step(axis, &plain);
+            if direction == 0 {
+                // Nothing held, or the pair cancels. Both mean no step, and both
+                // clear the counter, so a released-then-pressed key waits out the
+                // delay again instead of resuming mid-repeat.
                 self.held[axis] = 0;
+                self.muted[axis] = false;
+                continue;
+            }
+            if self.muted[axis] {
+                // Already down when the editor opened or closed. Not a press, so it
+                // neither steps nor starts the delay: releasing the key is what arms
+                // it, and the frame after that behaves like any other press.
                 continue;
             }
             self.held[axis] += 1;
             let n = self.held[axis];
-            let repeats = n >= REPEAT_DELAY_FRAMES
-                && (n - REPEAT_DELAY_FRAMES) % REPEAT_PERIOD_FRAMES == 0;
+            // `n` counts the press frame as 1, so a delay of `DELAY` frames is
+            // `DELAY` quiet frames *after* it and the first repeat is the frame
+            // after those.
+            let repeats = n > REPEAT_DELAY_FRAMES
+                && (n - REPEAT_DELAY_FRAMES - 1) % REPEAT_PERIOD_FRAMES == 0;
             if n == 1 || repeats {
                 self.step[axis] += direction;
             }
@@ -237,8 +270,15 @@ impl EditorKeys {
     /// the frame the editor was last polled, and clearing it would make a key
     /// still held at that moment read as a *fresh* press the next time the editor
     /// opens — a command fired by the player letting go of nothing.
+    /// The editor was entered or left: forget this frame.
+    ///
+    /// The axes are muted as well as reset. Zeroing alone would make a key that is
+    /// still physically down look like a fresh press on the next poll, so the
+    /// cursor would step — and then start repeating — under a finger that never
+    /// touched the editor. A muted axis does neither until a frame releases it.
     fn release(&mut self) {
         self.held = [0; 3];
+        self.muted = [true; 3];
         self.step = [0; 3];
         self.pressed = EditorCommand::default();
     }

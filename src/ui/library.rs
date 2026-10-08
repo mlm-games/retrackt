@@ -88,9 +88,17 @@ mod tests {
     fn invalidating_forces_a_reread() {
         SAVED.with(|slot| *slot.borrow_mut() = Some(vec![doc("first", 1)]));
         assert_eq!(saved_names(), vec!["first".to_string()]);
-        SAVED.with(|slot| *slot.borrow_mut() = Some(vec![doc("second", 1)]));
-        // Still the cached copy: nothing has invalidated it.
+        // Nothing replaces the cached copy on its own, so asking twice is stable.
         assert_eq!(saved_names(), vec!["first".to_string()]);
+
+        invalidate();
+        // Cleared rather than flagged stale: there is no other way for the next
+        // read to tell a cleared slot from a cached one, and a flag the cache
+        // could forget to clear would keep serving a library the player has left.
+        assert!(
+            SAVED.with(|slot| slot.borrow().is_none()),
+            "invalidate must empty the cache, not mark it"
+        );
         invalidate();
     }
 }

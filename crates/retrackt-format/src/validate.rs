@@ -340,21 +340,22 @@ mod tests {
     #[test]
     fn two_pieces_in_one_cell_warn_without_refusing_the_track() {
         let mut doc = demo_track();
-        // Placed on top of an existing straight rather than beside it, so the two
-        // genuinely claim the same cells.
+        // Two copies of one piece, on top of each other. A curve is the only kind
+        // with a road body at all: a straight's centreline is just its two port
+        // cells, so it owns nothing and can never collide with anything, and
+        // overlap is judged on occupied cells. The fixture has to use a piece that
+        // has some or it is not testing anything.
         let victim = *doc
             .pieces
             .iter()
             .find(|p| {
-                p.id == PieceId::Straight
-                    && crate::geometry::piece_shape(p.id, &p.params, doc.cell_size)
-                        .occupied
-                        .len()
-                        > 0
+                !crate::geometry::piece_shape(p.id, &p.params, doc.cell_size)
+                    .occupied
+                    .is_empty()
             })
-            .expect("the demo circuit has a straight with a body");
+            .expect("the demo circuit has a piece with a road body");
         let uid = doc.next_piece_uid();
-        doc.pieces.push(long_straight(uid, victim.cell));
+        doc.pieces.push(victim.with_uid(uid));
         doc.normalize_uids();
 
         let found = validate(&doc);
