@@ -1,9 +1,10 @@
 use repose_core::{Color, Dp, Modifier, Px, View, px_to_dp};
-use repose_ui::{Box, Column, Row, Spacer, Text, TextStyle, ViewExt, ZStack};
+use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Spacer, Text, TextStyle, ViewExt, ZStack};
 
 use crate::app::input::{STICK_BASE_DP, STICK_KNOB_DP, STICK_TRAVEL_DP};
 use crate::app::state::{ActionQueue, AppData, StickView, UiAct};
 use crate::app::theme;
+use crate::ui::fit;
 use crate::ui::hud::race_hud;
 use crate::ui::widgets::{accent_btn, controls_hint, ghost_btn, pusher};
 
@@ -21,9 +22,23 @@ pub fn race_ui(data: &AppData, actions: &ActionQueue, viewport: View) -> View {
     ));
     let controls = Box(Modifier::new()
         .absolute()
-        .offset(None, None, Some(theme::dp(20.0)), Some(theme::dp(20.0)))
+        .offset(
+            None,
+            None,
+            Some(theme::dp(fit::chrome_inset())),
+            Some(theme::dp(fit::chrome_inset())),
+        )
         .hit_passthrough())
-    .child(Row(Modifier::new().gap(theme::dp(12.0))).child(controls_row));
+    // Wrapping rather than a plain row: three buttons at their comfortable width
+    // are wider together than a 320 dp screen, and a row that cannot wrap puts
+    // "Quit to Title" past the right edge with no way to reach it mid-race.
+    .child(
+        FlowRow(
+            Modifier::new().gap(theme::dp(12.0)),
+            FlowRowConfig::default(),
+        )
+        .child(controls_row),
+    );
 
     let mut hints = controls_hint();
     if data.practice {
@@ -38,7 +53,12 @@ pub fn race_ui(data: &AppData, actions: &ActionQueue, viewport: View) -> View {
     }
     let hints = Box(Modifier::new()
         .absolute()
-        .offset(Some(theme::dp(20.0)), None, None, Some(theme::dp(20.0)))
+        .offset(
+            Some(theme::dp(fit::chrome_inset())),
+            None,
+            None,
+            Some(theme::dp(fit::chrome_inset())),
+        )
         .hit_passthrough())
     .child(hints);
 

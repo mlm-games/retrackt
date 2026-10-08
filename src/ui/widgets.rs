@@ -188,19 +188,24 @@ pub fn list_panel(title: &str, children: Vec<View>) -> View {
     panel_inner(title, panel_width(), children, AlignItems::STRETCH)
 }
 
-/// A list panel at the caller's own width, for a screen that has to fit one
-/// beside something else rather than over it.
-///
-/// A panel wider than the column holding it scrolls sideways inside that column,
-/// which on the editor's side column is a horizontal scrollbar over a list.
+/// A panel at the caller's own width, for a screen that has to fit one beside
+/// something else rather than over it.
 ///
 /// Deliberately *not* capped at [`panel_height`], unlike [`panel`] and
 /// [`list_panel`]. Those sit over a backdrop that takes input rather than over a
-/// scroll view, so a cap is the only thing keeping their contents on screen. This
-/// one is inside the editor's own scroller, which already owns the overflow, and a
-/// cap here is worse than none: the panel clips at the cap while the scroller
-/// measures the column from those capped heights, so it has no range reaching the
-/// clipped part. The piece list, taller than any cap, went missing that way.
+/// scroll view, so a cap is the only thing keeping their contents on screen. One
+/// inside a screen's own scroller is the opposite: the panel clips at the cap while
+/// the scroller measures the column from those capped heights, so it has no range
+/// reaching what was clipped.
+pub fn panel_w(title: &str, width: Dp, children: Vec<View>) -> View {
+    panel_body(title, width, children, AlignItems::CENTER, false)
+}
+
+/// [`list_panel`] at the caller's own width, and likewise uncapped for the same
+/// reason as [`panel_w`].
+///
+/// A panel wider than the column holding it scrolls sideways inside that column,
+/// which on the editor's side column is a horizontal scrollbar over a list.
 pub fn list_panel_w(title: &str, width: Dp, children: Vec<View>) -> View {
     panel_body(title, width, children, AlignItems::STRETCH, false)
 }

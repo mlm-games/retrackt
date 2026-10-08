@@ -3,6 +3,7 @@ use repose_ui::{Column, Text, TextStyle, ViewExt, ZStack};
 
 use crate::app::state::AppData;
 use crate::app::theme;
+use crate::ui::fit;
 use crate::ui::widgets::{fmt_delta, fmt_ticks};
 
 /// Matches the ghost car's albedo, so the HUD line and the car on the track are
@@ -20,7 +21,12 @@ pub fn race_hud(data: &AppData) -> View {
     let left = Column(
         Modifier::new()
             .absolute()
-            .offset(Some(theme::dp(20.0)), Some(theme::dp(20.0)), None, None)
+            .offset(
+                Some(theme::dp(fit::chrome_inset())),
+                Some(theme::dp(fit::chrome_inset())),
+                None,
+                None,
+            )
             .gap(theme::dp(4.0))
             .padding(theme::dp(12.0))
             .background(theme::background().with_alpha_f32(0.55))
@@ -29,13 +35,13 @@ pub fn race_hud(data: &AppData) -> View {
     )
     .child(
         Text(time)
-            .size(theme::sp(36.0))
+            .size(theme::sp(36.0 * fit::type_scale()))
             .color(theme::text())
             .single_line(),
     )
     .child(
         Text(format!("{speed:.0} km/h"))
-            .size(theme::sp(22.0))
+            .size(theme::sp(22.0 * fit::type_scale()))
             .color(theme::accent())
             .single_line(),
     );
@@ -96,7 +102,12 @@ pub fn race_hud(data: &AppData) -> View {
     let right = Column(
         Modifier::new()
             .absolute()
-            .offset(None, Some(theme::dp(20.0)), Some(theme::dp(20.0)), None)
+            .offset(
+                None,
+                Some(theme::dp(fit::chrome_inset())),
+                Some(theme::dp(fit::chrome_inset())),
+                None,
+            )
             .gap(theme::dp(4.0))
             .padding(theme::dp(12.0))
             .background(theme::background().with_alpha_f32(0.55))

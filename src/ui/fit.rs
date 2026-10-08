@@ -53,6 +53,38 @@ pub fn is_short() -> bool {
     height() < SHORT_H_DP
 }
 
+/// Margin the floating chrome — the HUD, the race buttons, the notice bar — keeps
+/// from each window edge, in dp.
+///
+/// The same number everywhere rather than a constant, because 20 dp is a quarter of
+/// a 320 dp screen's width spent twice over, and on a notched handset the corner it
+/// gives up is the one the hardware is already using. The narrower margin is
+/// enough to clear a bezel, which is all this inset is for.
+pub fn chrome_inset() -> f32 {
+    if is_narrow() || is_short() {
+        10.0
+    } else {
+        20.0
+    }
+}
+
+/// Factor for type that is sized to be read rather than fitted, in 0.8..=1.0.
+///
+/// The race clock and the game's name are the two things on screen that are read at
+/// a glance, and both are set in points rather than dp, so they do not shrink with
+/// the window the way a dp length does. Left alone, a 56 dp title on a 320 dp screen
+/// is half the width of the screen and pushes the menu below it off the edge.
+pub fn type_scale() -> f32 {
+    let w = width();
+    if w < 360.0 {
+        0.8
+    } else if w < 420.0 {
+        0.9
+    } else {
+        1.0
+    }
+}
+
 /// Margin left against each window edge, in dp. Wide enough that a panel does
 /// not touch the bezel, small enough to leave a usable area on a 320 dp screen.
 pub const EDGE_DP: f32 = 12.0;
