@@ -3,7 +3,7 @@ use repose_ui::{Column, Text, TextStyle, ViewExt, ZStack};
 
 use crate::app::state::AppData;
 use crate::app::theme;
-use crate::ui::widgets::fmt_ticks;
+use crate::ui::widgets::{fmt_delta, fmt_ticks};
 
 /// Matches the ghost car's albedo, so the HUD line and the car on the track are
 /// visibly the same thing.
@@ -64,6 +64,31 @@ pub fn race_hud(data: &AppData) -> View {
             Text(format!("vs {name}  {}", fmt_ticks(ticks)))
                 .size(theme::sp(16.0))
                 .color(ghost_ink())
+                .single_line(),
+        );
+    }
+
+    // The live gap to that ghost. Ahead is the same green the rest of the UI uses
+    // for something good; behind is the danger colour, so the number reads without
+    // being parsed.
+    if let Some(delta) = data.split_delta {
+        right_children.push(
+            Text(fmt_delta(delta))
+                .size(theme::sp(26.0))
+                .color(if delta <= 0 {
+                    theme::ok()
+                } else {
+                    theme::danger()
+                })
+                .single_line(),
+        );
+    }
+
+    if data.practice {
+        right_children.push(
+            Text("PRACTICE")
+                .size(theme::sp(14.0))
+                .color(theme::accent())
                 .single_line(),
         );
     }

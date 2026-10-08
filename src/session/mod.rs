@@ -16,6 +16,8 @@ pub struct RaceSession {
     ticks: u32,
     splits: Vec<u32>,
     finished: bool,
+    /// Where the car was at the last tick, so a crossing is a swept test.
+    prev: Vec3,
 }
 
 impl RaceSession {
@@ -26,6 +28,7 @@ impl RaceSession {
             ticks: 0,
             splits: Vec::new(),
             finished: false,
+            prev: Vec3::ZERO,
         }
     }
 
@@ -38,17 +41,63 @@ impl RaceSession {
         self.ticks = 0;
         self.splits.clear();
         self.finished = false;
+        self.prev = world.spawn;
     }
 
-    /// Advance the run by one simulated tick and test the gates against `pos`.
+    /// Move the reference point without testing any gate and without the clock.
+    ///
+    /// For a teleport made outside a tick: a kill-height respawn throws the car
+    /// across the map, and the segment it flew would otherwise cross every gate
+    /// between where it fell and where it reappeared, handing out checkpoints for
+    /// a fall.
+    pub fn teleport(&mut self, pos: Vec3) {
+        self.prev = pos;
+    }
+
+    /// One tick that crossed nothing.
+    ///
+    /// The clock still advances, because the run really did take that step and the
+    /// tape records it: skipping the tick here would leave the recorded time and
+    /// the tape a different length, and every split on the tape would then be
+    /// offset from the gate it belongs to.
+    pub fn tick_teleported(&mut self, pos: Vec3) {
+        if self.finished {
+            return;
+        }
+        self.ticks = self.ticks.saturating_add(1);
+        self.prev = pos;
+    }
+
+    /// The last gate crossed, as a place to put the car back on the road facing
+    /// the way the track runs. `None` before the first one.
+    ///
+    /// The gate's centre is a trigger box, not a piece of road, so the car is
+    /// returned a little way along the facing instead — inside the gate, or driving
+    /// out of it, and the session would count the gate a second time.
+    pub fn recovery(&self) -> Option<(Vec3, f32)> {
+        let gate = self.gates.get(self.next.checked_sub(1)?)?;
+        let f = gate.facing;
+        let along = gate.half.x.max(gate.half.z) + 1.0;
+        // Heading is measured from +Z, the same convention `Car::at_spawn` takes.
+        Some((gate.centre + f * along, f.x.atan2(f.z)))
+    }
+
+    /// Advance the run by one simulated tick. `pos` is where the car ended the
+    /// tick; the gate test is against the movement since the last call.
     pub fn tick(&mut self, pos: Vec3) {
         if self.finished {
             return;
         }
         self.ticks = self.ticks.saturating_add(1);
+        self.tick_from(self.prev, pos);
+        self.prev = pos;
+    }
+
+    /// Test the gates against one tick of movement, from `from` to `to`.
+    fn tick_from(&mut self, from: Vec3, to: Vec3) {
         while self.next < self.gates.len() {
             let gate = self.gates[self.next];
-            if !gate.contains(pos) {
+            if !gate.crossed(from, to) {
                 break;
             }
             if !gate.is_finish {
@@ -112,11 +161,13 @@ mod tests {
     use super::*;
     use retrackt_format::PieceUid;
 
-    fn gate(centre: [f32; 3], half: [f32; 3], is_finish: bool) -> Gate {
+    /// A gate on the +X axis of the test road, which runs from x = 0 to x = 30.
+    fn gate(x: f32, is_finish: bool) -> Gate {
         Gate {
             piece: PieceUid(0),
-            centre: Vec3::from(centre),
-            half: Vec3::from(half),
+            centre: Vec3::new(x, 0.0, 0.0),
+            half: Vec3::new(2.0, 3.0, 2.0),
+            facing: Vec3::X,
             is_finish,
             index: 0,
         }
@@ -124,11 +175,9 @@ mod tests {
 
     fn spaced_world() -> TrackWorld {
         let mut w = TrackWorld::default();
-        w.checkpoints = vec![
-            gate([0.0, 0.0, 0.0], [2.0, 2.0, 2.0], false),
-            gate([10.0, 0.0, 0.0], [2.0, 2.0, 2.0], false),
-        ];
-        w.finish = Some(gate([20.0, 0.0, 0.0], [2.0, 2.0, 2.0], true));
+        w.spawn = Vec3::new(-5.0, 0.0, 0.0);
+        w.checkpoints = vec![gate(10.0, false), gate(20.0, false)];
+        w.finish = Some(gate(30.0, true));
         w
     }
 
@@ -141,6 +190,31 @@ mod tests {
         s
     }
 
+    /// Drive through every gate of `w` in order, arriving at each from behind its
+    /// own facing. Bounded so a track whose gates cannot be reached this way fails
+    /// the test rather than hanging it.
+    fn drive_through(s: &mut RaceSession, w: &TrackWorld) {
+        for _ in 0..4 * w.checkpoint_count() + 4 {
+            if s.finished() {
+                return;
+            }
+            let i = s.checkpoint();
+            let gate = if i < w.checkpoints.len() {
+                &w.checkpoints[i]
+            } else {
+                w.finish
+                    .as_ref()
+                    .expect("a track being walked has a finish")
+            };
+            // Two moves per gate, one just short of the box and one past it. The
+            // first is a teleport rather than a crossing, so it cannot count the gate
+            // it is approaching from behind.
+            let reach = gate.half.x.max(gate.half.z) + 1.0;
+            s.teleport(gate.centre - gate.facing * reach);
+            s.tick(gate.centre + gate.facing * reach);
+        }
+    }
+
     #[test]
     fn run_walks_gates_in_order_and_freezes_at_the_finish() {
         let w = spaced_world();
@@ -150,38 +224,138 @@ mod tests {
         assert_eq!(s.checkpoint(), 0);
         assert!(!s.finished());
 
-        s.tick(Vec3::new(10.0, 0.0, 0.0));
-        assert_eq!(s.checkpoint(), 0, "gates must be passed in order");
-        assert!(s.splits().is_empty());
-
-        s.tick(Vec3::new(0.0, 0.0, 0.0));
-        assert_eq!(s.checkpoint(), 1);
-        assert_eq!(s.splits(), &[2]);
-
-        s.tick(Vec3::new(10.0, 0.0, 0.0));
-        assert_eq!(s.checkpoint(), 2);
-        assert_eq!(s.splits(), &[2, 3]);
-
+        // From the spawn at x = -5, straight past the first gate to the second.
         s.tick(Vec3::new(20.0, 0.0, 0.0));
+        assert_eq!(s.checkpoint(), 2, "one tick can cross more than one gate");
+        assert_eq!(s.splits(), &[1, 1]);
+
+        s.tick(Vec3::new(30.0, 0.0, 0.0));
         assert!(s.finished());
         assert_eq!(s.checkpoint(), 3);
         assert_eq!(s.splits().len(), 2, "the finish gate records no split");
-        assert_eq!(s.ticks(), 4);
+        assert_eq!(s.ticks(), 2);
 
         s.tick(Vec3::new(999.0, 0.0, 0.0));
-        assert_eq!(s.ticks(), 4, "the clock stops once the run is over");
+        assert_eq!(s.ticks(), 2, "the clock stops once the run is over");
         assert_eq!(s.checkpoint(), 3);
+    }
+
+    #[test]
+    fn a_gate_is_crossed_by_the_path_not_by_the_end_point() {
+        let w = spaced_world();
+        let mut s = RaceSession::new();
+        s.start(&w);
+        // One tick straight over the box at x = 10: outside it at both ends, inside
+        // at neither. The run must still count the crossing.
+        s.tick(Vec3::new(14.0, 0.0, 0.0));
+        assert_eq!(s.checkpoint(), 1);
+
+        let mut s = RaceSession::new();
+        s.start(&w);
+        s.teleport(Vec3::new(8.0, 0.0, 0.0));
+        // Parked inside the box and going nowhere.
+        s.tick(Vec3::new(8.0, 0.0, 0.0));
+        assert_eq!(s.checkpoint(), 0, "standing in a gate crosses nothing");
+    }
+
+    #[test]
+    fn driving_back_through_a_gate_does_not_count_it() {
+        let w = spaced_world();
+        let mut s = RaceSession::new();
+        s.start(&w);
+        s.tick(Vec3::new(10.0, 0.0, 0.0));
+        assert_eq!(s.checkpoint(), 1);
+
+        // Back the way it came, right through the gate it just crossed.
+        s.tick(Vec3::new(2.0, 0.0, 0.0));
+        assert_eq!(s.checkpoint(), 1, "the gate is not re-counted backwards");
+        assert_eq!(s.splits(), &[1]);
+
+        s.tick(Vec3::new(10.0, 0.0, 0.0));
+        assert_eq!(
+            s.checkpoint(),
+            1,
+            "and crossing it again is not a second pass"
+        );
+    }
+
+    #[test]
+    fn a_teleport_earns_nothing() {
+        let w = spaced_world();
+        let mut s = RaceSession::new();
+        s.start(&w);
+        // A fall thrown the length of the map: the segment it flew would otherwise
+        // cross every gate on the way.
+        s.teleport(Vec3::new(34.0, 0.0, 0.0));
+        s.tick(Vec3::new(36.0, 0.0, 0.0));
+        assert_eq!(s.checkpoint(), 0);
+        assert!(!s.finished());
+        assert!(s.splits().is_empty());
+    }
+
+    #[test]
+    fn a_teleported_tick_is_still_a_tick() {
+        let w = spaced_world();
+        let mut s = RaceSession::new();
+        s.start(&w);
+        s.tick_teleported(Vec3::new(-5.0, 0.0, 0.0));
+        s.tick_teleported(Vec3::new(-5.0, 0.0, 0.0));
+        assert_eq!(s.ticks(), 2, "the run took those two steps");
+        assert_eq!(s.checkpoint(), 0);
+        assert!(s.splits().is_empty());
+
+        // And the run carries on from where it was put, not from where it fell.
+        s.tick(Vec3::new(10.0, 0.0, 0.0));
+        assert_eq!(s.ticks(), 3);
+        assert_eq!(s.checkpoint(), 1);
+        assert_eq!(s.splits(), &[3]);
+    }
+
+    #[test]
+    fn a_teleported_tick_does_not_rewind_a_finished_run() {
+        let w = spaced_world();
+        let mut s = RaceSession::new();
+        s.start(&w);
+        drive_through(&mut s, &w);
+        assert!(s.finished());
+        let ticks = s.ticks();
+
+        s.tick_teleported(Vec3::ZERO);
+        assert_eq!(s.ticks(), ticks, "the clock stops with the run");
+    }
+
+    #[test]
+    fn recovery_is_the_last_gate_crossed_facing_the_way_the_track_runs() {
+        let w = spaced_world();
+        let mut s = RaceSession::new();
+        s.start(&w);
+        assert_eq!(s.recovery(), None, "nothing crossed yet");
+
+        s.tick(Vec3::new(10.0, 0.0, 0.0));
+        let (pos, yaw) = s.recovery().expect("a crossed gate can be recovered to");
+        assert!(
+            pos.x > 12.0,
+            "recovered past the box, not inside it: {pos:?}"
+        );
+        assert!(yaw.abs() < 1e-5, "+X forward is a yaw of zero, got {yaw}");
+
+        // Recovering to it must not cross it a second time.
+        s.teleport(pos);
+        s.tick(pos + Vec3::X);
+        assert_eq!(s.checkpoint(), 1);
+        assert_eq!(s.splits(), &[1]);
+
+        drive_through(&mut s, &w);
+        assert!(s.finished());
+        let (pos, _) = s.recovery().expect("the finish gate is still a place");
+        assert!(pos.x > 32.0, "past the finish box, got {pos:?}");
     }
 
     #[test]
     fn several_gates_in_one_tick_are_all_processed_in_order() {
         let mut w = TrackWorld::default();
-        w.checkpoints = vec![
-            gate([0.0, 0.0, 0.0], [2.0, 2.0, 2.0], false),
-            gate([1.0, 0.0, 0.0], [2.0, 2.0, 2.0], false),
-            gate([2.0, 0.0, 0.0], [2.0, 2.0, 2.0], false),
-        ];
-        w.finish = Some(gate([3.0, 0.0, 0.0], [2.0, 2.0, 2.0], true));
+        w.checkpoints = vec![gate(0.0, false), gate(1.0, false), gate(2.0, false)];
+        w.finish = Some(gate(3.0, true));
 
         let mut s = RaceSession::new();
         s.start(&w);
@@ -217,10 +391,10 @@ mod tests {
     fn identical_tick_sequences_produce_identical_runs() {
         let w = spaced_world();
         let path = [
-            Vec3::new(0.0, 0.0, 0.0),
             Vec3::new(10.0, 0.0, 0.0),
             Vec3::new(20.0, 0.0, 0.0),
-            Vec3::new(20.0, 0.0, 0.0),
+            Vec3::new(30.0, 0.0, 0.0),
+            Vec3::new(30.0, 0.0, 0.0),
         ];
         let a = run(&w, &path);
         let b = run(&w, &path);
@@ -238,18 +412,7 @@ mod tests {
         s.start(&w);
         assert_eq!(s.checkpoint_count(), w.checkpoints.len() + 1);
 
-        for _ in 0..600 {
-            let next = s.checkpoint();
-            let gate = if next < w.checkpoints.len() {
-                w.checkpoints[next]
-            } else {
-                w.finish.expect("demo track has a finish gate")
-            };
-            s.tick(gate.centre);
-            if s.finished() {
-                break;
-            }
-        }
+        drive_through(&mut s, &w);
         assert!(s.finished());
         assert_eq!(s.checkpoint(), s.checkpoint_count());
         assert_eq!(s.splits().len(), w.checkpoints.len());
@@ -259,18 +422,16 @@ mod tests {
     #[test]
     fn a_track_without_a_finish_ends_at_the_last_checkpoint() {
         let mut w = TrackWorld::default();
-        w.checkpoints = vec![
-            gate([0.0, 0.0, 0.0], [2.0, 2.0, 2.0], false),
-            gate([10.0, 0.0, 0.0], [2.0, 2.0, 2.0], false),
-        ];
+        w.spawn = Vec3::new(-5.0, 0.0, 0.0);
+        w.checkpoints = vec![gate(10.0, false), gate(20.0, false)];
         w.finish = None;
 
         let mut s = RaceSession::new();
         s.start(&w);
         assert_eq!(s.checkpoint_count(), 2, "no finish gate to count");
-        s.tick(Vec3::new(0.0, 0.0, 0.0));
-        assert!(!s.finished());
         s.tick(Vec3::new(10.0, 0.0, 0.0));
+        assert!(!s.finished());
+        s.tick(Vec3::new(20.0, 0.0, 0.0));
         assert!(s.finished());
         assert_eq!(s.splits(), &[1, 2]);
         assert_eq!(s.checkpoint(), s.checkpoint_count());
@@ -287,18 +448,7 @@ mod tests {
         let w = TrackWorld::from_doc(&doc);
         let mut s = RaceSession::new();
         s.start(&w);
-        for _ in 0..600 {
-            if s.finished() {
-                break;
-            }
-            let next = s.checkpoint();
-            let gate = if next < w.checkpoints.len() {
-                w.checkpoints[next]
-            } else {
-                w.finish.expect("demo track has a finish gate")
-            };
-            s.tick(gate.centre);
-        }
+        drive_through(&mut s, &w);
         assert!(s.finished());
 
         let track_fp = retrackt_format::gameplay_fingerprint(&doc);
@@ -324,7 +474,10 @@ mod tests {
 
         let result = s.result(&doc, Some(tape.clone()));
         assert_eq!(result.track_fingerprint, track_fp);
-        assert_eq!(result.physics_fingerprint, crate::sim::car::physics_fingerprint());
+        assert_eq!(
+            result.physics_fingerprint,
+            crate::sim::car::physics_fingerprint()
+        );
         assert_eq!(result.total_ticks, s.ticks());
         assert_eq!(result.splits.as_slice(), s.splits());
         assert_eq!(tape.split_ticks, result.splits);

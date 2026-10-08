@@ -24,7 +24,8 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
 
     if data.ghosts.is_empty() {
         children.push(dim_text(
-            "No ghosts yet. Finish a race, then save its tape from the results screen.",
+            "No ghosts yet. Every record is kept as one automatically, and a run can \
+             be saved by name from the results screen.",
         ));
     } else {
         children.push(dim_text(&format!("{} kept", data.ghosts.len())));

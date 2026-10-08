@@ -4,7 +4,6 @@ use std::rc::Rc;
 use repose_core::ImageHandle;
 use retrackt_format::TrackDocument;
 
-use crate::save::Settings;
 use crate::session::result::RaceResult;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -39,6 +38,12 @@ impl TrackRef {
 pub enum UiAct {
     StartRace,
     Restart,
+    /// Turn practice on or off. Practice keeps the clock and the tape but returns a
+    /// fall to the last checkpoint instead of the start line, and records nothing
+    /// when it finishes. Applies from the next race.
+    SetPractice(bool),
+    /// Put the car back at the last checkpoint. Practice only.
+    RecoverToCheckpoint,
     QuitToTitle,
     RaceFinished(RaceResult),
     RaceAbandoned,
@@ -144,7 +149,6 @@ pub fn push(q: &ActionQueue, act: UiAct) {
 pub struct AppData {
     pub screen: Screen,
     pub track: TrackDocument,
-    pub settings: Settings,
     pub last_result: Option<RaceResult>,
     /// The kept-tape library, refreshed by the runtime whenever it changes so
     /// the ghost screen never reads storage while a view is being built.
@@ -154,6 +158,13 @@ pub struct AppData {
     /// Race time of that ghost, in ticks, so the HUD can show what is being
     /// chased without decoding a tape per frame.
     pub ghost_ticks: Option<u32>,
+    /// Checkpoint splits of that ghost, in ticks. The delta the HUD and results
+    /// screen read comes from these against the live session's splits, so "where
+    /// the time went" needs no second clock.
+    pub ghost_splits: Option<Vec<u32>>,
+    /// Ticks behind (positive) or ahead of the ghost at the last checkpoint both
+    /// runs reached. `None` before the first shared split.
+    pub split_delta: Option<i64>,
     /// Where the ghost library was opened from, so closing returns there rather
     /// than always dropping to the title.
     pub ghost_return: Screen,
@@ -162,6 +173,9 @@ pub struct AppData {
     /// Best recorded time on the current track under the current vehicle
     /// tuning, in simulated ticks.
     pub best: Option<u32>,
+    /// Whether races start in practice: a fall returns to the last checkpoint
+    /// rather than the start line, and finishing records nothing.
+    pub practice: bool,
     /// Live race readout, refreshed by the runtime every frame for the HUD.
     pub race_ticks: u32,
     pub speed_kmh: f32,

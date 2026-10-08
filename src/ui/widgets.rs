@@ -10,10 +10,11 @@ pub const CONTROLS: [(&str, &str); 8] = [
     ("Space", "handbrake"),
     ("Shift", "boost"),
     ("R", "restart"),
+    ("C", "back to checkpoint"),
     ("Esc", "quit to title"),
     ("Stick, RT, LT", "drive"),
     ("RB / LB", "handbrake / boost"),
-    ("Y / B", "restart / quit to title"),
+    ("Y / X / B", "restart / checkpoint / quit"),
 ];
 
 pub fn pusher(actions: &ActionQueue, act: UiAct) -> impl Fn() + 'static {
@@ -92,6 +93,17 @@ pub fn disabled_btn(label: &str) -> View {
     )
 }
 
+/// The practice toggle, on every screen a run is started from.
+///
+/// Practice is a mode rather than a screen: putting the toggle here means switching
+/// it costs one tap instead of a trip back to a menu.
+pub fn practice_toggle(practice: bool, actions: &ActionQueue) -> View {
+    ghost_btn(
+        if practice { "Practice: on" } else { "Practice: off" },
+        pusher(actions, UiAct::SetPractice(!practice)),
+    )
+}
+
 pub fn panel(title: &str, children: Vec<View>) -> View {
     let mut column = Column(
         Modifier::new()
@@ -151,8 +163,8 @@ pub fn controls_hint() -> View {
     )
     .child(dim_text(&line(0..3)))
     .child(dim_text(&line(3..5)))
-    .child(dim_text(&line(5..7)))
-    .child(dim_text(&line(7..8)))
+    .child(dim_text(&line(5..6)))
+    .child(dim_text(&line(6..8)))
 }
 
 pub fn dim_text(text: &str) -> View {
@@ -188,6 +200,21 @@ pub fn fmt_ticks(ticks: u32) -> String {
     let ms = ticks as u64 * 1000 / crate::SIM_HZ as u64;
     format!(
         "{:02}:{:02}.{:03}",
+        ms / 60_000,
+        (ms % 60_000) / 1000,
+        ms % 1000
+    )
+}
+
+/// A gap to another run, signed: `-00:01.204` is a second and a bit quicker.
+///
+/// Signed rather than a bare duration because a delta read as a time loses the only
+/// part of it the player is looking for.
+pub fn fmt_delta(ticks: i64) -> String {
+    let ms = ticks.unsigned_abs() * 1000 / crate::SIM_HZ as u64;
+    format!(
+        "{}{:02}:{:02}.{:03}",
+        if ticks < 0 { "-" } else { "+" },
         ms / 60_000,
         (ms % 60_000) / 1000,
         ms % 1000

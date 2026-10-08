@@ -111,10 +111,13 @@ pub fn physics_fingerprint() -> retrackt_format::fingerprint::TrackFingerprint {
         t.boost_time,
         t.kill_y,
     ];
-    let mut bytes = Vec::with_capacity(values.len() * 4);
+    let mut bytes = Vec::with_capacity(values.len() * 4 + 2);
     for v in values {
         bytes.extend_from_slice(&v.to_bits().to_le_bytes());
     }
+    // The tick rate belongs here as much as the tuning does: a record is a tick
+    // count, and the same count is a different length of time at another rate.
+    bytes.extend_from_slice(&(crate::SIM_HZ as u16).to_le_bytes());
     retrackt_format::fingerprint::physics_fingerprint(
         retrackt_format::replay::SIM_VERSION,
         &retrackt_format::replay::PhysicsStamp::digest(&bytes),

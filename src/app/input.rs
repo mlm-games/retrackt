@@ -31,6 +31,7 @@ struct PadControls {
     handbrake: bool,
     boost: bool,
     restart: bool,
+    recover: bool,
     quit: bool,
 }
 
@@ -47,6 +48,7 @@ fn pad_controls(pad: &GamepadState) -> PadControls {
         handbrake: pad.right_shoulder_held,
         boost: pad.left_shoulder_held,
         restart: pad.north_pressed,
+        recover: pad.west_pressed,
         quit: pad.east_pressed,
     }
 }
@@ -250,11 +252,15 @@ pub struct InputState {
     pub restart: bool,
     /// Edge-latched: true only on the frame the quit key went down.
     pub quit: bool,
+    /// Edge-latched: true only on the frame the back-to-checkpoint key went down.
+    /// Practice only: a timed run may not skip the road between gates.
+    pub recover: bool,
     /// Editor keys, edge-latched and repeated while held.
     editor: EditorKeys,
     vehicle: VehicleInput,
     reverse_latched: bool,
     restart_latched: bool,
+    recover_latched: bool,
     quit_latched: bool,
     poller: GamepadPoller,
     pads: PadBank,
@@ -267,10 +273,12 @@ impl InputState {
             forward_speed: 0.0,
             restart: false,
             quit: false,
+            recover: false,
             editor: EditorKeys::default(),
             vehicle: VehicleInput::neutral(),
             reverse_latched: false,
             restart_latched: false,
+            recover_latched: false,
             quit_latched: false,
             poller: GamepadPoller::new(),
             pads: PadBank::default(),
@@ -338,6 +346,10 @@ impl InputState {
         let quit = held(PhysicalKey::Escape) || pad.quit;
         self.quit = quit && !self.quit_latched;
         self.quit_latched = quit;
+
+        let recover = held(PhysicalKey::KeyC) || pad.recover;
+        self.recover = recover && !self.recover_latched;
+        self.recover_latched = recover;
     }
 
     /// Quantised form of this frame's intent: the value the simulation consumes

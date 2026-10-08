@@ -23,7 +23,8 @@ use crate::sim::world::TrackWorld;
 use history::{Edit, History, changed};
 use placement::placement_at;
 use schedule::{
-    ActiveRes, CarRes, FinishedRes, GhostRes, InputRes, SessionRes, TapeRes, TrackRes,
+    ActiveRes, CarRes, FinishedRes, GhostRes, InputRes, PracticeRes, RecoverRes, SessionRes,
+    TapeRes, TrackRes,
 };
 use state::{Screen, TrackRef, UiAct};
 
@@ -115,17 +116,16 @@ impl App {
         // file has been deleted outside the game would fail to load every time it
         // was picked.
         let files = crate::save::stored_ghost_files();
-        save.ghosts.prune(&physics, &|file| {
-            files.iter().any(|f| f == file)
-        });
+        save.ghosts
+            .prune(&physics, &|file| files.iter().any(|f| f == file));
         let mut sim = Sim::new(crate::SIM_STEP);
         sim.max_steps = MAX_CATCHUP_TICKS;
         schedule::register(&mut sim);
         schedule::insert_resources(&mut sim.world);
         let data = state::AppData {
-            settings: save.settings.clone(),
             ghosts: save.ghosts.all().to_vec(),
             ghost_draft: "My ghost".into(),
+            practice: save.settings.practice,
             editor: state::EditorData {
                 thumbnails: save.settings.thumbnails,
                 ..state::EditorData::default()
@@ -185,7 +185,10 @@ impl App {
         // several ticks still gives each one its own entry to consume.
         let packed = self.input.packed();
         let catchup = self.sim.max_steps as usize;
-        self.sim.world.resource_mut::<InputRes>().refill(packed, catchup);
+        self.sim
+            .world
+            .resource_mut::<InputRes>()
+            .refill(packed, catchup);
 
         // Editor keys are read here rather than in the view, because the cursor
         // they move lives on `AppData` and the placement preview is recomputed
@@ -234,6 +237,13 @@ impl App {
             {
                 self.leave_run();
             }
+            // Queued rather than applied here: this block runs after the step, and the
+            // runtime clears `respawned` before the view is built, so a flag set at
+            // this point would be read as render history and discarded before the
+            // simulation ever saw it.
+            if self.input.recover && screen == Screen::Race {
+                state::push(&self.data.actions, UiAct::RecoverToCheckpoint);
+            }
         }
 
         // Blend the tick just taken against the one before it: the sim runs at a
@@ -259,6 +269,7 @@ impl App {
         self.data.speed_kmh = car.speed_kmh();
         self.data.checkpoint = session.0.checkpoint();
         self.data.checkpoint_count = session.0.checkpoint_count();
+        self.data.split_delta = split_delta(session.0.splits(), self.data.ghost_splits.as_deref());
 
         // Eased toward the current tick, not the drawn one: `to_orbit` applies
         // `alpha` itself, so blending here as well would put the view a frame
@@ -282,11 +293,7 @@ impl App {
             self.prev_ghost = None;
             Some(ghost_car)
         } else {
-            let drawn = Car::render_lerp(
-                &self.prev_ghost.unwrap_or(ghost_car),
-                &ghost_car,
-                alpha,
-            );
+            let drawn = Car::render_lerp(&self.prev_ghost.unwrap_or(ghost_car), &ghost_car, alpha);
             self.prev_ghost = Some(ghost_car);
             Some(drawn)
         };
@@ -365,6 +372,15 @@ impl App {
                 });
                 self.start_race();
             }
+            // Applies from the next race, not this one: a run in progress must not
+            // switch its own rules halfway. `start_race` pushes the resource, and
+            // `finish_race` reads the flag the run started with.
+            UiAct::SetPractice(on) => {
+                self.data.practice = on;
+                self.save.settings.practice = on;
+                let _ = crate::save::save(&self.save);
+            }
+            UiAct::RecoverToCheckpoint => self.recover_to_checkpoint(),
             UiAct::QuitToTitle | UiAct::RaceAbandoned => self.leave_run(),
             UiAct::OpenEditor => self.open_editor(),
             UiAct::CloseEditor => {
@@ -374,19 +390,7 @@ impl App {
                 // pre-race best the record badge needed.
                 self.refresh_best();
             }
-            UiAct::RaceFinished(result) => {
-                let (track, physics) = (result.track_fingerprint, result.physics_fingerprint);
-                if self.save.records.insert(&track, &physics, result.total_ticks)
-                    && let Err(e) = crate::save::save(&self.save)
-                {
-                    self.data.notice = Some(e);
-                }
-                // `data.best` stays at the pre-race value — the results screen
-                // shows it as "previous best"; it refreshes on the next race start.
-                self.data.last_result = Some(result);
-                self.data.screen = Screen::Results;
-                self.sim.world.insert_resource(ActiveRes(false));
-            }
+            UiAct::RaceFinished(result) => self.finish_race(result),
             UiAct::SaveTrack => self.save_track(),
             UiAct::OpenGhosts => {
                 // Read here rather than in the view: the library is storage, and a
@@ -408,8 +412,7 @@ impl App {
             UiAct::ArmPiece(id) => {
                 self.data.editor.armed = id;
                 self.data.editor.snapped =
-                    placement_at(&self.data.track, id, self.data.editor.cursor, SNAP_REACH)
-                        .snapped;
+                    placement_at(&self.data.track, id, self.data.editor.cursor, SNAP_REACH).snapped;
             }
             UiAct::PlaceArmed => self.place_armed(),
             UiAct::MoveCursor(delta) => {
@@ -435,8 +438,7 @@ impl App {
                 }
             }
             UiAct::SelectAll => {
-                self.data.editor.selection =
-                    self.data.track.pieces.iter().map(|p| p.uid).collect();
+                self.data.editor.selection = self.data.track.pieces.iter().map(|p| p.uid).collect();
             }
             UiAct::SelectNone => self.data.editor.selection.clear(),
             UiAct::SelectRoute => {
@@ -459,8 +461,6 @@ impl App {
             UiAct::SetCodeDraft(code) => self.data.editor.code_draft = code,
             UiAct::SetThumbnails(on) => {
                 self.data.editor.thumbnails = on;
-                // A setting, not a view preference: it belongs in the save file so
-                // it survives a restart.
                 self.save.settings.thumbnails = on;
                 let _ = crate::save::save(&self.save);
             }
@@ -521,6 +521,13 @@ impl App {
         self.data.race_ticks = 0;
         self.data.speed_kmh = 0.0;
         self.data.checkpoint = 0;
+        self.data.split_delta = None;
+        // Practice and the recovery request are per-run state, set here so a run
+        // cannot start under the rules of the one before it.
+        self.sim
+            .world
+            .insert_resource(PracticeRes(self.data.practice));
+        self.sim.world.insert_resource(RecoverRes(false));
         self.refresh_best();
         self.prev_car = None;
         self.prev_ghost = None;
@@ -529,18 +536,32 @@ impl App {
     }
 
     /// Put the selected ghost on the start line, or clear it.
+    ///
+    /// With nothing selected, the track's own personal best is armed instead. That
+    /// is the run the player is actually trying to beat, and a time trial with no
+    /// opponent is the same screen with one number removed.
     fn arm_ghost(&mut self, world: &TrackWorld) {
         self.data.ghost_name = None;
         self.data.ghost_ticks = None;
-        let Some(selected) = self.ghost.clone() else {
-            self.sim.world.resource_mut::<GhostRes>().disarm();
-            return;
+        self.data.ghost_splits = None;
+        let selected = match self.ghost.clone() {
+            Some(chosen) => chosen,
+            // Nothing chosen from the library, so the track's own record is the
+            // target. `None` means there is no record, or its tape is gone.
+            None => match self.personal_best() {
+                Some(best) => best,
+                None => {
+                    self.sim.world.resource_mut::<GhostRes>().disarm();
+                    return;
+                }
+            },
         };
         // The fingerprint of the document `world` was built from, not the tape's own
         // header: that is the whole point of the check. The finish tick is read
         // before the tape is handed over, because `arm` takes it by value.
         let track = gameplay_fingerprint(&self.data.track);
         let ticks = selected.tape.header.finish_tick;
+        let splits = selected.tape.split_ticks.clone();
         match self
             .sim
             .world
@@ -550,6 +571,7 @@ impl App {
             Ok(()) => {
                 self.data.ghost_name = Some(selected.name);
                 self.data.ghost_ticks = Some(ticks);
+                self.data.ghost_splits = Some(splits);
             }
             Err(e) => {
                 // Drop it rather than racing an unarmed ghost: the HUD would
@@ -559,6 +581,102 @@ impl App {
                 self.data.notice = Some(e);
             }
         }
+    }
+
+    /// The track's own record, as something to race against.
+    ///
+    /// `None` unless the record names a tape and that tape still loads: a record
+    /// whose ghost has been deleted is a number, not an opponent.
+    fn personal_best(&mut self) -> Option<SelectedGhost> {
+        let track = gameplay_fingerprint(&self.data.track);
+        let physics = crate::sim::car::physics_fingerprint();
+        let stem = self.save.records.ghost_of(&track, &physics)?.to_string();
+        let tape = crate::save::load_ghost(&stem)?;
+        Some(SelectedGhost {
+            file: stem,
+            name: format!("your best on {}", self.data.track.name),
+            tape,
+        })
+    }
+
+    /// Bank a finished run: keep its tape as the personal best, and record the
+    /// time against the stem it was written under.
+    ///
+    /// The record is written even when the tape could not be, so a storage failure
+    /// costs the player the ghost rather than the time.
+    fn finish_race(&mut self, result: crate::session::result::RaceResult) {
+        let (track, physics) = (result.track_fingerprint, result.physics_fingerprint);
+        // The tape is only written once the run is known to be the record. Both
+        // share the personal-best stem, so writing first would overwrite the ghost
+        // the player has been chasing with a slower one and leave the record
+        // pointing at the run that lost.
+        let is_record = self
+            .save
+            .records
+            .get(&track, &physics)
+            .is_none_or(|best| result.total_ticks < best);
+        if !self.data.practice && is_record {
+            let mut stem = None;
+            if let Some(tape) = result.replay.as_ref() {
+                match crate::save::save_pb_ghost(tape, "Personal best") {
+                    Ok(entry) => {
+                        let file = entry.file.clone();
+                        match self.save.ghosts.upsert(entry) {
+                            Ok(()) => {
+                                stem = Some(file);
+                                self.refresh_ghosts();
+                            }
+                            Err(e) => {
+                                // The file is on disk with no row pointing at it, so
+                                // the library would never list it and nothing could
+                                // ever delete it. Back it out and bank the time
+                                // without the ghost.
+                                crate::save::delete_ghost(&file);
+                                self.data.notice = Some(e);
+                            }
+                        }
+                    }
+                    Err(e) => self.data.notice = Some(format!("Could not keep the tape: {e}")),
+                }
+            }
+            if self
+                .save
+                .records
+                .insert(&track, &physics, result.total_ticks, stem.as_deref())
+                && let Err(e) = crate::save::save(&self.save)
+            {
+                self.data.notice = Some(e);
+            }
+        }
+        // `data.best` stays at the pre-race value — the results screen shows it as
+        // "previous best"; it refreshes on the next race start.
+        self.data.last_result = Some(result);
+        self.data.screen = Screen::Results;
+        self.sim.world.insert_resource(ActiveRes(false));
+    }
+
+    /// Put the car back at the last checkpoint, as practice allows.
+    ///
+    /// Only the request lives here. The placement is the schedule's
+    /// `recover_to_checkpoint`, the same one a fall goes through, so a button press
+    /// and a fall cannot differ in whether the gate history is cleared or the clock
+    /// keeps running — recovering is a way out of a mistake, not a way past the road.
+    fn recover_to_checkpoint(&mut self) {
+        if !self.data.practice || self.data.screen != Screen::Race {
+            return;
+        }
+        if self
+            .sim
+            .world
+            .resource::<SessionRes>()
+            .0
+            .recovery()
+            .is_none()
+        {
+            self.data.notice = Some("Cross a checkpoint first.".into());
+            return;
+        }
+        self.sim.world.resource_mut::<RecoverRes>().0 = true;
     }
 
     /// Start a race against the kept tape with this file stem.
@@ -599,7 +717,11 @@ impl App {
         }
         // Borrowed, never taken: the results screen still reads `last_result`
         // after this, and it is the only place the finished run's time lives.
-        let Some(tape) = self.data.last_result.as_ref().and_then(|r| r.replay.clone())
+        let Some(tape) = self
+            .data
+            .last_result
+            .as_ref()
+            .and_then(|r| r.replay.clone())
         else {
             self.data.notice = Some(if self.data.last_result.is_some() {
                 "That run recorded no tape.".into()
@@ -628,12 +750,30 @@ impl App {
     }
 
     fn delete_ghost(&mut self, file: &str) {
+        // Read before the record is cleared below: a record whose ghost is this
+        // tape is a tape the player is being chased by, whether or not it was ever
+        // chosen by hand.
+        let was_chased = self.ghost.as_ref().is_some_and(|g| g.file == file)
+            || self.save.records.ghost_of(
+                &gameplay_fingerprint(&self.data.track),
+                &crate::sim::car::physics_fingerprint(),
+            ) == Some(file);
         crate::save::delete_ghost(file);
         self.save.ghosts.remove(file);
+        // The record keeps the stem of the tape that set it. Left pointing at a
+        // deleted file, `personal_best` would resolve a name that no longer loads —
+        // it already checks, but clearing it keeps the save honest on its own.
+        for entry in self.save.records.entries_mut() {
+            if entry.ghost.as_deref() == Some(file) {
+                entry.ghost = None;
+            }
+        }
         let _ = crate::save::save(&self.save);
-        // A tape deleted mid-race must stop being chased, or the car keeps
-        // running a reference the player can no longer see in the library.
-        if self.ghost.as_ref().is_some_and(|g| g.file == file) {
+        // A tape deleted mid-race must stop being chased, or the car keeps running a
+        // reference the player can no longer see in the library.
+        if was_chased {
+            // Re-armed rather than only dropped: the deleted tape may have been the
+            // track's record, and `arm_ghost` then falls back to whatever is left.
             self.ghost = None;
             let world = self.sim.world.resource::<TrackRes>().0.clone();
             self.arm_ghost(&world);
@@ -648,12 +788,16 @@ impl App {
     fn leave_run(&mut self) {
         self.sim.world.insert_resource(ActiveRes(false));
         self.sim.world.insert_resource(FinishedRes(false));
+        // A recovery request that outlived its run must not fire on the next one.
+        self.sim.world.insert_resource(RecoverRes(false));
         // Leaving a race drops its ghost: the tape stays in the library, but a
         // title screen must not leave the sim replaying a car nobody is racing.
         self.ghost = None;
         self.sim.world.resource_mut::<GhostRes>().disarm();
         self.data.ghost_name = None;
         self.data.ghost_ticks = None;
+        self.data.ghost_splits = None;
+        self.data.split_delta = None;
         self.prev_ghost = None;
         self.race_done = false;
         // A playtest owes the player a return to where they were editing;
@@ -739,7 +883,10 @@ impl App {
 
     fn refresh_best(&mut self) {
         let track = gameplay_fingerprint(&self.data.track);
-        self.data.best = self.save.records.get(&track, &crate::sim::car::physics_fingerprint());
+        self.data.best = self
+            .save
+            .records
+            .get(&track, &crate::sim::car::physics_fingerprint());
     }
 
     fn save_track(&mut self) {
@@ -964,7 +1111,11 @@ impl App {
         self.data.notice = Some(format!(
             "Copied {} piece{}. Paste drops them at the cursor.",
             self.data.editor.clipboard.len(),
-            if self.data.editor.clipboard.len() == 1 { "" } else { "s" }
+            if self.data.editor.clipboard.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
         ));
     }
 
@@ -980,8 +1131,10 @@ impl App {
         }
         if self.data.track.pieces.len() + clipboard.len() > retrackt_format::MAX_PIECES {
             self.data.editor.clipboard = clipboard;
-            self.data.notice =
-                Some(format!("That would exceed the {} piece limit.", retrackt_format::MAX_PIECES));
+            self.data.notice = Some(format!(
+                "That would exceed the {} piece limit.",
+                retrackt_format::MAX_PIECES
+            ));
             return;
         }
         let origin = clipboard
@@ -1051,15 +1204,29 @@ impl App {
     fn move_pieces(&mut self, pieces: &[PieceInstance], delta: [i16; 3]) {
         let mut count = 0;
         for piece in pieces {
-            let Some(slot) = self.data.track.pieces.iter_mut().find(|p| p.uid == piece.uid)
+            let Some(slot) = self
+                .data
+                .track
+                .pieces
+                .iter_mut()
+                .find(|p| p.uid == piece.uid)
             else {
                 continue;
             };
             let before = *slot;
             let moved = placement::step_cell(before.cell, delta);
-            if let Some(edit) = changed(before.uid, before, PieceInstance { cell: moved, ..before })
-            {
-                *slot = PieceInstance { cell: moved, ..before };
+            if let Some(edit) = changed(
+                before.uid,
+                before,
+                PieceInstance {
+                    cell: moved,
+                    ..before
+                },
+            ) {
+                *slot = PieceInstance {
+                    cell: moved,
+                    ..before
+                };
                 self.history.push(edit);
                 count += 1;
             }
@@ -1092,7 +1259,12 @@ impl App {
     fn rotate_pieces(&mut self, pieces: &[PieceInstance], steps: i8) -> usize {
         let mut count = 0;
         for piece in pieces {
-            let Some(slot) = self.data.track.pieces.iter_mut().find(|p| p.uid == piece.uid)
+            let Some(slot) = self
+                .data
+                .track
+                .pieces
+                .iter_mut()
+                .find(|p| p.uid == piece.uid)
             else {
                 continue;
             };
@@ -1171,12 +1343,7 @@ impl App {
         self.adjust_pieces(&uids, kind, delta);
     }
 
-    fn adjust_pieces(
-        &mut self,
-        uids: &[retrackt_format::PieceUid],
-        kind: ParamKind,
-        delta: i8,
-    ) {
+    fn adjust_pieces(&mut self, uids: &[retrackt_format::PieceUid], kind: ParamKind, delta: i8) {
         let mut count = 0;
         for uid in uids {
             let Some(existing) = self.data.track.piece(*uid).copied() else {
@@ -1228,13 +1395,45 @@ impl Default for App {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_delta_is_read_at_the_last_checkpoint_both_runs_reached() {
+        let ghost = [100, 200, 300];
+        // Ahead at the first gate, behind at the second: the newer shared one wins.
+        assert_eq!(split_delta(&[90, 210], Some(&ghost)), Some(10));
+        // Ahead of the ghost's *first* split, which is not the latest comparison.
+        assert_eq!(split_delta(&[90], Some(&ghost)), Some(-10));
+    }
+
+    #[test]
+    fn there_is_no_delta_before_a_shared_checkpoint_or_without_a_ghost() {
+        assert_eq!(split_delta(&[100, 200], Some(&[300])), None);
+        assert_eq!(split_delta(&[100], None), None);
+        assert_eq!(split_delta(&[], Some(&[100])), None);
+    }
+
+    #[test]
+    fn a_delta_never_panics_on_a_ghost_with_fewer_splits() {
+        // A tape from an older build, or one recorded on a track that has since
+        // gained a checkpoint: the columns must not be zipped past their end.
+        assert_eq!(split_delta(&[100, 200, 300], Some(&[100, 200])), Some(0));
+    }
+}
+
 /// A one-line account of an edit, for the notice bar.
 fn describe_edit(edit: &Edit, verb: &str) -> String {
     match edit {
         Edit::Added { piece, .. } => format!("{verb} placing {}.", piece.id.label()),
         Edit::Removed { piece, .. } => format!("{verb} removing {}.", piece.id.label()),
         Edit::Changed { before, after } if before.id != after.id => {
-            format!("{verb} changing {} to {}.", before.id.label(), after.id.label())
+            format!(
+                "{verb} changing {} to {}.",
+                before.id.label(),
+                after.id.label()
+            )
         }
         Edit::Changed { .. } => format!("{verb} editing a piece."),
         Edit::Replaced { before, after } => format!(
@@ -1244,6 +1443,22 @@ fn describe_edit(edit: &Edit, verb: &str) -> String {
         ),
         Edit::Renamed { before, after } => format!("{verb} renaming {before} to {after}."),
     }
+}
+
+/// Ticks behind (positive) or ahead of the ghost at the last checkpoint both
+/// runs have reached.
+///
+/// The newest split both runs share, rather than the newest of either: comparing
+/// against a checkpoint the ghost has not reached yet would measure the ghost's
+/// whole lap against the player's part of one.
+pub fn split_delta(mine: &[u32], theirs: Option<&[u32]>) -> Option<i64> {
+    let theirs = theirs?;
+    let shared = mine.len().min(theirs.len());
+    if shared == 0 {
+        return None;
+    }
+    let last = shared - 1;
+    Some(i64::from(mine[last]) - i64::from(theirs[last]))
 }
 
 /// The editor's opening view: framed on the whole track, looking down at it.

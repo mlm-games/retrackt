@@ -6,7 +6,7 @@ use crate::app::state::{ActionQueue, AppData, TrackRef, UiAct};
 use crate::app::theme;
 use crate::ui::thumb;
 use crate::ui::widgets::{
-    CONTROLS, dim_text, fmt_ticks, ghost_btn, menu_btn, panel, pusher,
+    CONTROLS, dim_text, fmt_ticks, ghost_btn, menu_btn, panel, practice_toggle, pusher,
 };
 
 /// Edge of a library thumbnail, in dp.
@@ -102,6 +102,7 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
     .child(dim_text("time-trial time attack"))
     .child(info)
     .child(menu_btn("Start Race", pusher(actions, UiAct::StartRace)))
+    .child(practice_toggle(data.practice, actions))
     .child(menu_btn("Track Editor", pusher(actions, UiAct::OpenEditor)))
     .child(menu_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)))
     .child(thumbnail_toggle(thumbs, actions))

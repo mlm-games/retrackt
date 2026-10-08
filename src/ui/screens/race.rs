@@ -1,31 +1,46 @@
 use repose_core::{ImageHandle, Modifier, Px, View, px_to_dp};
-use repose_ui::{Box, Image, Row, ViewExt, ZStack};
+use repose_ui::{Box, Column, Image, Row, Text, TextStyle, ViewExt, ZStack};
 
 use crate::app::input::{STICK_BASE_DP, STICK_KNOB_DP};
 use crate::app::state::{ActionQueue, AppData, UiAct};
 use crate::app::theme;
 use crate::ui::hud::race_hud;
-use crate::ui::widgets::{controls_hint, ghost_btn, pusher};
+use crate::ui::widgets::{accent_btn, controls_hint, ghost_btn, pusher};
 
 pub fn race_ui(data: &AppData, actions: &ActionQueue, viewport: View) -> View {
+    let mut controls_row = vec![ghost_btn("Restart", pusher(actions, UiAct::Restart))];
+    if data.practice {
+        controls_row.push(accent_btn(
+            "Checkpoint",
+            pusher(actions, UiAct::RecoverToCheckpoint),
+        ));
+    }
+    controls_row.push(ghost_btn(
+        "Quit to Title",
+        pusher(actions, UiAct::RaceAbandoned),
+    ));
     let controls = Box(Modifier::new()
         .absolute()
         .offset(None, None, Some(theme::dp(20.0)), Some(theme::dp(20.0)))
         .hit_passthrough())
-    .child(
-        Row(Modifier::new().gap(theme::dp(12.0)))
-            .child(ghost_btn("Restart", pusher(actions, UiAct::Restart)))
-            .child(ghost_btn(
-                "Quit to Title",
-                pusher(actions, UiAct::RaceAbandoned),
-            )),
-    );
+    .child(Row(Modifier::new().gap(theme::dp(12.0))).child(controls_row));
 
+    let mut hints = controls_hint();
+    if data.practice {
+        hints = Column(Modifier::new().gap(theme::dp(4.0)))
+            .child(hints)
+            .child(
+                Text("C returns you to the last checkpoint, keeping the clock")
+                    .size(theme::sp(14.0))
+                    .color(theme::accent())
+                    .single_line(),
+            );
+    }
     let hints = Box(Modifier::new()
         .absolute()
         .offset(Some(theme::dp(20.0)), None, None, Some(theme::dp(20.0)))
         .hit_passthrough())
-    .child(controls_hint());
+    .child(hints);
 
     let mut children = vec![viewport, race_hud(data), hints, controls];
     if let (Some(stick), Some(images)) = (data.stick, data.stick_images) {

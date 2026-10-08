@@ -94,7 +94,8 @@ impl Grid {
                 (span.y / cell).ceil().max(2.0) as i32,
                 (span.z / cell).ceil().max(2.0) as i32,
             ];
-            let total = u64::from(dims[0] as u32) * u64::from(dims[1] as u32) * u64::from(dims[2] as u32);
+            let total =
+                u64::from(dims[0] as u32) * u64::from(dims[1] as u32) * u64::from(dims[2] as u32);
             if total <= MAX_CELLS {
                 break (dims, origin, total as usize);
             }
@@ -338,15 +339,57 @@ pub struct Gate {
     pub centre: Vec3,
     /// Half-extents of the trigger box.
     pub half: Vec3,
+    /// The direction a car has to be travelling to count this gate: the piece's
+    /// own direction of travel, `local +Z`, in world space. Unit length.
+    pub facing: Vec3,
     pub is_finish: bool,
     pub index: usize,
 }
 
 impl Gate {
-    pub fn contains(&self, p: Vec3) -> bool {
-        let d = (p - self.centre).abs();
-        d.x <= self.half.x && d.y <= self.half.y && d.z <= self.half.z
+    /// Whether the movement from `from` to `to` passes through this gate the
+    /// right way.
+    ///
+    /// Both halves matter. A car moving far enough in one tick can cross the
+    /// whole box and be outside it again by the next tick, so testing the end
+    /// position alone would let a fast car miss a gate entirely; and testing the
+    /// box alone would let it drive back the way it came and count.
+    pub fn crossed(&self, from: Vec3, to: Vec3) -> bool {
+        let motion = to - from;
+        // A car that has not moved has crossed nothing, however deep inside the
+        // box it is standing.
+        if motion.dot(self.facing) <= 0.0 {
+            return false;
+        }
+        segment_hits_box(from, motion, self.centre, self.half)
     }
+}
+
+/// Whether the segment `from` to `from + motion` meets the box, by the slab
+/// method. A segment that starts inside counts as meeting it.
+fn segment_hits_box(from: Vec3, motion: Vec3, centre: Vec3, half: Vec3) -> bool {
+    let lo = centre - half;
+    let hi = centre + half;
+    let axis = |v: Vec3, i: usize| [v.x, v.y, v.z][i];
+    let mut enter = 0.0f32;
+    let mut leave = 1.0f32;
+    for i in 0..3 {
+        let (o, d) = (axis(from, i), axis(motion, i));
+        if d.abs() < 1e-9 {
+            // Parallel to this slab: inside it for the whole segment, or never.
+            if o < axis(lo, i) || o > axis(hi, i) {
+                return false;
+            }
+            continue;
+        }
+        let (t0, t1) = ((axis(lo, i) - o) / d, (axis(hi, i) - o) / d);
+        enter = enter.max(t0.min(t1));
+        leave = leave.min(t0.max(t1));
+        if enter > leave {
+            return false;
+        }
+    }
+    true
 }
 
 impl TrackWorld {
@@ -412,6 +455,11 @@ impl TrackWorld {
                     piece: inst.uid,
                     centre,
                     half,
+                    // A piece drives along its own local +Z, so the world
+                    // direction it expects to be met from is that axis rotated
+                    // by the instance. Never zero: the transform is a rotation
+                    // about Y, so the axis keeps its length.
+                    facing: world.transform_vector3(Vec3::Z).normalize_or_zero(),
                     is_finish: def.is_finish,
                     index: checkpoints.len(),
                 };
@@ -691,10 +739,7 @@ mod tests {
         let doc = builtin_tracks().remove(0);
         let mut shuffled = doc.clone();
         shuffled.pieces.reverse();
-        let (a, b) = (
-            TrackWorld::from_doc(&doc),
-            TrackWorld::from_doc(&shuffled),
-        );
+        let (a, b) = (TrackWorld::from_doc(&doc), TrackWorld::from_doc(&shuffled));
         let order = |w: &TrackWorld| {
             w.checkpoints
                 .iter()
@@ -702,6 +747,31 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(order(&a), order(&b));
+    }
+
+    #[test]
+    fn a_gate_is_hit_by_the_straight_line_along_its_own_facing() {
+        for doc in builtin_tracks() {
+            let w = TrackWorld::from_doc(&doc);
+            for gate in w.checkpoints.iter().chain(w.finish.iter()) {
+                assert!(
+                    (gate.facing.length() - 1.0).abs() < 1e-3,
+                    "{}: gate facing is not a unit vector: {:?}",
+                    doc.name,
+                    gate.facing
+                );
+                let reach = gate.half.x.max(gate.half.z) + 1.0;
+                assert!(
+                    gate.crossed(
+                        gate.centre - gate.facing * reach,
+                        gate.centre + gate.facing * reach
+                    ),
+                    "{}: driving through {:?} along its facing misses it",
+                    doc.name,
+                    gate.piece
+                );
+            }
+        }
     }
 
     #[test]

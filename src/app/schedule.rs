@@ -129,6 +129,19 @@ pub struct SessionRes(pub RaceSession);
 #[derive(Resource)]
 pub struct ActiveRes(pub bool);
 
+/// Whether this run is practice. A fall then puts the car back at the last
+/// checkpoint instead of the start line, and finishing records nothing.
+#[derive(Resource, Default)]
+pub struct PracticeRes(pub bool);
+
+/// One-shot: the player asked to be put back at the last checkpoint.
+///
+/// Held as a request rather than acted on by the runtime, so a button press and a
+/// fall go through the same placement. It survives a frame that runs no ticks —
+/// `Car::respawned` would not, because the runtime clears that flag when it draws.
+#[derive(Resource, Default)]
+pub struct RecoverRes(pub bool);
+
 #[derive(Resource)]
 pub struct FinishedRes(pub bool);
 
@@ -146,6 +159,8 @@ pub fn insert_resources(world: &mut World) {
     world.insert_resource(ActiveRes(false));
     world.insert_resource(FinishedRes(false));
     world.insert_resource(TapeRes(None));
+    world.insert_resource(PracticeRes(false));
+    world.insert_resource(RecoverRes(false));
 }
 
 /// Decode a packed tick back into the vehicle's own input type, clamped to the
@@ -215,8 +230,50 @@ fn step_ghost(
     ghost.tick += 1;
 }
 
+/// Put the car back at the last checkpoint: after a fall, or on request.
+///
+/// Both paths land here so they cannot differ in whether the gate history is
+/// cleared or the clock keeps running. The car still carries `respawned`, so the
+/// runtime drops its render history and snaps the camera across the jump rather
+/// than sliding it, and the session's gate test skips the tick as the teleport it
+/// was.
+fn recover_to_checkpoint(
+    active: Res<ActiveRes>,
+    practice: Res<PracticeRes>,
+    session: Res<SessionRes>,
+    mut recover: ResMut<RecoverRes>,
+    mut car: ResMut<CarRes>,
+) {
+    // Taken first, so the request is consumed whether or not it is honoured: a request
+    // left set would fire on the next run, wherever that was.
+    let asked = std::mem::take(&mut recover.0);
+    if !active.0 || !practice.0 || (!asked && !car.0.respawned) {
+        // Practice only, and only while a run is going.
+        return;
+    }
+    let Some((pos, yaw)) = session.0.recovery() else {
+        return;
+    };
+    car.0 = Car::at_spawn(pos, yaw);
+    // Re-set rather than carried: `step_vehicle` built the next tick's car from the
+    // spawn, and the runtime clears this flag when it draws, so it only ever means
+    // "the car jumped this tick".
+    car.0.respawned = true;
+}
+
+/// Test this tick's movement against the gates.
+///
+/// A respawn is a teleport rather than a crossing: the car has just been thrown from
+/// wherever it fell back to the start, and sweeping that segment would hand out
+/// every gate between the two. The tick is still counted — the run took that step
+/// and the tape records it — so the clock and the tape stay the same length and
+/// every split keeps its own index into the tape.
 fn advance_session(active: Res<ActiveRes>, car: Res<CarRes>, mut session: ResMut<SessionRes>) {
     if !active.0 {
+        return;
+    }
+    if car.0.respawned {
+        session.0.tick_teleported(car.0.pos);
         return;
     }
     session.0.tick(car.0.pos);
@@ -255,16 +312,20 @@ fn record_replay(
     }
 }
 
-/// One chain, ordered: car, ghost, session, finish flag, tape. Separate
-/// `add_*` calls get no ordering, so order-sensitive systems live in this tuple.
+/// One chain, ordered: car, practice recovery, ghost, session, finish flag, tape.
+/// Separate `add_*` calls get no ordering, so order-sensitive systems live in
+/// this tuple.
 ///
-/// The ghost sits between the car and the session so a tape tick is consumed on
-/// the same step it was recorded on, and `record_replay` still runs last and
-/// reads the input `step_vehicle` actually consumed.
+/// Recovery sits directly after the car so the session's gate test sees the car
+/// where it was put back rather than where it fell. The ghost sits between the
+/// car and the session so a tape tick is consumed on the same step it was
+/// recorded on, and `record_replay` still runs last and reads the input
+/// `step_vehicle` actually consumed.
 pub fn register(sim: &mut repame_sim::Sim) {
     sim.add_chained_systems(
         (
             step_vehicle,
+            recover_to_checkpoint,
             step_ghost,
             advance_session,
             signal_finish,
@@ -277,6 +338,7 @@ pub fn register(sim: &mut repame_sim::Sim) {
 #[cfg(test)]
 mod chain_tests {
     use super::*;
+    use glam::Vec3;
     use retrackt_format::{ReplayTape, demo_track, gameplay_fingerprint};
 
     #[test]
@@ -333,12 +395,22 @@ mod chain_tests {
                 let w = sim.world.resource::<TrackRes>();
                 let n = s.0.checkpoint();
                 if n < w.0.checkpoints.len() {
-                    w.0.checkpoints[n].centre
+                    w.0.checkpoints[n]
                 } else {
-                    w.0.finish.expect("demo has a finish").centre
+                    w.0.finish.expect("demo has a finish")
                 }
             };
-            sim.world.resource_mut::<CarRes>().0.pos = next;
+            // The session's reference point goes behind the gate and the car past it, so
+            // the one tick that counts is the one driving through the box along the
+            // gate's facing — the path a crossing is actually defined by. A chord
+            // across a curve is not that path.
+            let reach = next.half.x.max(next.half.z) + 1.0;
+            let (behind, past) = (
+                next.centre - next.facing * reach,
+                next.centre + next.facing * reach,
+            );
+            sim.world.resource_mut::<SessionRes>().0.teleport(behind);
+            sim.world.resource_mut::<CarRes>().0.pos = past;
             sim.tick();
             ticks += 1;
             if sim.world.resource::<FinishedRes>().0 {
@@ -347,7 +419,7 @@ mod chain_tests {
         }
         assert!(
             sim.world.resource::<FinishedRes>().0,
-            "teleporting through every gate must finish the run in {ticks} ticks"
+            "driving through every gate must finish the run in {ticks} ticks"
         );
 
         let tape = sim.world.resource_mut::<TapeRes>().0.take().unwrap();
@@ -469,8 +541,7 @@ mod chain_tests {
             ghost.tick += 1;
         }
         assert_eq!(
-            ghost.tick,
-            120,
+            ghost.tick, 120,
             "the tape ran out, so no further ticks are consumed"
         );
 
@@ -506,5 +577,120 @@ mod chain_tests {
         );
         assert!(ghost.arm(wrong_hz, track, &world).is_err());
         assert!(!ghost.armed());
+    }
+
+    /// A run already past its first two gates, with the car below the kill plane.
+    ///
+    /// Returns where practice must put it back: the last gate the session crossed, as
+    /// the session itself reports it, rather than a gate named here.
+    fn falling_sim(practice: bool) -> (repame_sim::Sim, TrackWorld, Vec3, usize) {
+        let doc = demo_track();
+        let world = TrackWorld::from_doc(&doc);
+        let mut sim = repame_sim::Sim::new(crate::SIM_STEP);
+        register(&mut sim);
+        insert_resources(&mut sim.world);
+        sim.world.insert_resource(TrackRes(world.clone()));
+        sim.world.insert_resource(ActiveRes(true));
+        sim.world.insert_resource(InputRes::new());
+        sim.world.insert_resource(PracticeRes(practice));
+        {
+            let mut car = Car::at_spawn(world.spawn, world.spawn_yaw);
+            car.pos.y = -10_000.0;
+            sim.world.insert_resource(CarRes(car));
+            let mut session = sim.world.resource_mut::<SessionRes>();
+            session.0.start(&world);
+            // Walk the first two gates, each from behind its own facing.
+            for gate in world.checkpoints.iter().take(2) {
+                let reach = gate.half.x.max(gate.half.z) + 1.0;
+                session.0.teleport(gate.centre - gate.facing * reach);
+                session.0.tick(gate.centre + gate.facing * reach);
+            }
+            assert!(
+                session.0.checkpoint() >= 2,
+                "two gates were driven through, got {}",
+                session.0.checkpoint()
+            );
+        }
+        let crossed = sim.world.resource::<SessionRes>().0.checkpoint();
+        let recovery = sim
+            .world
+            .resource::<SessionRes>()
+            .0
+            .recovery()
+            .expect("a gate has been crossed");
+        (sim, world, recovery.0, crossed)
+    }
+
+    #[test]
+    fn a_fall_in_practice_returns_to_the_last_checkpoint() {
+        let (mut sim, _world, recovery, crossed) = falling_sim(true);
+        sim.tick();
+
+        let car = sim.world.resource::<CarRes>().0;
+        assert!(
+            car.pos.distance(recovery) < 0.01,
+            "practice recovers to the last checkpoint {recovery:?}, got {:?}",
+            car.pos
+        );
+        assert!(
+            car.respawned,
+            "the recovery is still a teleport: the camera must snap, not slide"
+        );
+        assert_eq!(
+            sim.world.resource::<SessionRes>().0.checkpoint(),
+            crossed,
+            "recovering is not a crossing"
+        );
+    }
+
+    #[test]
+    fn asking_to_recover_does_the_same_thing_as_falling() {
+        // The car is on the road this time: the request is the only difference, which
+        // is the point of routing a button press through the fall's own path.
+        let (mut sim, _world, recovery, _) = falling_sim(true);
+        sim.world.resource_mut::<CarRes>().0.pos = Vec3::new(0.0, 0.0, 0.0);
+        sim.world.resource_mut::<RecoverRes>().0 = true;
+        sim.tick();
+
+        let car = sim.world.resource::<CarRes>().0;
+        assert!(
+            car.pos.distance(recovery) < 0.01,
+            "the request recovers to {recovery:?}, got {:?}",
+            car.pos
+        );
+        assert!(car.respawned);
+        // One-shot: a request that outlived its run must not fire on the next one.
+        assert!(!sim.world.resource::<RecoverRes>().0);
+    }
+
+    #[test]
+    fn a_recovery_request_is_ignored_outside_practice() {
+        let (mut sim, _world, _recovery, _) = falling_sim(false);
+        sim.world.resource_mut::<CarRes>().0.pos = Vec3::new(0.0, 0.0, 0.0);
+        sim.world.resource_mut::<RecoverRes>().0 = true;
+        sim.tick();
+        assert!(
+            !sim.world.resource::<RecoverRes>().0,
+            "a timed run may not skip the road between gates"
+        );
+    }
+
+    #[test]
+    fn a_fall_in_a_timed_run_returns_to_the_start_and_earns_nothing() {
+        let (mut sim, world, _recovery, crossed) = falling_sim(false);
+        sim.tick();
+
+        let car = sim.world.resource::<CarRes>().0;
+        assert!(
+            car.pos.distance(world.spawn) < 0.01,
+            "a timed run respawns at the start line {:?}, got {:?}",
+            world.spawn,
+            car.pos
+        );
+        assert_eq!(
+            sim.world.resource::<SessionRes>().0.checkpoint(),
+            crossed,
+            "a fall must not hand out the gates between where it fell and the spawn"
+        );
     }
 }

@@ -6,9 +6,7 @@ use game_utils::storage::{FsStorage, Storage};
 use serde::{Deserialize, Serialize};
 
 use retrackt_format::fingerprint::TrackFingerprint;
-use retrackt_format::{
-    FORMAT_VERSION, ReplayTape, TrackDocument, decode_replay, encode_replay,
-};
+use retrackt_format::{FORMAT_VERSION, ReplayTape, TrackDocument, decode_replay, encode_replay};
 
 pub const SAVE_VERSION: u32 = 3;
 
@@ -20,6 +18,10 @@ pub struct Settings {
     /// Whether the library lists draw a schematic of each track.
     #[serde(default = "default_thumbnails")]
     pub thumbnails: bool,
+    /// Whether races start in practice. Persisted because it is how the player
+    /// likes to play: a mode to re-arm every launch is a mode nobody uses for long.
+    #[serde(default)]
+    pub practice: bool,
 }
 
 fn default_thumbnails() -> bool {
@@ -33,18 +35,25 @@ impl Default for Settings {
             music_volume: 1.0,
             sfx_volume: 1.0,
             thumbnails: default_thumbnails(),
+            practice: false,
         }
     }
 }
 
 /// One stored record: the fastest run on a track under one vehicle tuning.
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct RecordEntry {
     pub track: TrackFingerprint,
     pub physics: TrackFingerprint,
     /// Race time in simulated ticks. The race clock is integral, so this is
     /// exactly what was run.
     pub ticks: u32,
+    /// Ghost-library file stem holding the tape of the run that set this record.
+    /// A record is a number, so without this the ghost of a personal best would
+    /// have to be saved by hand every time — which is exactly what nobody does.
+    /// `None` for a record written before this field existed.
+    #[serde(default)]
+    pub ghost: Option<String>,
 }
 
 /// Records per track *and* vehicle tuning. A `Vec` rather than a map so the RON
@@ -59,6 +68,12 @@ pub struct Records {
 }
 
 impl Records {
+    /// Every entry, for the caller that has to reach the fields `Records` keeps
+    /// to itself.
+    pub fn entries_mut(&mut self) -> &mut [RecordEntry] {
+        &mut self.entries
+    }
+
     pub fn get(&self, track: &TrackFingerprint, physics: &TrackFingerprint) -> Option<u32> {
         self.entries
             .iter()
@@ -67,16 +82,22 @@ impl Records {
     }
 
     /// Returns true iff `ticks` beat the previous best for this track and tuning.
+    ///
+    /// `ghost` is the file stem of the tape that set the time, kept only when it
+    /// is kept: a slower run must not repoint the record at its own tape, or the
+    /// ghost chasing the player would stop being the run they are chasing.
     pub fn insert(
         &mut self,
         track: &TrackFingerprint,
         physics: &TrackFingerprint,
         ticks: u32,
+        ghost: Option<&str>,
     ) -> bool {
         for entry in &mut self.entries {
             if entry.track == *track && entry.physics == *physics {
                 if ticks < entry.ticks {
                     entry.ticks = ticks;
+                    entry.ghost = ghost.map(str::to_string);
                     return true;
                 }
                 return false;
@@ -86,8 +107,20 @@ impl Records {
             track: *track,
             physics: *physics,
             ticks,
+            ghost: ghost.map(str::to_string),
         });
         true
+    }
+
+    /// The stem of the tape holding this track's personal best, if there is one.
+    /// The caller checks the file is still readable: a record whose tape has been
+    /// deleted must arm nothing rather than a name that fails to load.
+    pub fn ghost_of(&self, track: &TrackFingerprint, physics: &TrackFingerprint) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|e| e.track == *track && e.physics == *physics)?
+            .ghost
+            .as_deref()
     }
 
     /// Drop records set under other tuning. They cannot be read as records
@@ -159,6 +192,20 @@ impl GhostLibrary {
         }
         self.entries.push(entry);
         Ok(())
+    }
+
+    /// Add `entry`, or replace the row already filed under the same stem.
+    ///
+    /// The personal-best tape keeps its stem across records, so every new one
+    /// lands on the row the previous one filed rather than beside it.
+    pub fn upsert(&mut self, entry: GhostEntry) -> Result<(), String> {
+        match self.entries.iter_mut().find(|e| e.file == entry.file) {
+            Some(slot) => {
+                *slot = entry;
+                Ok(())
+            }
+            None => self.insert(entry),
+        }
     }
 
     /// The removed row, so the caller can delete the tape it named.
@@ -342,7 +389,9 @@ fn save_ghost_with<S: Storage>(
 }
 
 fn load_ghost_with<S: Storage>(storage: S, dir: &Path, file: &str) -> Option<ReplayTape> {
-    let bytes = ghost_store(dir, file, storage).load(&is_intact_ghost, &[]).data?;
+    let bytes = ghost_store(dir, file, storage)
+        .load(&is_intact_ghost, &[])
+        .data?;
     decode_replay(&bytes).ok()
 }
 
@@ -352,6 +401,37 @@ pub fn save_ghost(tape: &ReplayTape, name: &str) -> Result<GhostEntry, String> {
 
 pub fn load_ghost(file: &str) -> Option<ReplayTape> {
     load_ghost_with(FsStorage, &ghosts_dir(), file)
+}
+
+/// Stem of the tape holding a track's personal best.
+///
+/// Derived from the track fingerprint, so a new record overwrites the old one
+/// rather than filling the library with a fresh row every time the player beats
+/// it. The record stores this stem, so the derivation only has to be stable, not
+/// meaningful.
+pub fn pb_stem(track: &TrackFingerprint) -> String {
+    format!(
+        "pb-{}",
+        track.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    )
+}
+
+/// Write `tape` as a track's personal best, replacing whatever was there.
+///
+/// Err only when the tape cannot be encoded or written. Losing the tape is not
+/// fatal: the record still stands, it simply has no ghost to race until the next
+/// time one is set.
+pub fn save_pb_ghost(tape: &ReplayTape, name: &str) -> Result<GhostEntry, String> {
+    let stem = pb_stem(&tape.header.track);
+    let bytes = encode_replay(tape).map_err(|e| e.to_string())?;
+    ghost_store(&ghosts_dir(), &stem, FsStorage).write(&bytes)?;
+    Ok(GhostEntry {
+        name: name.to_string(),
+        file: stem,
+        track: tape.header.track,
+        physics: tape.header.physics,
+        ticks: tape.header.finish_tick,
+    })
 }
 
 /// Drop the tape and its rotations. Missing is not an error: the caller wants
@@ -478,9 +558,9 @@ mod tests {
         };
         let fp = [7u8; 16];
         let tune = [8u8; 16];
-        assert!(data.records.insert(&fp, &tune, 5_100));
+        assert!(data.records.insert(&fp, &tune, 5_100, None));
         let other_fp = [3u8; 16];
-        assert!(data.records.insert(&other_fp, &tune, 11_900));
+        assert!(data.records.insert(&other_fp, &tune, 11_900, None));
 
         save_with(&mgr, &data).expect("saves");
         let (loaded, status) = load_with(&mgr);
@@ -517,14 +597,33 @@ mod tests {
         let other = [3u8; 16];
 
         assert_eq!(records.get(&fp, &tune), None);
-        assert!(records.insert(&fp, &tune, 1200));
-        assert!(!records.insert(&fp, &tune, 1300));
-        assert!(records.insert(&fp, &tune, 1100));
+        assert!(records.insert(&fp, &tune, 1200, None));
+        assert!(!records.insert(&fp, &tune, 1300, None));
+        assert!(records.insert(&fp, &tune, 1100, Some("pb-1")));
         assert_eq!(records.get(&fp, &tune), Some(1100));
+        assert_eq!(records.ghost_of(&fp, &tune), Some("pb-1"));
 
-        assert!(records.insert(&other, &tune, 2400));
+        assert!(records.insert(&other, &tune, 2400, None));
         assert_eq!(records.get(&other, &tune), Some(2400));
         assert_eq!(records.get(&fp, &tune), Some(1100));
+    }
+
+    #[test]
+    fn only_a_faster_run_repoints_a_record_at_its_own_tape() {
+        let mut records = Records::default();
+        let fp = [1u8; 16];
+        let tune = [2u8; 16];
+
+        assert!(records.insert(&fp, &tune, 1200, Some("pb-1")));
+        assert!(!records.insert(&fp, &tune, 1300, Some("pb-2")));
+        assert_eq!(
+            records.ghost_of(&fp, &tune),
+            Some("pb-1"),
+            "a slower run must not become the ghost the player chases"
+        );
+        assert!(records.insert(&fp, &tune, 1100, Some("pb-3")));
+        assert_eq!(records.ghost_of(&fp, &tune), Some("pb-3"));
+        assert_eq!(records.ghost_of(&[4u8; 16], &tune), None);
     }
 
     #[test]
@@ -534,10 +633,14 @@ mod tests {
         let tune = [2u8; 16];
         let retuned = [9u8; 16];
 
-        assert!(records.insert(&fp, &tune, 1200));
-        assert_eq!(records.get(&fp, &retuned), None, "tuning is part of the key");
+        assert!(records.insert(&fp, &tune, 1200, None));
+        assert_eq!(
+            records.get(&fp, &retuned),
+            None,
+            "tuning is part of the key"
+        );
         assert!(
-            records.insert(&fp, &retuned, 5000),
+            records.insert(&fp, &retuned, 5000, None),
             "a slow run on new tuning is still its first record"
         );
         assert_eq!(records.get(&fp, &tune), Some(1200));
@@ -596,7 +699,7 @@ mod tests {
             version: 0,
             ..SaveData::default()
         };
-        assert!(data.records.insert(&[9u8; 16], &[4u8; 16], 1_500));
+        assert!(data.records.insert(&[9u8; 16], &[4u8; 16], 1_500, None));
 
         save_with(&mgr, &data).unwrap();
         let (loaded, status) = load_with(&mgr);
@@ -655,8 +758,8 @@ mod tests {
     fn two_ghosts_of_the_same_name_get_distinct_files() {
         let storage = MemoryStorage::new();
         let dir = ghost_dir();
-        let first = save_ghost_with(storage.clone(), &dir, &sample_tape(1, 10), "Best")
-            .expect("saves");
+        let first =
+            save_ghost_with(storage.clone(), &dir, &sample_tape(1, 10), "Best").expect("saves");
         let second = save_ghost_with(storage, &dir, &sample_tape(1, 20), "Best").expect("saves");
 
         assert_ne!(
@@ -669,9 +772,13 @@ mod tests {
     fn a_ghost_name_cannot_escape_the_ghost_directory() {
         let storage = MemoryStorage::new();
         let dir = ghost_dir();
-        let saved =
-            save_ghost_with(storage.clone(), &dir, &sample_tape(1, 10), "../../etc/№7: ünïcode?")
-                .expect("saves");
+        let saved = save_ghost_with(
+            storage.clone(),
+            &dir,
+            &sample_tape(1, 10),
+            "../../etc/№7: ünïcode?",
+        )
+        .expect("saves");
 
         let stem = file_stem(&saved.name);
         assert!(!stem.contains('/') && !stem.contains('\\') && !stem.contains(".."));
@@ -721,19 +828,57 @@ mod tests {
     fn the_library_drops_unplayable_and_missing_rows() {
         let mut library = GhostLibrary::default();
         library.insert(entry("keep", "keep", 1, 2, 100)).unwrap();
-        library.insert(entry("retuned", "retuned", 1, 9, 100)).unwrap();
-        library.insert(entry("deleted", "deleted", 1, 2, 100)).unwrap();
+        library
+            .insert(entry("retuned", "retuned", 1, 9, 100))
+            .unwrap();
+        library
+            .insert(entry("deleted", "deleted", 1, 2, 100))
+            .unwrap();
         assert_eq!(library.all().len(), 3);
 
         library.prune(&[2u8; 16], &|file| file == "keep");
         assert_eq!(library.all().len(), 1);
         assert_eq!(library.all()[0].name, "keep");
         assert!(library.get("keep").is_some());
-        assert!(library.get("retuned").is_none(), "other tuning is unplayable");
+        assert!(
+            library.get("retuned").is_none(),
+            "other tuning is unplayable"
+        );
         assert!(
             library.get("deleted").is_none(),
             "a row whose file is gone can never be played"
         );
+    }
+
+    #[test]
+    fn upsert_replaces_the_row_under_the_same_stem() {
+        let mut library = GhostLibrary::default();
+        library.insert(entry("first", "pb-1", 1, 2, 900)).unwrap();
+        library
+            .upsert(entry("second", "pb-1", 1, 2, 800))
+            .expect("replaces");
+        assert_eq!(library.all().len(), 1, "one tape, one row");
+        assert_eq!(library.get("pb-1").unwrap().ticks, 800);
+        assert_eq!(library.get("pb-1").unwrap().name, "second");
+
+        library.insert(entry("other", "manual", 1, 2, 700)).unwrap();
+        library
+            .upsert(entry("other", "manual", 1, 2, 600))
+            .expect("replaces");
+        assert_eq!(library.all().len(), 2);
+    }
+
+    #[test]
+    fn the_personal_best_stem_is_derived_from_the_track_and_usable_as_a_filename() {
+        let track = [0xabu8; 16];
+        let stem = pb_stem(&track);
+        assert_eq!(
+            stem,
+            pb_stem(&track),
+            "the same track must give the same stem"
+        );
+        assert_ne!(stem, pb_stem(&[0xacu8; 16]));
+        assert_eq!(file_stem(&stem), stem, "a hex stem survives sanitising");
     }
 
     #[test]
@@ -749,7 +894,9 @@ mod tests {
 
         assert!(library.remove("g0").is_some());
         assert!(
-            library.insert(entry("now there is room", "y", 1, 2, 100)).is_ok(),
+            library
+                .insert(entry("now there is room", "y", 1, 2, 100))
+                .is_ok(),
             "deleting frees a slot"
         );
         assert!(library.remove("g0").is_none(), "removing twice is a no-op");
