@@ -159,6 +159,7 @@ impl App {
     /// uploads through it any more — the touch stick used to, back when it was two
     /// PNGs.
     pub fn view(&mut self, sched: &mut Scheduler, _ctx: &RenderContext) -> View {
+        ensure_fonts();
         repose_core::request_frame();
         let now = Instant::now();
         let frame = now.duration_since(self.last);
@@ -1736,6 +1737,18 @@ fn editor_camera() -> repame_view3d::OrbitCamera {
 
 #[cfg(not(target_os = "android"))]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
+/// Fredoka SemiBold, the one face the whole game is set in.
+///
+/// Registered before the first compose rather than on first use: a view asking for
+/// a family that is not registered yet silently falls back, and the wordmark is the
+/// one place that must not.
+const FREDOKA: &[u8] = include_bytes!("../../assets/fonts/Fredoka-SemiBold.ttf");
+
+fn ensure_fonts() {
+    static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    ONCE.get_or_init(|| repose_text::register_font_data(FREDOKA));
+}
+
 pub fn run() {
     let mut app = App::new();
     #[cfg(not(target_arch = "wasm32"))]

@@ -1,21 +1,45 @@
 use repose_core::{AlignItems, Modifier, View};
 use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
-use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Row, Text, TextStyle, ViewExt};
+use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Row, Spacer, Text, TextStyle, ViewExt};
 
 use crate::app::state::{ActionQueue, AppData, TrackRef, UiAct};
 use crate::app::theme;
 use crate::ui::fit;
 use crate::ui::thumb;
 use crate::ui::widgets::{
-    CONTROLS, dim_text, fmt_ticks, ghost_btn, menu_btn, panel_w, practice_toggle, pusher,
+    CONTROLS, PANEL_INSET_DP, chip_btn, dim_text, fmt_ticks, ghost_btn, menu_btn, panel_w, pusher,
 };
 
 /// Edge of a library thumbnail, in dp.
 const THUMB_DP: f32 = 56.0;
 
+/// Width of the wordmark-and-actions column, in dp. The menu reads as a console
+/// because its controls share one bounded measure; left to the window they ran edge
+/// to edge and read as three unrelated bars.
+const MENU_DP: f32 = 340.0;
+/// Width of the controls panel's key column, in dp. Sized for the longest entry in
+/// `CONTROLS` plus room to breathe: at 120 the key column clipped `RB / LB`.
+const KEY_DP: f32 = 150.0;
+
 pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
     let builtins = retrackt_format::builtin_tracks();
     let thumbs = data.editor.thumbnails;
+
+    // Side by side when there is room for both, stacked when there is not: the
+    // library and the controls panel together want about 780, which is more than a
+    // phone held upright has. On a narrow or a short window the library takes the
+    // whole row and the controls sit below it.
+    let stacked = fit::is_narrow() || fit::is_short();
+    let library_width = if stacked {
+        fit::panel_width(460.0)
+    } else {
+        fit::fit(420.0, fit::EDGE_DP * 2.0 + 340.0)
+    };
+    // The name column is what the library has left once its thumbnail, count and
+    // Load button are placed. Derived from the panel rather than chosen beside it:
+    // at a fixed 240 the row wanted 476 of a 380 dp box and Load wrapped onto a
+    // line of its own under every track.
+    let name_dp = (library_width - PANEL_INSET_DP.0 * 2.0 - THUMB_DP - 130.0).max(80.0);
 
     let mut tracks: Vec<View> = crate::ui::library::with_saved(|saved| {
         let mut rows: Vec<View> = Vec::new();
@@ -36,6 +60,7 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
                 TrackRef::Builtin(track.name.clone()),
                 actions,
                 thumbs,
+                name_dp,
             ));
         }
 
@@ -51,6 +76,7 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
                 TrackRef::Saved(doc.name.clone()),
                 actions,
                 thumbs,
+                name_dp,
             ));
         }
         if !any {
@@ -59,16 +85,6 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
         rows
     });
 
-    // Side by side when there is room for both, stacked when there is not: the
-    // library and the controls panel together want about 780, which is more than a
-    // phone held upright has. On a narrow or a short window the library takes the
-    // whole row and the controls sit below it.
-    let stacked = fit::is_narrow() || fit::is_short();
-    let library_width = if stacked {
-        fit::panel_width(460.0)
-    } else {
-        fit::fit(420.0, fit::EDGE_DP * 2.0 + 340.0)
-    };
     // No scroller of its own: the whole screen is one scroll view, and a list that
     // scrolled inside a panel inside it would take the wheel and keep it.
     let library = panel_w(
@@ -77,18 +93,23 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
         vec![Column(Modifier::new().gap(theme::dp(6.0))).child(tracks)],
     );
 
-    // Wrapping, because the track's name is player-supplied and unbounded: a plain
-    // row pushed 13 dp past the right edge of a 320 dp screen, taking the rest of
-    // the menu with it.
-    let mut info = FlowRow(
+    let controls = controls_panel(stacked);
+
+    // One inset for the whole screen, and it lives in the fit rather than as a
+    // padding on the body: a padding narrows the content box, while every width on
+    // this screen is fitted against the window, so the two disagree and the children
+    // overhang. The card's own padding sits inside its width for the same reason.
+    let card_dp = fit::panel_width(MENU_DP + 40.0);
+    let menu_w = card_dp - 40.0;
+
+    // The track line sits inside the menu column rather than spanning the window:
+    // it is about the current selection, and at full width it was the one element
+    // glued to the left edge, aligned with nothing.
+    let track_line = FlowRow(
         Modifier::new()
-            .gap(theme::dp(12.0))
+            .gap(theme::dp(10.0))
             .align_items(AlignItems::CENTER)
-            // An explicit width, not `fill_max_width`: a percentage resolves to
-            // the content width once an ancestor in the chain is itself sized to
-            // its content, and a wrapping row bounded by its own content is a
-            // single line again. The window is the bound that actually holds.
-            .width(theme::dp(fit::width())),
+            .width(theme::dp(menu_w)),
         FlowRowConfig::default(),
     )
     .child(dim_text(&format!("Track: {}", data.track.name)))
@@ -99,52 +120,77 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
             .single_line(),
         None => dim_text("No best time yet"),
     });
-    if data.track.pieces.is_empty() {
-        info = info.child(dim_text("no pieces placed"));
-    }
 
-    let controls = controls_panel(stacked);
-
-    let header = Column(
+    // Hierarchy, top to bottom: the wordmark, one primary destination, two
+    // secondary ones, then the preferences — which are preferences, so they take
+    // quiet chips on one line rather than a slot each in the action stack.
+    //
+    // On a backing card rather than straight onto the scene. The outlined controls
+    // were being read against bright grass, and a card is what makes the column read
+    // as one console rather than six controls floating over a track.
+    let menu = Box(
         Modifier::new()
-            .gap(theme::dp(14.0))
-            .align_items(AlignItems::CENTER)
-            .fill_max_width(),
+            .padding(theme::dp(20.0))
+            .width(theme::dp(card_dp))
+            .background(theme::surface().with_alpha_f32(0.72))
+            .border(
+                theme::dp(1.0),
+                theme::text_dim().with_alpha_f32(0.28),
+                theme::dp(14.0),
+            )
+            .clip_rounded(theme::dp(14.0)),
     )
     .child(
+        Column(
+            Modifier::new()
+                .gap(theme::dp(10.0))
+                .align_items(AlignItems::CENTER)
+                .width(theme::dp(menu_w)),
+        )
+    .child(
         Text("RETRACKT")
-            .size(theme::sp(56.0 * fit::type_scale()))
+            .size(theme::sp(theme::WORDMARK_SP * fit::type_scale()))
+            .font_family(theme::FONT_DISPLAY)
             .color(theme::accent())
             .single_line(),
     )
-    .child(dim_text("time-trial time attack"))
-    .child(info)
+    .child(
+        Text("time-trial time attack")
+            .size(theme::sp(13.0))
+            .color(theme::text_dim())
+            .single_line(),
+    )
+    .child(Box(Modifier::new().height(theme::dp(10.0))).child(Spacer()))
     .child(menu_btn("Start Race", pusher(actions, UiAct::StartRace)))
-    .child(practice_toggle(data.practice, actions))
-    .child(menu_btn("Track Editor", pusher(actions, UiAct::OpenEditor)))
-    .child(menu_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)))
-    .child(thumbnail_toggle(thumbs, actions));
+    .child(ghost_btn(
+        "Track Editor",
+        pusher(actions, UiAct::OpenEditor),
+    ))
+    .child(ghost_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)))
+    .child(
+        Row(Modifier::new().gap(theme::dp(8.0)).align_items(AlignItems::CENTER))
+            .child(practice_toggle_chip(data.practice, actions))
+            .child(thumbnail_toggle(thumbs, actions)),
+    )
+    .child(Box(Modifier::new().height(theme::dp(6.0))).child(Spacer()))
+        .child(track_line),
+    );
 
-    // The two panels are siblings, so side by side they are a row and stacked they
-    // are a column. They were always a column: the widths were derived from a
-    // `stacked` flag that chose panel sizes and nothing else, so the comment above
-    // described an arrangement the screen never took.
-    // `fill_max_width` all the way down, because a column sized to its content has no
-    // width to wrap against: the track line below is a wrapping row, and a wrapping
-    // row with no bound is a single line again.
-    let body = if stacked {
-        Column(Modifier::new().gap(theme::dp(14.0)).fill_max_width())
-            .child([header, library, controls])
+    let panels = if stacked {
+        Column(Modifier::new().gap(theme::dp(14.0)))
+            .child([library, controls])
     } else {
-        Column(Modifier::new().gap(theme::dp(16.0)).fill_max_width()).child([
-            header,
-            Row(Modifier::new()
-                .gap(theme::dp(16.0))
-                .align_items(AlignItems::START)
-                .fill_max_width())
-            .child([library, controls]),
-        ])
+        Row(Modifier::new().gap(theme::dp(16.0)).align_items(AlignItems::START))
+            .child([library, controls])
     };
+
+    let body = Column(
+        Modifier::new()
+            .gap(theme::dp(28.0))
+            .align_items(AlignItems::CENTER)
+            .fill_max_width(),
+    )
+    .child([menu, panels]);
 
     // One scroller for the screen, so a short window can reach the bottom of the
     // menu rather than losing it. The backdrop centres and blocks input, but it is
@@ -159,13 +205,20 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
 /// Thumbnails cost a view per occupied cell, so the player who wants a compact
 /// list turns them off. Persisted, because it is a preference rather than a mode.
 fn thumbnail_toggle(thumbs: bool, actions: &ActionQueue) -> View {
-    ghost_btn(
+    chip_btn(
         if thumbs {
             "Hide thumbnails"
         } else {
             "Show thumbnails"
         },
         pusher(actions, UiAct::SetThumbnails(!thumbs)),
+    )
+}
+
+fn practice_toggle_chip(practice: bool, actions: &ActionQueue) -> View {
+    chip_btn(
+        if practice { "Practice: on" } else { "Practice: off" },
+        pusher(actions, UiAct::SetPractice(!practice)),
     )
 }
 
@@ -177,9 +230,10 @@ fn track_row(
     which: TrackRef,
     actions: &ActionQueue,
     thumbs: bool,
+    name_dp: f32,
 ) -> View {
     let click = pusher(actions, UiAct::LoadTrack(which));
-    let name = Box(Modifier::new().width(theme::dp(fit::label_width(1)))).child(
+    let name = Box(Modifier::new().width(theme::dp(name_dp))).child(
         Text(doc.name.clone())
             .size(theme::sp(16.0))
             .color(theme::text())
@@ -205,37 +259,55 @@ fn track_row(
     }
     row.child(name)
         .child(dim_text(&thumb::summary(doc)))
-        .child(ghost_btn("Load", click))
+        .child(chip_btn("Load", click))
 }
 
 fn controls_panel(stacked: bool) -> View {
+    // The key column is as wide as the widest key and no wider: on a narrow window
+    // every dp spent here is a dp the action does not have, and `restart /
+    // checkpoint / quit` is the row that runs out first.
+    let key_dp = if fit::is_narrow() { 104.0 } else { KEY_DP };
+    // Wide enough for the key, the gap, the longest action and a little slack. The
+    // slack is not padding: the two columns are fixed-width boxes in a row, and
+    // sized to the sum exactly they lose the rounding and the key clips first.
+    let panel_dp = if stacked {
+        fit::panel_width(key_dp + 260.0)
+    } else {
+        fit::fit(key_dp + 260.0, fit::EDGE_DP * 2.0 + 460.0)
+    };
+    // Bound for the action text to ellipsize inside. Without a width of its own it
+    // takes its full natural measure and hangs past the panel, which is how the
+    // longest entry pushed the row 4 dp off a 320 dp screen.
+    let action_dp = (panel_dp - PANEL_INSET_DP.0 * 2.0 - key_dp - 12.0).max(48.0);
+
     let mut rows: Vec<View> = Vec::new();
     for (key, action) in CONTROLS {
         rows.push(
-            Row(Modifier::new().gap(theme::dp(10.0)))
+            Row(Modifier::new().gap(theme::dp(12.0)))
                 .child(
-                    Box(Modifier::new().width(theme::dp(120.0))).child(
+                    Box(Modifier::new().width(theme::dp(key_dp))).child(
                         Text(key)
                             .size(theme::sp(14.0))
+                            .font_family(theme::FONT_DISPLAY)
                             .color(theme::accent())
-                            .single_line(),
+                            .single_line()
+                            .overflow_ellipsize(),
                     ),
                 )
                 .child(
-                    Text(action)
-                        .size(theme::sp(14.0))
-                        .color(theme::text_dim())
-                        .single_line(),
+                    Box(Modifier::new().width(theme::dp(action_dp))).child(
+                        Text(action)
+                            .size(theme::sp(14.0))
+                            .color(theme::text_dim())
+                            .single_line()
+                            .overflow_ellipsize(),
+                    ),
                 ),
         );
     }
     panel_w(
         "Controls",
-        theme::dp(if stacked {
-            fit::panel_width(300.0)
-        } else {
-            fit::fit(300.0, fit::EDGE_DP * 2.0 + 460.0)
-        }),
+        theme::dp(panel_dp),
         vec![Column(Modifier::new().gap(theme::dp(10.0))).child(rows)],
     )
 }
@@ -340,3 +412,4 @@ mod tests {
         }
     }
 }
+

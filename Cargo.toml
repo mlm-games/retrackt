@@ -29,6 +29,7 @@ repame-view3d = "0.3"
 repose-core = "0.31"
 repose-ui = "0.31"
 repose-material = "0.31"
+repose-text = "0.31"
 game-utils = "0.4"
 game-utils-vehicle = "0.4"
 glam = { version = "0.33", features = ["serde"] }

@@ -1,6 +1,6 @@
 use repose_core::{AlignItems, Dp, Modifier, View};
 use repose_material::material3::{Button, ButtonConfig, OutlinedButton};
-use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
+use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{Box, Center, Column, Text, TextStyle, ViewExt};
 
 use crate::app::state::{ActionQueue, UiAct, push};
@@ -57,7 +57,12 @@ pub fn menu_btn(label: &str, on_click: impl Fn() + 'static) -> View {
             content_color: Some(theme::background()),
             ..ButtonConfig::default()
         },
-        || Text(label).size(theme::sp(16.0)).single_line(),
+        || {
+            Text(label)
+                .size(theme::sp(theme::CONTROL_SP))
+                .font_family(theme::FONT_DISPLAY)
+                .single_line()
+        },
     )
 }
 
@@ -87,7 +92,35 @@ pub fn outlined_at(
         Modifier::new().min_width(min_width),
         on_click,
         config,
-        || Text(label).size(theme::sp(16.0)).single_line(),
+        || {
+            Text(label)
+                .size(theme::sp(theme::CONTROL_SP))
+                .font_family(theme::FONT_DISPLAY)
+                .single_line()
+        },
+    )
+}
+
+/// A small, quiet control for a row of settings rather than a destination.
+///
+/// Tertiary to `menu_btn` and `ghost_btn`: the practice toggle and the thumbnail
+/// toggle are preferences, and giving them the same weight as Start Race is what
+/// made the old title read as one undifferentiated stack.
+pub fn chip_btn(label: &str, on_click: impl Fn() + 'static) -> View {
+    OutlinedButton(
+        Modifier::new().min_width(theme::dp(if fit::is_narrow() { 84.0 } else { 124.0 })),
+        on_click,
+        ButtonConfig {
+            content_color: Some(theme::text_dim()),
+            shape_radius: theme::dp(8.0),
+            ..ButtonConfig::default()
+        },
+        || {
+            Text(label)
+                .size(theme::sp(13.0))
+                .font_family(theme::FONT_DISPLAY)
+                .single_line()
+        },
     )
 }
 
@@ -226,7 +259,8 @@ fn panel_body(
     if !title.is_empty() {
         body = body.child(
             Text(title)
-                .size(theme::sp(22.0))
+                .size(theme::sp(theme::SECTION_SP))
+                .font_family(theme::FONT_DISPLAY)
                 .color(theme::accent())
                 .single_line(),
         );
@@ -238,12 +272,19 @@ fn panel_body(
     // their own height, and they paint over each other rather than being cut off —
     // which is how Restart ended up sitting on top of Save Ghost. Scrolling the
     // body instead keeps every control at its own height and reachable.
+    //
+    // Vertical only, and that is load-bearing rather than a simplification:
+    // `ScrollArea` fills its content to the viewport width, so a wrapping row
+    // inside a panel has something to wrap against. `ScrollAreaXY` leaves the
+    // content at its own width so it can grow sideways, which leaves a wrapping row
+    // bounded by itself — one line, running off the edge, with a horizontal
+    // scrollbar on a dialog that has no business having one.
     let content = if capped {
-        ScrollAreaXY(
+        ScrollArea(
             Modifier::new()
                 .fill_max_width()
                 .max_height(panel_height()),
-            remember_scroll_state_xy(format!("panel.{title}")),
+            remember_scroll_state(format!("panel.{title}")),
             body,
         )
     } else {
@@ -314,6 +355,7 @@ pub fn dim_text(text: &str) -> View {
 pub fn heading(text: &str) -> View {
     Text(text)
         .size(theme::sp(30.0))
+        .font_family(theme::FONT_DISPLAY)
         .color(theme::text())
         .single_line()
 }

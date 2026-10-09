@@ -1,5 +1,20 @@
 use repose_core::{Color, Dp, Sp, UnitExt};
 
+/// The one face the game is set in, registered at startup from
+/// `assets/fonts/Fredoka-SemiBold.ttf`.
+///
+/// Display type, panel titles and every control label. Body copy stays on the
+/// platform sans: at 13-14 sp the rounded face loses too much of its counters to
+/// read a list of names against.
+pub const FONT_DISPLAY: &str = "Fredoka";
+
+/// Wordmark size, in sp.
+pub const WORDMARK_SP: f32 = 64.0;
+/// Panel and section titles, in sp.
+pub const SECTION_SP: f32 = 22.0;
+/// Button and control labels, in sp.
+pub const CONTROL_SP: f32 = 16.0;
+
 pub fn background() -> Color {
     Color::from_rgb(10, 12, 16)
 }

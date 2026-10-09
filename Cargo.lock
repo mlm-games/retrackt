@@ -3815,6 +3815,7 @@ dependencies = [
  "repame-view3d",
  "repose-core",
  "repose-material",
+ "repose-text",
  "repose-ui",
  "retrackt-format",
  "ron",
