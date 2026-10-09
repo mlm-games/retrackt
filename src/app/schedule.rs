@@ -246,20 +246,29 @@ fn step_ghost(
     if !active.0 {
         return;
     }
-    let Some(tape) = ghost.tape.as_ref() else {
-        return;
-    };
-    let Some(packed) = tape.tick(ghost.tick) else {
-        return;
+    step_tape(&mut ghost, &track.0, time.delta_secs);
+}
+
+/// Advance `ghost` by one tick of its tape. False once the tape has run out.
+///
+/// `dt` is the step in seconds, the same value `SimTime::delta_secs` carries in
+/// game.
+///
+/// The plain function behind [`step_ghost`], so the headless verifier walks this
+/// rather than a copy of it that could only ever agree with itself.
+pub fn step_tape(ghost: &mut GhostRes, world: &TrackWorld, dt: f32) -> bool {
+    let Some(packed) = ghost.tape.as_ref().and_then(|t| t.tick(ghost.tick)) else {
+        return false;
     };
     step_car(
         &mut ghost.car,
         &decode(packed),
-        &track.0,
+        world,
         &CarTuning::default(),
-        time.delta_secs,
+        dt,
     );
     ghost.tick += 1;
+    true
 }
 
 /// Put the car back at the last checkpoint: after a fall, or on request.
