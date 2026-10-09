@@ -55,7 +55,11 @@ fn main() {
             Some(_) => String::new(),
         };
         if why.is_empty() {
-            println!("ok    record on {} at {}", short(&record.track), record.ticks);
+            println!(
+                "ok    record on {} at {}",
+                short(&record.track),
+                record.ticks
+            );
         } else {
             failures += 1;
             println!("FAIL  record on {}: {why}", short(&record.track));
@@ -119,7 +123,10 @@ fn verify_ghost(
     // Still on the road. A replay that ends in mid air or under the track is what a
     // player sees as "that ghost drove off".
     if world.ground_at(first.car.pos, 4.0).is_none() {
-        return Err(format!("ends off the track at {:?}", first.car.pos.to_array()));
+        return Err(format!(
+            "ends off the track at {:?}",
+            first.car.pos.to_array()
+        ));
     }
 
     Ok(format!(
@@ -153,12 +160,16 @@ fn same_car(a: &Car, b: &Car) -> bool {
             .chain(c.heading_dir.to_array())
             .chain(c.ground_normal.to_array())
     };
-    axes(a)
-        .zip(axes(b))
-        .all(|(x, y)| same(x, y))
+    axes(a).zip(axes(b)).all(|(x, y)| same(x, y))
         && a.orient.to_array() == b.orient.to_array()
-        && a.wheel_spin.iter().zip(&b.wheel_spin).all(|(x, y)| same(*x, *y))
-        && a.compression.iter().zip(&b.compression).all(|(x, y)| same(*x, *y))
+        && a.wheel_spin
+            .iter()
+            .zip(&b.wheel_spin)
+            .all(|(x, y)| same(*x, *y))
+        && a.compression
+            .iter()
+            .zip(&b.compression)
+            .all(|(x, y)| same(*x, *y))
         && same(a.steer_angle, b.steer_angle)
         && same(a.air_time, b.air_time)
         && same(a.wall_contact, b.wall_contact)

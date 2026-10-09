@@ -157,4 +157,3 @@ fn splits_body(splits: &[u32], theirs: Option<&[u32]>) -> View {
         Column(Modifier::new().gap(theme::dp(4.0))).child(rows)
     }
 }
-

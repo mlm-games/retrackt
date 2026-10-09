@@ -131,18 +131,16 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
     // On a backing card rather than straight onto the scene. The outlined controls
     // were being read against bright grass, and a card is what makes the column read
     // as one console rather than six controls floating over a track.
-    let menu = Box(
-        Modifier::new()
-            .padding(theme::dp(20.0))
-            .width(theme::dp(card_dp))
-            .background(theme::surface().with_alpha_f32(0.72))
-            .border(
-                theme::dp(1.0),
-                theme::text_dim().with_alpha_f32(0.28),
-                theme::dp(14.0),
-            )
-            .clip_rounded(theme::dp(14.0)),
-    )
+    let menu = Box(Modifier::new()
+        .padding(theme::dp(20.0))
+        .width(theme::dp(card_dp))
+        .background(theme::surface().with_alpha_f32(0.72))
+        .border(
+            theme::dp(1.0),
+            theme::text_dim().with_alpha_f32(0.28),
+            theme::dp(14.0),
+        )
+        .clip_rounded(theme::dp(14.0)))
     .child(
         Column(
             Modifier::new()
@@ -150,41 +148,44 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
                 .align_items(AlignItems::CENTER)
                 .width(theme::dp(menu_w)),
         )
-    .child(
-        Text("RETRACKT")
-            .size(theme::sp(theme::WORDMARK_SP * fit::type_scale()))
-            .font_family(theme::FONT_DISPLAY)
-            .color(theme::accent())
-            .single_line(),
-    )
-    .child(
-        Text("time-trial time attack")
-            .size(theme::sp(13.0))
-            .color(theme::text_dim())
-            .single_line(),
-    )
-    .child(Box(Modifier::new().height(theme::dp(10.0))).child(Spacer()))
-    .child(menu_btn("Start Race", pusher(actions, UiAct::StartRace)))
-    .child(ghost_btn(
-        "Track Editor",
-        pusher(actions, UiAct::OpenEditor),
-    ))
-    .child(ghost_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)))
-    .child(
-        Row(Modifier::new().gap(theme::dp(8.0)).align_items(AlignItems::CENTER))
+        .child(
+            Text("RETRACKT")
+                .size(theme::sp(theme::WORDMARK_SP * fit::type_scale()))
+                .font_family(theme::FONT_DISPLAY)
+                .color(theme::accent())
+                .single_line(),
+        )
+        .child(
+            Text("time-trial time attack")
+                .size(theme::sp(13.0))
+                .color(theme::text_dim())
+                .single_line(),
+        )
+        .child(Box(Modifier::new().height(theme::dp(10.0))).child(Spacer()))
+        .child(menu_btn("Start Race", pusher(actions, UiAct::StartRace)))
+        .child(ghost_btn(
+            "Track Editor",
+            pusher(actions, UiAct::OpenEditor),
+        ))
+        .child(ghost_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)))
+        .child(
+            Row(Modifier::new()
+                .gap(theme::dp(8.0))
+                .align_items(AlignItems::CENTER))
             .child(practice_toggle_chip(data.practice, actions))
             .child(thumbnail_toggle(thumbs, actions)),
-    )
-    .child(Box(Modifier::new().height(theme::dp(6.0))).child(Spacer()))
+        )
+        .child(Box(Modifier::new().height(theme::dp(6.0))).child(Spacer()))
         .child(track_line),
     );
 
     let panels = if stacked {
-        Column(Modifier::new().gap(theme::dp(14.0)))
-            .child([library, controls])
+        Column(Modifier::new().gap(theme::dp(14.0))).child([library, controls])
     } else {
-        Row(Modifier::new().gap(theme::dp(16.0)).align_items(AlignItems::START))
-            .child([library, controls])
+        Row(Modifier::new()
+            .gap(theme::dp(16.0))
+            .align_items(AlignItems::START))
+        .child([library, controls])
     };
 
     let body = Column(
@@ -220,7 +221,11 @@ fn thumbnail_toggle(thumbs: bool, actions: &ActionQueue) -> View {
 
 fn practice_toggle_chip(practice: bool, actions: &ActionQueue) -> View {
     chip_btn(
-        if practice { "Practice: on" } else { "Practice: off" },
+        if practice {
+            "Practice: on"
+        } else {
+            "Practice: off"
+        },
         pusher(actions, UiAct::SetPractice(!practice)),
     )
 }
@@ -415,4 +420,3 @@ mod tests {
         }
     }
 }
-

@@ -281,9 +281,7 @@ fn panel_body(
     // scrollbar on a dialog that has no business having one.
     let content = if capped {
         ScrollArea(
-            Modifier::new()
-                .fill_max_width()
-                .max_height(panel_height()),
+            Modifier::new().fill_max_width().max_height(panel_height()),
             remember_scroll_state(format!("panel.{title}")),
             body,
         )
@@ -291,18 +289,16 @@ fn panel_body(
         body
     };
 
-    Box(
-        Modifier::new()
-            .padding(PANEL_INSET_DP)
-            .width(width)
-            .background(theme::surface())
-            .border(
-                theme::dp(1.0),
-                theme::text_dim().with_alpha_f32(0.4),
-                theme::dp(12.0),
-            )
-            .clip_rounded(theme::dp(12.0)),
-    )
+    Box(Modifier::new()
+        .padding(PANEL_INSET_DP)
+        .width(width)
+        .background(theme::surface())
+        .border(
+            theme::dp(1.0),
+            theme::text_dim().with_alpha_f32(0.4),
+            theme::dp(12.0),
+        )
+        .clip_rounded(theme::dp(12.0)))
     .child(content)
 }
 
