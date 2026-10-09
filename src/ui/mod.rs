@@ -1,5 +1,6 @@
 pub mod dims;
 pub mod fit;
+
 pub mod hud;
 pub mod library;
 pub mod screens;
@@ -62,17 +63,26 @@ fn notice_bar(data: &AppData, actions: &crate::app::state::ActionQueue) -> Optio
                 theme::danger().with_alpha_f32(0.6),
                 theme::dp(8.0),
             )
-            .clip_rounded(theme::dp(8.0)))
+            .clip_rounded(theme::dp(8.0))
+            // Takes the pointers over itself, so a click aimed at it cannot reach a
+            // button in the screen underneath: the notice is drawn over the one
+            // corner every screen puts something interactive in, and without this the
+            // click landed on whatever it covered.
+            .input_blocker())
         .child(
             Row(Modifier::new()
                 .gap(theme::dp(12.0))
                 .padding(theme::dp(10.0)))
             .child(
                 Box(Modifier::new().flex_grow(1.0)).child(
+                    // Wrapped rather than single-line: a single line of a real
+                    // message is wider than the box's own cap, so it pushed the
+                    // Dismiss button past the right edge of the window and left
+                    // the notice with no way to be dismissed.
                     Text(text)
                         .size(theme::sp(15.0))
                         .color(theme::text())
-                        .single_line(),
+                        .max_lines(4),
                 ),
             )
             .child(dismiss),

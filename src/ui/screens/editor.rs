@@ -4,7 +4,9 @@ use std::rc::Rc;
 // `TextFieldLineLimits` and `TextStyle` come from repose-core (the config value
 // structs); the `TextStyle` trait that styles `Text` views is repose-ui's, and
 // the two share a name. Both imports are needed and neither shadows the other.
-use repose_core::{AlignItems, Modifier, TextFieldLineLimits, View, remember_with_key};
+use repose_core::{
+    AlignItems, Dp, Modifier, PaddingValues, TextFieldLineLimits, View, remember_with_key,
+};
 use repose_material::material3::{ButtonConfig, ButtonDefaults};
 use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{
@@ -18,7 +20,7 @@ use crate::app::state::{ActionQueue, AppData, EditorData, TrackRef, UiAct, push}
 use crate::app::theme;
 use crate::ui::dims;
 use crate::ui::widgets::{
-    dim_text, heading, hud_text, list_panel_w, outlined_at, panel_height, pusher,
+    PANEL_INSET_DP, dim_text, heading, hud_text, list_panel_w, outlined_at, pusher,
 };
 
 /// Cursor steps for the six directional buttons.
@@ -147,8 +149,10 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
                 // Side by side the palette is a *sibling* of the column's scroller
                 // rather than inside it, so nothing above it bounds its height. An
                 // explicit one is what keeps its list scrolling instead of running
-                // the panel past the bottom of the window.
-                Modifier::new().fill_max_width().height(panel_height()),
+                // the panel past the bottom of the window — and it fills that height
+                // rather than asking for a comfortable 520 of it, which left a third
+                // of a tall window with a dead margin under the last piece.
+                Modifier::new().fill_max_width().fill_max_height(),
                 remember_scroll_state_xy("editor.palette"),
                 palette_body,
             )
@@ -160,7 +164,16 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
         build_children(data, actions),
     );
 
-    let side_buttons = ctrl_row(vec![
+    // The same inset the panels above it take, so this row starts where their content
+    // starts rather than at the column's own edge: a control 20 dp to the left of
+    // every other control in the column reads as a different column.
+    let side_buttons = Box(Modifier::new().padding_values(PaddingValues {
+        left: PANEL_INSET_DP,
+        right: PANEL_INSET_DP,
+        top: Dp::ZERO,
+        bottom: Dp::ZERO,
+    }))
+    .child(ctrl_row(vec![
         outlined_at(
             "Playtest",
             dims::ctrl_w(),
@@ -173,7 +186,7 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
         ),
         ctrl("Close Editor", pusher(actions, UiAct::CloseEditor)),
         heading("Track Editor"),
-    ]);
+    ]));
 
     let track_column = Column(Modifier::new().gap(dims::SPACE_SECTION)).child([
         track,
@@ -584,7 +597,11 @@ fn share_panel(editor: &EditorData, actions: &ActionQueue) -> View {
     }
 
     let mut children = vec![
-        Column(Modifier::new().gap(dims::SPACE_LIST))
+        // Fills the width itself: `fill_max_width` on the field alone fills the
+        // column, and a column sized to its content is only as wide as that content
+        // — so the field came out at the width of its own hint with half the panel
+        // beside it unused.
+        Column(Modifier::new().gap(dims::SPACE_LIST).fill_max_width())
             // The field takes a line to itself rather than sharing one with two
             // buttons. Unbounded in a wrapping row it claimed a line anyway, and the
             // buttons below it became a second row for no reason the row could have

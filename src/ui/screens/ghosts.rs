@@ -5,7 +5,6 @@ use std::rc::Rc;
 // structs); the `TextStyle` trait that styles `Text` views is repose-ui's, and
 // the two share a name. Both imports are needed and neither shadows the other.
 use repose_core::{AlignItems, Modifier, TextFieldLineLimits, View, remember_with_key};
-use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{
     BasicTextField, Box, Column, FlowRow, FlowRowConfig, Row, Text, TextFieldConfig,
     TextFieldState, TextStyle, ViewExt,
@@ -18,10 +17,6 @@ use crate::ui::widgets::{
     danger_btn, dim_text, fmt_ticks, ghost_btn, heading, hud_text, list_panel, menu_btn, pusher,
     screen_backdrop,
 };
-
-/// Room the panel's own padding takes off its inner width, so a list inside it
-/// is narrower than the panel and does not touch its edges.
-const PANEL_GUTTER_DP: f32 = 40.0;
 
 /// The kept-tape library: every tape the player has kept, across all tracks.
 pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
@@ -95,13 +90,16 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
                 rows.push(dim_text("  recorded on another track"));
             }
         }
-        children.push(ScrollAreaXY(
-            Modifier::new()
-                .width(theme::dp(fit::panel_width(560.0) - PANEL_GUTTER_DP))
-                .height(theme::dp(fit::panel_height(300.0))),
-            remember_scroll_state_xy("ghosts.list"),
-            Column(Modifier::new().gap(theme::dp(8.0))).child(rows),
-        ));
+        // No scroller of its own. The panel this list sits in already scrolls its
+        // body, and a second one under the same pointer takes the wheel from it.
+        //
+        // Its old XY scroller is the part that matters: an XY scroller leaves its
+        // content at its own width so it can grow sideways, which gave a row of a
+        // name and three buttons nothing to wrap against — it came out 718 dp wide
+        // inside a 520 dp panel, and the last button needed a horizontal scrollbar to
+        // reach. The panel's own scroller bounds the width to the panel, so the row
+        // wraps instead of breaking out of it.
+        children.push(Column(Modifier::new().gap(theme::dp(8.0)).fill_max_width()).child(rows));
     }
 
     children.push(menu_btn("Close", pusher(actions, UiAct::CloseGhosts)));
@@ -151,13 +149,18 @@ pub fn ghost_save_row(data: &AppData, actions: &ActionQueue) -> View {
     // than all three sharing one: a caption, a fixed-width field and a button are wider
     // together than the panel is on a phone, so they wrapped to three lines and left the
     // button below the panel's own height, where scrolling was the only way to reach it.
-    // The field takes the width that is left instead of asking for a fixed share of it.
-    Column(Modifier::new().gap(theme::dp(10.0)))
+    // The field takes the width that is left instead of asking for a fixed share of it,
+    // so the row and the column both fill the panel: the results panel centres its
+    // children, which leaves a row sized to its own content with nothing for the field's
+    // share to grow into — it came out at the width of its own hint with most of the
+    // panel beside it unused.
+    Column(Modifier::new().gap(theme::dp(10.0)).fill_max_width())
         .child(hud_text("Keep this run as a ghost"))
         .child(
             Row(Modifier::new()
                 .gap(theme::dp(10.0))
-                .align_items(AlignItems::CENTER))
+                .align_items(AlignItems::CENTER)
+                .fill_max_width())
             .child(Box(Modifier::new().weight(1.0)).child(field))
             .child(ghost_btn("Save Ghost", save)),
         )

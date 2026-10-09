@@ -255,7 +255,12 @@ fn panel_body(
     align: AlignItems,
     capped: bool,
 ) -> View {
-    let mut body = Column(Modifier::new().gap(PANEL_GAP).align_items(align));
+    let mut body = Column(
+        Modifier::new()
+            .gap(PANEL_GAP)
+            .align_items(align)
+            .fill_max_width(),
+    );
     if !title.is_empty() {
         body = body.child(
             Text(title)
@@ -327,18 +332,44 @@ pub fn controls_hint() -> View {
             .collect::<Vec<String>>()
             .join("  ·  ")
     };
+    // Wrapped, and bounded by the window: a single line of the whole run is wider
+    // than a phone held upright, so at 360 dp the hint block ran 86 dp off the right
+    // edge of the screen and underneath the race buttons at the same time. Capping
+    // the width is what gives the wrapping something to wrap against.
+    let width = fit::fit(520.0, fit::chrome_inset() * 2.0);
     Column(
         Modifier::new()
             .gap(theme::dp(4.0))
+            .max_width(theme::dp(width))
             .padding(theme::dp(8.0))
             .background(theme::background().with_alpha_f32(0.55))
             .clip_rounded(theme::dp(6.0))
             .hit_passthrough(),
     )
-    .child(dim_text(&line(0..4)))
-    .child(dim_text(&line(4..6)))
-    .child(dim_text(&line(6..7)))
-    .child(dim_text(&line(7..9)))
+    .child(
+        Text(line(0..4))
+            .size(theme::sp(14.0))
+            .color(theme::text_dim())
+            .max_lines(3),
+    )
+    .child(
+        Text(line(4..6))
+            .size(theme::sp(14.0))
+            .color(theme::text_dim())
+            .max_lines(3),
+    )
+    .child(
+        Text(line(6..7))
+            .size(theme::sp(14.0))
+            .color(theme::text_dim())
+            .max_lines(3),
+    )
+    .child(
+        Text(line(7..9))
+            .size(theme::sp(14.0))
+            .color(theme::text_dim())
+            .max_lines(3),
+    )
 }
 
 pub fn dim_text(text: &str) -> View {
@@ -394,4 +425,84 @@ pub fn fmt_delta(ticks: i64) -> String {
         (ms % 60_000) / 1000,
         ms % 1000
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::fit::tests::WINDOW;
+    use repose_core::{
+        SceneNode, calculate_window_size_class, set_window_container_size,
+        set_window_size_class_default,
+    };
+    use repose_ui::{BasicTextField, TextFieldConfig, TextFieldState};
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    /// A field inside a panel fills the panel's content width.
+    ///
+    /// `fill_max_width` on the field alone filled the column wrapped around it, and a
+    /// column sized to its own content is only as wide as that content — so the field
+    /// came out at the width of its own hint with the rest of the panel beside it
+    /// unused, at every window size. The panel body has to fill its own box for a
+    /// field inside it to have anything to fill.
+    #[test]
+    fn a_field_fills_the_panel_it_sits_in() {
+        for (w, h) in [(1280.0f32, 800.0f32), (1024.0, 600.0)] {
+            let _turn = WINDOW.lock().unwrap_or_else(|e| e.into_inner());
+            set_window_container_size(w, h);
+            set_window_size_class_default(calculate_window_size_class(w as u32, h as u32, 1.0));
+
+            let state: Rc<RefCell<TextFieldState>> = Rc::new(RefCell::new(TextFieldState::new()));
+            let field = BasicTextField(
+                state,
+                Modifier::new().fill_max_width(),
+                "A placeholder hint",
+                TextFieldConfig {
+                    line_limits: repose_core::TextFieldLineLimits::SingleLine,
+                    ..TextFieldConfig::default()
+                },
+            );
+            let (scene, _, _) = repose_ui::layout_and_paint(
+                &list_panel("Fields", vec![field]),
+                (w as u32, h as u32),
+                &HashMap::new(),
+                &Default::default(),
+                None,
+            );
+
+            // The panel is the bordered box; the placeholder marks the field.
+            let panel = scene
+                .nodes
+                .iter()
+                .find_map(|n| match n {
+                    SceneNode::Border { rect, .. } if rect.w > 200.0 => Some(*rect),
+                    _ => None,
+                })
+                .expect("a panel border");
+            let inner_edge = panel.x + panel.w - PANEL_INSET_DP.0;
+            let content = panel.w - PANEL_INSET_DP.0 * 2.0;
+            let hint = scene
+                .nodes
+                .iter()
+                .find_map(|n| match n {
+                    SceneNode::Text { rect, text, .. } if text.as_ref() == "A placeholder hint" => {
+                        Some(*rect)
+                    }
+                    _ => None,
+                })
+                .expect("the field's placeholder");
+            assert!(
+                hint.x + hint.w <= inner_edge + 0.5,
+                "at {w:.0}x{h:.0} the field reaches {:.0} but the panel's inner edge is {inner_edge:.0}",
+                hint.x + hint.w
+            );
+            assert!(
+                hint.w > content * 0.5,
+                "at {w:.0}x{h:.0} the field is {:.0} wide inside {content:.0} of panel",
+                hint.w
+            );
+        }
+    }
 }

@@ -3,15 +3,13 @@ use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Text, TextStyle, ViewExt};
 
 use crate::app::state::{ActionQueue, AppData, REPLAY_SPEEDS, ReplayView, UiAct};
 use crate::app::theme;
-use crate::ui::fit;
 use crate::ui::widgets::{
     accent_btn, dim_text, disabled_btn, fmt_ticks, ghost_btn, heading, hud_text, menu_btn, panel,
     pusher, screen_backdrop,
 };
 
-/// Width and height of the playhead bar, in dp. Thick enough to read as a bar at a
-/// glance rather than as a rule the eye has to find.
-const BAR_DP: f32 = 420.0;
+/// Height of the playhead bar, in dp. Thick enough to read as a bar at a glance
+/// rather than as a rule the eye has to find.
 const BAR_H_DP: f32 = 10.0;
 
 /// A kept tape, playing back on the track it was recorded on.
@@ -146,24 +144,25 @@ fn transport(view: &ReplayView, actions: &ActionQueue) -> View {
 /// The playhead as a filled bar. Two nested boxes rather than a slider: repose-ui
 /// has no progress widget, and a drag would re-simulate the run on every pointer
 /// event, which is the one thing the seek is too expensive for.
-/// The playhead bar tracks the panel's width. It used to be a fixed 420 dp, which
-/// on a phone held upright is wider than the panel it sits in and pushes the
-/// transport controls off the side.
+///
+/// The track fills the panel's content width and the fill takes a fraction of it,
+/// rather than either being sized against the window: a width taken from the
+/// window disagrees with the panel's own content width, and the bar then overruns
+/// the panel on a phone while leaving 100 dp unused on a desktop.
 fn playhead(view: &ReplayView) -> View {
     let filled = if view.len == 0 {
         0.0
     } else {
         (view.tick as f32 / view.len as f32).clamp(0.0, 1.0)
     };
-    let bar = fit::fit(BAR_DP, 40.0);
     let track = Box(Modifier::new()
-        .width(theme::dp(bar))
+        .fill_max_width()
         .height(theme::dp(BAR_H_DP))
         .background(theme::text_dim().with_alpha_f32(0.3))
         .clip_rounded(theme::dp(BAR_H_DP / 2.0))
         .hit_passthrough());
     let fill = Box(Modifier::new()
-        .width(theme::dp(bar * filled))
+        .fill_max_width_frac(filled)
         .height(theme::dp(BAR_H_DP))
         .background(theme::accent())
         .clip_rounded(theme::dp(BAR_H_DP / 2.0))
