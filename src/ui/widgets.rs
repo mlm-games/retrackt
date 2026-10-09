@@ -1,5 +1,6 @@
 use repose_core::{AlignItems, Dp, Modifier, View};
 use repose_material::material3::{Button, ButtonConfig, OutlinedButton};
+use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{Box, Center, Column, Text, TextStyle, ViewExt};
 
 use crate::app::state::{ActionQueue, UiAct, push};
@@ -221,16 +222,38 @@ fn panel_body(
     align: AlignItems,
     capped: bool,
 ) -> View {
-    let mut modifier = Modifier::new()
-        .gap(PANEL_GAP)
-        .padding(PANEL_INSET_DP)
-        .align_items(align)
-        .width(width);
-    if capped {
-        modifier = modifier.max_height(panel_height());
+    let mut body = Column(Modifier::new().gap(PANEL_GAP).align_items(align));
+    if !title.is_empty() {
+        body = body.child(
+            Text(title)
+                .size(theme::sp(22.0))
+                .color(theme::accent())
+                .single_line(),
+        );
     }
-    let mut column = Column(
-        modifier
+    body = body.child(children);
+
+    // The cap goes on the scroller, not on the column holding the content. A column
+    // with a max height and more in it than fits has its children shrunk below
+    // their own height, and they paint over each other rather than being cut off —
+    // which is how Restart ended up sitting on top of Save Ghost. Scrolling the
+    // body instead keeps every control at its own height and reachable.
+    let content = if capped {
+        ScrollAreaXY(
+            Modifier::new()
+                .fill_max_width()
+                .max_height(panel_height()),
+            remember_scroll_state_xy(format!("panel.{title}")),
+            body,
+        )
+    } else {
+        body
+    };
+
+    Box(
+        Modifier::new()
+            .padding(PANEL_INSET_DP)
+            .width(width)
             .background(theme::surface())
             .border(
                 theme::dp(1.0),
@@ -238,16 +261,8 @@ fn panel_body(
                 theme::dp(12.0),
             )
             .clip_rounded(theme::dp(12.0)),
-    );
-    if !title.is_empty() {
-        column = column.child(
-            Text(title)
-                .size(theme::sp(22.0))
-                .color(theme::accent())
-                .single_line(),
-        );
-    }
-    column.child(children)
+    )
+    .child(content)
 }
 
 pub fn screen_backdrop(content: View) -> View {
