@@ -1735,8 +1735,6 @@ fn editor_camera() -> repame_view3d::OrbitCamera {
     }
 }
 
-#[cfg(not(target_os = "android"))]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
 /// Fredoka SemiBold, the one face the whole game is set in.
 ///
 /// Registered before the first compose rather than on first use: a view asking for
@@ -1749,6 +1747,8 @@ fn ensure_fonts() {
     ONCE.get_or_init(|| repose_text::register_font_data(FREDOKA));
 }
 
+#[cfg(not(target_os = "android"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
 pub fn run() {
     let mut app = App::new();
     #[cfg(not(target_arch = "wasm32"))]
