@@ -1,4 +1,4 @@
-use repose_core::{AlignItems, Modifier, View};
+use repose_core::{AlignItems, JustifyContent, Modifier, View};
 use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Row, Spacer, Text, TextStyle, ViewExt};
 
@@ -109,6 +109,9 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
         Modifier::new()
             .gap(theme::dp(10.0))
             .align_items(AlignItems::CENTER)
+            // Centred per line, so a track name long enough to wrap does not leave
+            // its own best time stranded at the left edge.
+            .justify_content(JustifyContent::CENTER)
             .width(theme::dp(menu_w)),
         FlowRowConfig::default(),
     )

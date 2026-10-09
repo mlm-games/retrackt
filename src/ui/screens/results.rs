@@ -1,4 +1,4 @@
-use repose_core::{Modifier, View};
+use repose_core::{JustifyContent, Modifier, View};
 use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Row, Text, TextStyle, ViewExt};
 
@@ -79,10 +79,14 @@ pub fn results_ui(data: &AppData, actions: &ActionQueue) -> View {
 
     // One wrapping row rather than five stacked buttons: at full height the panel
     // is a column of controls taller than a compact window, with the last of them
-    // out of reach.
+    // out of reach. Centred so each wrapped line sits in the middle rather than
+    // hanging off the left edge — flexbox applies `justify_content` per line, so
+    // this centres every line of the wrap, not the row as a whole.
     children.push(
         FlowRow(
-            Modifier::new().gap(theme::dp(8.0)),
+            Modifier::new()
+                .gap(theme::dp(8.0))
+                .justify_content(JustifyContent::CENTER),
             FlowRowConfig::default(),
         )
         .child([
