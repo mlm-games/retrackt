@@ -192,7 +192,13 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
         Modifier::new()
             .gap(theme::dp(28.0))
             .align_items(AlignItems::CENTER)
-            .fill_max_width(),
+            .fill_max_width()
+            // A margin, not a padding: every width here is fitted against the
+            // window, and a padding would narrow the content box out from under them.
+            // A margin leaves the column's own box alone and only pushes the card off
+            // the top and bottom edges, which is the breathing room it had lost when
+            // the inset moved into `card_dp`.
+            .margin_vertical(theme::dp(fit::EDGE_DP)),
     )
     .child([menu, panels]);
 

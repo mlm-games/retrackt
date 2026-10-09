@@ -115,7 +115,7 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
 /// renumber everything after it.
 pub fn ghost_save_row(data: &AppData, actions: &ActionQueue) -> View {
     let state: Rc<RefCell<TextFieldState>> =
-        remember_with_key("ghosts.name", { || RefCell::new(TextFieldState::new()) });
+        remember_with_key("ghosts.name", || RefCell::new(TextFieldState::new()));
     // The field is the source of truth while it has focus; the draft on
     // `AppData` is what survives leaving the screen.
     if state.borrow().text != data.ghost_draft {
@@ -124,9 +124,7 @@ pub fn ghost_save_row(data: &AppData, actions: &ActionQueue) -> View {
 
     let field = BasicTextField(
         state.clone(),
-        Modifier::new()
-            .width(theme::dp(fit::fit(220.0, PANEL_GUTTER_DP)))
-            .max_width(theme::dp(fit::fit(220.0, PANEL_GUTTER_DP))),
+        Modifier::new().fill_max_width(),
         "Ghost name",
         TextFieldConfig {
             line_limits: TextFieldLineLimits::SingleLine,
@@ -149,15 +147,18 @@ pub fn ghost_save_row(data: &AppData, actions: &ActionQueue) -> View {
         }
     };
 
-    FlowRow(
-        Modifier::new()
-            .gap(theme::dp(10.0))
-            .align_items(AlignItems::CENTER),
-        FlowRowConfig::default(),
-    )
-    .child([
-        hud_text("Keep this run as a ghost"),
-        field,
-        ghost_btn("Save Ghost", save),
-    ])
+    // The caption takes its own line and the field shares one with the button, rather
+    // than all three sharing one: a caption, a fixed-width field and a button are wider
+    // together than the panel is on a phone, so they wrapped to three lines and left the
+    // button below the panel's own height, where scrolling was the only way to reach it.
+    // The field takes the width that is left instead of asking for a fixed share of it.
+    Column(Modifier::new().gap(theme::dp(10.0)))
+        .child(hud_text("Keep this run as a ghost"))
+        .child(
+            Row(Modifier::new()
+                .gap(theme::dp(10.0))
+                .align_items(AlignItems::CENTER))
+            .child(Box(Modifier::new().weight(1.0)).child(field))
+            .child(ghost_btn("Save Ghost", save)),
+        )
 }
