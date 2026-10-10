@@ -443,7 +443,7 @@ mod tests {
     /// A field inside a panel fills the panel's content width.
     ///
     /// `fill_max_width` on the field alone filled the column wrapped around it, and a
-    /// column sized to its own content is only as wide as that content — so the field
+    /// column sized to its own content is only as wide as that content. So the field
     /// came out at the width of its own hint with the rest of the panel beside it
     /// unused, at every window size. The panel body has to fill its own box for a
     /// field inside it to have anything to fill.

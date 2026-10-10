@@ -95,7 +95,7 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
         //
         // Its old XY scroller is the part that matters: an XY scroller leaves its
         // content at its own width so it can grow sideways, which gave a row of a
-        // name and three buttons nothing to wrap against — it came out 718 dp wide
+        // name and three buttons nothing to wrap against. It came out 718 dp wide
         // inside a 520 dp panel, and the last button needed a horizontal scrollbar to
         // reach. The panel's own scroller bounds the width to the panel, so the row
         // wraps instead of breaking out of it.
@@ -152,7 +152,7 @@ pub fn ghost_save_row(data: &AppData, actions: &ActionQueue) -> View {
     // The field takes the width that is left instead of asking for a fixed share of it,
     // so the row and the column both fill the panel: the results panel centres its
     // children, which leaves a row sized to its own content with nothing for the field's
-    // share to grow into — it came out at the width of its own hint with most of the
+    // share to grow into. It came out at the width of its own hint with most of the
     // panel beside it unused.
     Column(Modifier::new().gap(theme::dp(10.0)).fill_max_width())
         .child(hud_text("Keep this run as a ghost"))

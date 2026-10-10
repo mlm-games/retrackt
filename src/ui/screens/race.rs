@@ -49,9 +49,9 @@ pub fn race_ui(data: &AppData, actions: &ActionQueue, viewport: View) -> View {
     // box nested in one loses its offsets and lands wherever the stack put it.
     //
     // Side by side only while the two actually fit. The test is their widths
-    // together, not the window's class: `is_narrow` alone leaves a 900 dp window —
-    // not compact — where a 520 dp hint block and three 150 dp buttons come to more
-    // than the screen, and each was drawn over the other. Stacked, hints above
+    // together, not the window's class. `is_narrow` alone leaves a 900 dp window,
+    // which is not compact, where a 520 dp hint block and three 150 dp buttons come
+    // to more than the screen, and each was drawn over the other. Stacked, hints above
     // buttons in one bottom-anchored column, so the pair cannot collide at any width.
     // The two views go in that column bare: an absolute box nested in a column is out
     // of flow, so both would land at the same corner rather than one above the other.
@@ -221,7 +221,7 @@ mod tests {
     /// `(left, top, right, bottom)`, and the argument order is not something the
     /// compiler can check: passing the touch's Y as the left offset put every disc
     /// horizontally wherever the finger was vertically, and left the vertical edge
-    /// unset — so a touch near the bottom of a wide window drew the stick far off
+    /// unset. So a touch near the bottom of a wide window drew the stick far off
     /// to the right, at the top of the screen.
     #[test]
     fn the_stick_is_drawn_over_the_finger() {
@@ -270,7 +270,7 @@ mod tests {
     /// each other, and neither may run off the window.
     ///
     /// The hint block is left-anchored and the buttons right-anchored, which holds
-    /// only while the two fit across the window together — the test that decides it
+    /// only while the two fit across the window together. The test that decides it
     /// is their widths added up, not the window's size class, because a 900 dp window
     /// is not compact and is still too narrow for a 520 dp hint block beside three
     /// 150 dp buttons. That conditional was inverted once while the fix was being

@@ -149,7 +149,7 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
                 // Side by side the palette is a *sibling* of the column's scroller
                 // rather than inside it, so nothing above it bounds its height. An
                 // explicit one is what keeps its list scrolling instead of running
-                // the panel past the bottom of the window — and it fills that height
+                // the panel past the bottom of the window, and it fills that height
                 // rather than asking for a comfortable 520 of it, which left a third
                 // of a tall window with a dead margin under the last piece.
                 Modifier::new().fill_max_width().fill_max_height(),
@@ -599,7 +599,7 @@ fn share_panel(editor: &EditorData, actions: &ActionQueue) -> View {
     let mut children = vec![
         // Fills the width itself: `fill_max_width` on the field alone fills the
         // column, and a column sized to its content is only as wide as that content
-        // — so the field came out at the width of its own hint with half the panel
+        // . So the field came out at the width of its own hint with half the panel
         // beside it unused.
         Column(Modifier::new().gap(dims::SPACE_LIST).fill_max_width())
             // The field takes a line to itself rather than sharing one with two
