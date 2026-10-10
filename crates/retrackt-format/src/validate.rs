@@ -73,9 +73,13 @@ pub fn validate(doc: &TrackDocument) -> Vec<Diagnostic> {
             "No Start piece: there is nowhere to begin.",
         ));
     }
+    // Several Start pieces are a way of trying a second line out beside the
+    // first, and several Finish lines are how a circuit gets alternatives. The
+    // run uses one of each, so the choice has to be a rule rather than a
+    // refusal: last placed Start, first Finish reached.
     if starts.len() > 1 {
-        out.push(Diagnostic::error(format!(
-            "{} Start pieces: a run begins in one place.",
+        out.push(Diagnostic::warning(format!(
+            "{} Start pieces: the last one placed is used.",
             starts.len()
         )));
     }
@@ -83,14 +87,16 @@ pub fn validate(doc: &TrackDocument) -> Vec<Diagnostic> {
         out.push(Diagnostic::error("No Finish piece: the run has no end."));
     }
     if finishes.len() > 1 {
-        out.push(Diagnostic::error(format!(
-            "{} Finish pieces: only the last would count.",
+        out.push(Diagnostic::warning(format!(
+            "{} Finish lines: the run ends at the first one reached.",
             finishes.len()
         )));
     }
-    // Every check below reasons about one continuous chain between the two, so
-    // a document missing either end is reported on its own terms and stops here.
-    if starts.len() != 1 || finishes.len() != 1 {
+    // The chain checks below reason about one continuous road from the Start
+    // the run uses, so a document with no Start or no Finish at all is reported
+    // on its own terms and stops there. Several of either is not: the rules
+    // above pick one of each and the chain is walked from the one picked.
+    if starts.is_empty() || finishes.is_empty() {
         return out;
     }
 
@@ -118,11 +124,22 @@ pub fn validate(doc: &TrackDocument) -> Vec<Diagnostic> {
         // remaining gate reads as unreachable and the list would be noise.
         for inst in &doc.pieces {
             let def = catalog_by_id(inst.id);
-            if (def.is_checkpoint || def.is_finish) && !on_route.contains(&inst.uid) {
-                out.push(Diagnostic::error(format!(
-                    "{} is not on the route, so the car can never reach it.",
-                    inst.id.label()
-                )));
+            if !on_route.contains(&inst.uid) {
+                if def.is_finish {
+                    // A second Finish is how a circuit offers an alternative
+                    // line. The chain can only be walked one way, so the other
+                    // line is always off it, and calling that an error would
+                    // refuse every track with more than one way home.
+                    out.push(Diagnostic::warning(format!(
+                        "{} is off the route: it only counts if the road reaches it.",
+                        inst.id.label()
+                    )));
+                } else if def.is_checkpoint {
+                    out.push(Diagnostic::error(format!(
+                        "{} is not on the route, so the car can never reach it.",
+                        inst.id.label()
+                    )));
+                }
             }
         }
     }
@@ -251,13 +268,96 @@ mod tests {
     }
 
     #[test]
-    fn two_start_pieces_are_refused_rather_than_one_silently_winning() {
-        let mut doc = TrackDocument::empty();
-        doc.pieces = vec![
-            PieceInstance::new(PieceId::Start, [0, 0, 0]).with_uid(PieceUid(1)),
-            PieceInstance::new(PieceId::Start, [0, 0, 4]).with_uid(PieceUid(2)),
-        ];
-        assert!(errors(&doc).contains(&"2 Start pieces: a run begins in one place.".to_string()));
+    fn a_second_start_is_allowed_and_the_last_placed_one_wins() {
+        // Two complete lines, built as two chains and pushed into one document:
+        // the second is a variant of the first placed well away from it, which
+        // is what a second Start is for.
+        let mut first = ChainBuilder::new("Line one");
+        first.step(PieceId::Start, PieceParams::default().length(2));
+        first.step(PieceId::Straight, PieceParams::default().length(2));
+        first.step(PieceId::Finish, PieceParams::default().length(2));
+        let mut second = ChainBuilder::new("Line two");
+        second.step(PieceId::Start, PieceParams::default().length(2));
+        second.step(PieceId::Straight, PieceParams::default().length(2));
+        second.step(PieceId::Finish, PieceParams::default().length(2));
+
+        let mut doc = first.build();
+        for mut piece in second.build().pieces {
+            piece.cell = [
+                piece.cell[0].saturating_add(200),
+                piece.cell[1],
+                piece.cell[2].saturating_add(200),
+            ];
+            // Dropped so `normalize_uids` hands the second line fresh identities
+            // above the first line's, which is what "last placed" means here.
+            piece.uid = PieceUid(0);
+            doc.pieces.push(piece);
+        }
+        doc.normalize_uids();
+
+        assert!(
+            errors(&doc).is_empty(),
+            "a second start is a way of trying another line out: {:?}",
+            errors(&doc)
+        );
+        assert!(
+            warnings(&doc)
+                .iter()
+                .any(|m| m.contains("the last one placed is used")),
+            "{:?}",
+            warnings(&doc)
+        );
+
+        let last_placed = doc
+            .pieces
+            .iter()
+            .filter(|p| catalog_by_id(p.id).is_start)
+            .max_by_key(|p| p.uid)
+            .expect("a start");
+        assert_eq!(doc.active_start().map(|p| p.uid), Some(last_placed.uid));
+        // The route begins where the car is put, or the run would be timed
+        // against gates on a line it never drove.
+        assert_eq!(doc.route().first(), Some(&last_placed.uid));
+        let route = doc.route();
+        assert!(
+            route.len() >= 3,
+            "the second line is a whole line: {route:?}"
+        );
+        assert!(
+            catalog_by_id(doc.piece(*route.last().unwrap()).unwrap().id).is_finish,
+            "and it ends at its own Finish: {route:?}"
+        );
+        // Spawn is the last placed start, which is 200 cells from the first.
+        assert!(doc.spawn().0.x > 100.0, "spawn: {:?}", doc.spawn());
+    }
+
+    #[test]
+    fn a_second_finish_is_allowed_rather_than_refused() {
+        let mut b = ChainBuilder::new("Two finishes");
+        b.step(PieceId::Start, PieceParams::default().length(2));
+        b.step(PieceId::Straight, PieceParams::default().length(2));
+        b.step(PieceId::Finish, PieceParams::default().length(2));
+        let mut doc = b.build();
+        let uid = doc.next_piece_uid();
+        doc.pieces.push(
+            PieceInstance::new(PieceId::Finish, [60, 0, 60])
+                .with_uid(uid)
+                .with_params(PieceParams::default().length(2)),
+        );
+        doc.normalize_uids();
+
+        assert!(
+            errors(&doc).is_empty(),
+            "a second finish is how a circuit offers another line home: {:?}",
+            errors(&doc)
+        );
+        assert!(
+            warnings(&doc)
+                .iter()
+                .any(|m| m.contains("the first one reached")),
+            "{:?}",
+            warnings(&doc)
+        );
     }
 
     #[test]

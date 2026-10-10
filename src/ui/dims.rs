@@ -37,6 +37,10 @@ pub const SPACE_SECTION: Dp = Dp(16.0);
 /// which is as many as a track's race order runs to.
 pub const RANK_W: Dp = Dp(32.0);
 
+/// Width of the key column in the editor's controls panel. Long enough for the
+/// widest binding it lists, which is "Shift + wheel" rather than a key.
+pub const KEY_W: Dp = Dp(112.0);
+
 /// Height of a control. The material default is 40, which is under the 44 dp
 /// touch minimum, and the editor is the screen most likely to be driven by
 /// touch — that is what the narrow layout is for.
@@ -238,6 +242,39 @@ pub fn ctrl_w() -> Dp {
     at(fit::width()).ctrl_w()
 }
 
+/// Width of one palette tile, which holds two side by side: an icon with a short
+/// name under it, rather than a full-width button per piece.
+///
+/// Derived from the palette rather than fixed, so two tiles fit across it at
+/// every window the editor lays out side by side, and a phone held upright gets
+/// the wider pair its stacked palette has room for.
+pub fn tile_w() -> Dp {
+    theme::dp(((palette_content_w().0 - SPACE_ROW.0) / 2.0).max(72.0))
+}
+
+/// Height of the icon inside a palette tile.
+pub fn tile_icon_h() -> Dp {
+    theme::dp(44.0)
+}
+
+/// Size of a square tool in the editor's dock.
+pub fn tool_w() -> Dp {
+    theme::dp(44.0)
+}
+
+/// Left inset of the editor's dock, which sits over the track rather than over a
+/// panel.
+///
+/// Clear of the palette when the two are side by side, since a tool drawn on top
+/// of the palette it is not part of takes its taps from it. Stacked, the track
+/// owns the whole width and the dock takes the window's own inset.
+pub fn dock_left() -> Dp {
+    match split() {
+        Some((palette_w, _)) => palette_w + theme::dp(fit::EDGE_DP),
+        None => theme::dp(fit::chrome_inset()),
+    }
+}
+
 /// Height of the piece list before it scrolls, in dp.
 pub fn piece_list_h() -> Dp {
     at(fit::width()).piece_list_h()
@@ -358,6 +395,70 @@ mod tests {
     }
 
     #[test]
+    fn a_checkpoint_row_carries_its_gate_number_and_the_tool_that_changes_it() {
+        // A checkpoint's order is the one edit that is not about its shape, and
+        // it is the one that decides the run. The row has to offer it: without
+        // the number the player cannot tell which gate they are setting, and
+        // without the nudges they cannot set it.
+        let _turn = crate::ui::fit::tests::WINDOW
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        set_window_container_size(1280.0, 800.0);
+        set_window_size_class_default(calculate_window_size_class(1280, 800, 1.0));
+
+        let mut data = AppData::default();
+        let mut b = retrackt_format::ChainBuilder::new("gates");
+        b.step(
+            retrackt_format::PieceId::Start,
+            retrackt_format::PieceParams::default().length(2),
+        );
+        b.step(
+            retrackt_format::PieceId::Checkpoint,
+            retrackt_format::PieceParams::default(),
+        );
+        b.step(
+            retrackt_format::PieceId::Checkpoint,
+            retrackt_format::PieceParams::default(),
+        );
+        b.step(
+            retrackt_format::PieceId::Finish,
+            retrackt_format::PieceParams::default().length(2),
+        );
+        data.track = b.build();
+        let second = data.track.checkpoint_sequence().last().expect("gates").uid;
+        data.track
+            .pieces
+            .iter_mut()
+            .find(|p| p.uid == second)
+            .expect("the second gate")
+            .params = retrackt_format::PieceParams::default().order(1);
+
+        let (scene, _, _) = repose_ui::layout_and_paint(
+            &editor_ui(&data, &Rc::new(RefCell::new(Vec::new())) as &ActionQueue),
+            (1280, 800),
+            &HashMap::new(),
+            &Default::default(),
+            None,
+        );
+        let texts: Vec<&str> = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                SceneNode::Text { text, .. } => Some(text.as_ref()),
+                _ => None,
+            })
+            .collect();
+
+        // One gate reads as 1 and the other as 2, which is the order they are
+        // passed in, not the order they sit in the file.
+        assert!(texts.contains(&"gate 1"), "{texts:?}");
+        assert!(texts.contains(&"gate 2"), "{texts:?}");
+        // And both carry the nudges, one per gate.
+        assert_eq!(texts.iter().filter(|t| **t == "G-").count(), 2, "{texts:?}");
+        assert_eq!(texts.iter().filter(|t| **t == "G+").count(), 2, "{texts:?}");
+    }
+
+    #[test]
     fn the_palette_is_in_the_tree_at_every_size() {
         // The palette was built and then mounted only in the side-by-side branch, so
         // a stacked editor had no way to arm a piece and could place nothing at all.
@@ -374,13 +475,30 @@ mod tests {
                 })
                 .collect();
             assert!(texts.iter().any(|t| t == "Palette"), "{w}x{h}: no palette");
-            for piece in retrackt_format::catalog() {
-                assert!(
-                    texts.iter().any(|t| *t == piece.id.label()),
-                    "{w}x{h}: {} cannot be armed, its control is not in the tree",
-                    piece.id.label()
-                );
+            // One tile per piece of the catalogue, named by its short label.
+            fn short(label: &'static str) -> &'static str {
+                match label {
+                    "Curve Right" => "Curve R",
+                    "Curve Left" => "Curve L",
+                    "Curve 180" => "U-turn",
+                    "Ramp Up" => "Ramp up",
+                    "Ramp Down" => "Ramp dn",
+                    "Checkpoint" => "Check pt",
+                    other => other,
+                }
             }
+            let mut named = 0;
+            for piece in retrackt_format::catalog() {
+                let want = short(piece.id.label());
+                if texts.iter().any(|t| t == want) {
+                    named += 1;
+                }
+            }
+            assert_eq!(
+                named,
+                retrackt_format::catalog().len(),
+                "{w}x{h}: a piece cannot be armed, its tile is not in the tree"
+            );
         }
     }
 

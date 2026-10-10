@@ -10,8 +10,8 @@ use repose_core::{
 use repose_material::material3::{ButtonConfig, ButtonDefaults};
 use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{
-    BasicTextField, Box, Column, FlowRow, FlowRowConfig, Row, Text, TextFieldConfig,
-    TextFieldState, TextStyle, ViewExt,
+    BasicTextField, Box, Center, Column, FlowRow, FlowRowConfig, Row, Text, TextFieldConfig,
+    TextFieldState, TextStyle, ViewExt, ZStack,
 };
 use retrackt_format::{PieceUid, catalog};
 
@@ -195,6 +195,10 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
         side_buttons,
     ]);
 
+    // The tools a touch player has no key for, over the bottom-left corner of the
+    // track: the height being edited and the quarter turn to give the selection.
+    let dock = editor_dock(data, actions);
+
     // The row claims no input itself, so the empty middle falls through to the
     // viewport beneath. Each panel marks itself a blocker, which is what keeps a
     // drag that started over a button from orbiting the camera.
@@ -211,45 +215,119 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
         // anything at all.
         let side_column =
             Column(Modifier::new().gap(dims::SPACE_SECTION)).child([palette, track_column]);
-        Column(Modifier::new().fill_max_size()).child([
-            Box(Modifier::new().input_blocker().weight(1.0)).child(ScrollAreaXY(
-                Modifier::new().fill_max_size(),
-                remember_scroll_state_xy("editor.stack"),
-                side_column,
-            )),
-            Box(Modifier::new().fill_max_height_frac(dims::viewport_frac())),
+        // The dock is stacked above the strip rather than inside the column: the
+        // strip is scrollable, and a tool that scrolled away with the panels is a
+        // tool that has to be scrolled back to.
+        ZStack(Modifier::new().fill_max_size()).child([
+            Column(Modifier::new().fill_max_size()).child([
+                Box(Modifier::new().input_blocker().weight(1.0)).child(ScrollAreaXY(
+                    Modifier::new().fill_max_size(),
+                    remember_scroll_state_xy("editor.stack"),
+                    side_column,
+                )),
+                Box(Modifier::new().fill_max_height_frac(dims::viewport_frac())),
+            ]),
+            dock,
         ])
     } else {
         let (palette_w, side_w) = dims::split().expect("not stacked means a split");
-        Row(Modifier::new().fill_max_size()).child([
-            Box(Modifier::new()
-                .input_blocker()
-                .width(palette_w)
-                .fill_max_height())
-            .child(palette),
-            Box(Modifier::new().flex_grow(1.0)),
-            // `fill_max_height` on the panel box, not just on the scroller: the row
-            // does not stretch its children, so without it the scroller takes its
-            // height from the content and grows past the bottom of the window. A
-            // scroller taller than the window has nothing to scroll — the viewport
-            // is the whole of it — and it swallows the wheel for that whole height.
-            Box(Modifier::new()
-                .input_blocker()
-                .width(side_w)
-                .fill_max_height())
-            .child(ScrollAreaXY(
-                Modifier::new().fill_max_size(),
-                remember_scroll_state_xy("editor.side"),
-                track_column,
-            )),
+        ZStack(Modifier::new().fill_max_size()).child([
+            Row(Modifier::new().fill_max_size()).child([
+                Box(Modifier::new()
+                    .input_blocker()
+                    .width(palette_w)
+                    .fill_max_height())
+                .child(palette),
+                Box(Modifier::new().flex_grow(1.0)),
+                // `fill_max_height` on the panel box, not just on the scroller: the row
+                // does not stretch its children, so without it the scroller takes its
+                // height from the content and grows past the bottom of the window. A
+                // scroller taller than the window has nothing to scroll, the viewport
+                // is the whole of it, and it swallows the wheel for that whole height.
+                Box(Modifier::new()
+                    .input_blocker()
+                    .width(side_w)
+                    .fill_max_height())
+                .child(ScrollAreaXY(
+                    Modifier::new().fill_max_size(),
+                    remember_scroll_state_xy("editor.side"),
+                    track_column,
+                )),
+            ]),
+            dock,
         ])
     }
 }
 
+/// The hand tools, in the bottom-left corner over the track.
+///
+/// A touch player has no key for any of these, and they are the two things a
+/// placement is made of: how high up, and which way round. Drawn over the track
+/// because that is where the piece they are acting on is.
+fn editor_dock(data: &AppData, actions: &ActionQueue) -> View {
+    let editor = &data.editor;
+    let inset = crate::ui::fit::chrome_inset();
+    Box(Modifier::new()
+        .absolute()
+        .offset(Some(dims::dock_left()), None, None, Some(theme::dp(inset)))
+        .background(theme::surface().with_alpha_f32(0.92))
+        .border(
+            theme::dp(1.0),
+            theme::text_dim().with_alpha_f32(0.4),
+            theme::dp(12.0),
+        )
+        .clip_rounded(theme::dp(12.0))
+        // Claims the pointers over itself, so a tap aimed at a tool cannot also
+        // drop a piece under it.
+        .input_blocker())
+    .child(
+        Row(Modifier::new()
+            .gap(dims::SPACE_ROW)
+            .align_items(AlignItems::CENTER)
+            .padding(dims::SPACE_ROW))
+        .child([
+            Column(Modifier::new().gap(theme::dp(2.0))).child([
+                Text("Height")
+                    .size(theme::sp(11.0))
+                    .color(theme::text_dim())
+                    .single_line(),
+                Text(format!("{}", editor.cursor[1]))
+                    .size(theme::sp(18.0))
+                    .color(theme::text())
+                    .font_family(theme::FONT_DISPLAY)
+                    .single_line(),
+            ]),
+            tool_tile("-", actions, UiAct::MoveCursor([0, -1, 0])),
+            tool_tile("+", actions, UiAct::MoveCursor([0, 1, 0])),
+            tool_tile("Rotate", actions, UiAct::RotateSelection(1)),
+        ]),
+    )
+}
+
+/// One square tool in the dock: a keyboard shortcut made reachable by touch.
+fn tool_tile(label: &str, actions: &ActionQueue, act: UiAct) -> View {
+    outlined_at(
+        label,
+        dims::tool_w(),
+        ButtonConfig {
+            height: dims::tool_w(),
+            shape_radius: dims::CTRL_R,
+            content_padding: Some(ButtonDefaults::TEXT_CONTENT_PADDING),
+            ..ButtonConfig::default()
+        },
+        pusher(actions, act),
+    )
+}
+
 /// Palette rows. Clicking *arms* a piece rather than placing it, so the preview
-/// can be inspected first; placement is its own button.
+/// can be inspected first; placement is its own gesture.
+///
+/// Tiles of a drawing and a short name rather than a button per piece: fifteen
+/// full-width buttons is a wall of text to read through, and the shape of a piece
+/// is the thing that says what it is. Arming is all a tile ever does, so the tile
+/// carries no more than that.
 fn palette_list(armed: retrackt_format::PieceId, actions: &ActionQueue, stacked: bool) -> View {
-    let mut children: Vec<View> = Vec::new();
+    let mut tiles: Vec<View> = Vec::new();
     let mut groups: Vec<&str> = Vec::new();
     for def in catalog() {
         let group = def.id.group();
@@ -257,36 +335,34 @@ fn palette_list(armed: retrackt_format::PieceId, actions: &ActionQueue, stacked:
             continue;
         }
         groups.push(group);
-        children.push(dim_text(group));
-        for piece in catalog().iter().filter(|d| d.id.group() == group) {
-            let on_click = pusher(actions, UiAct::ArmPiece(piece.id));
-            // One per line, as wide as the palette: a palette row is a label with
-            // one thing to do with it, so a control narrow enough to pair up would
-            // only leave the palette half empty.
-            children.push(if piece.id == armed {
-                outlined_at(
-                    piece.id.label(),
-                    dims::palette_content_w(),
-                    ButtonConfig {
-                        container_color: Some(theme::accent()),
-                        content_color: Some(theme::background()),
-                        ..ctrl_config()
-                    },
-                    on_click,
-                )
-            } else {
-                outlined_at(
-                    piece.id.label(),
-                    dims::palette_content_w(),
-                    ctrl_config(),
-                    on_click,
-                )
-            });
-        }
+        tiles.push(group_header(group));
+        let row = FlowRow(
+            Modifier::new().gap(dims::SPACE_ROW).fill_max_width(),
+            FlowRowConfig {
+                balanced: true,
+                ..FlowRowConfig::default()
+            },
+        )
+        .child(
+            catalog()
+                .iter()
+                .filter(|d| d.id.group() == group)
+                .map(|piece| {
+                    piece_tile(
+                        piece.id,
+                        piece.id.label(),
+                        piece.id == armed,
+                        actions,
+                        UiAct::ArmPiece(piece.id),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        tiles.push(row);
     }
 
     if stacked {
-        // Stacked, the palette has the full width of the column, so the pieces
+        // Stacked, the palette has the full width of the column, so the groups
         // flow across it instead of down a narrow column that would put the last
         // group of them below the fold.
         return FlowRow(
@@ -296,14 +372,98 @@ fn palette_list(armed: retrackt_format::PieceId, actions: &ActionQueue, stacked:
                 ..FlowRowConfig::default()
             },
         )
-        .child(children);
+        .child(tiles);
     }
 
     // No scroller: the palette panel is already inside the column's scroller in the
     // stacked layout, and in the side-by-side layout it is a sibling of that
     // scroller rather than inside it. Either way a third scroller under the same
     // pointer only takes the wheel away from the one that matters.
-    Column(Modifier::new().gap(dims::SPACE_ROW)).child(children)
+    Column(Modifier::new().gap(dims::SPACE_ROW)).child(tiles)
+}
+
+/// One palette tile: the piece's footprint, its short name, and the accent fill
+/// while it is the armed piece.
+fn piece_tile(
+    id: retrackt_format::PieceId,
+    label: &str,
+    armed: bool,
+    actions: &ActionQueue,
+    act: UiAct,
+) -> View {
+    let icon = crate::ui::thumb::piece_icon(
+        id,
+        &retrackt_format::PieceParams::default(),
+        retrackt_format::DEFAULT_CELL_SIZE,
+        dims::tile_icon_h().0,
+    )
+    .unwrap_or_else(|| {
+        Box(Modifier::new()
+            .width(dims::tile_icon_h())
+            .height(dims::tile_icon_h()))
+    });
+    let mut face = Modifier::new()
+        .width(dims::tile_w())
+        .padding(theme::dp(4.0))
+        .background(theme::surface())
+        .border(
+            theme::dp(1.0),
+            if armed {
+                theme::accent()
+            } else {
+                theme::text_dim().with_alpha_f32(0.4)
+            },
+            theme::dp(10.0),
+        )
+        .clip_rounded(theme::dp(10.0))
+        .on_click(pusher(actions, act));
+    if armed {
+        face = face.background(theme::accent().with_alpha_f32(0.18));
+    }
+    Box(face).child(
+        Column(
+            Modifier::new()
+                .gap(theme::dp(2.0))
+                .align_items(AlignItems::CENTER),
+        )
+        .child([
+            Center(Modifier::new()).child(icon),
+            Text(short_name(label))
+                .size(theme::sp(11.0))
+                .color(theme::text_dim())
+                .single_line()
+                .overflow_ellipsize(),
+        ]),
+    )
+}
+
+/// The label a tile carries: the catalogue name trimmed to what fits under an
+/// icon. "Curve Right 90" is three words for a corner.
+fn short_name(label: &str) -> &str {
+    match label {
+        "Curve Right" => "Curve R",
+        "Curve Left" => "Curve L",
+        "Curve 180" => "U-turn",
+        "Ramp Up" => "Ramp up",
+        "Ramp Down" => "Ramp dn",
+        "Checkpoint" => "Check pt",
+        "JumpGap" | "Jump" => "Jump",
+        other => other,
+    }
+}
+
+/// A palette group heading, with the rule that separates it from the tiles above.
+fn group_header(group: &str) -> View {
+    Column(Modifier::new().gap(theme::dp(4.0))).child([
+        Text(group)
+            .size(theme::sp(13.0))
+            .color(theme::accent())
+            .single_line(),
+        Box(Modifier::new()
+            .height(theme::dp(1.0))
+            .fill_max_width()
+            .background(theme::text_dim().with_alpha_f32(0.3))),
+    ])
 }
 
 /// One row per placed piece: its race position, identity and cell, then selection
@@ -322,6 +482,16 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
             .map(|i| i + 1)
             .unwrap_or(0)
     };
+    // The gate number of each checkpoint, from one walk of the sequence rather
+    // than one per row: the sequence is derived from the whole track, so asking
+    // for it per piece would make the list quadratic in the number of pieces.
+    let gates: std::collections::HashMap<PieceUid, usize> = data
+        .track
+        .checkpoint_sequence()
+        .iter()
+        .enumerate()
+        .map(|(nth, piece)| (piece.uid, nth + 1))
+        .collect();
 
     data.track
         .pieces
@@ -357,6 +527,35 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
             // third. As one row the identity and four controls had to share 440 dp,
             // which is 464 dp of content at the floor — so the row wrapped the same
             // ragged way at every window size instead of responding to any of them.
+            let params = [
+                dim_text(&format!("len {len}")),
+                nudge("L-", ParamKind::Length, -1),
+                nudge("L+", ParamKind::Length, 1),
+            ]
+            .into_iter()
+            .chain(radius)
+            .chain([
+                dim_text(&format!("bank {bank}°")),
+                nudge("B-", ParamKind::Bank, -5),
+                nudge("B+", ParamKind::Bank, 5),
+            ]);
+            // A checkpoint carries one more value, and it is the one that decides
+            // the run: the order the gates come in. Shown on the piece that owns it
+            // rather than in a panel of its own, because it is a property of that
+            // one gate and of nothing else on the track.
+            let params: Vec<View> = if retrackt_format::piece::catalog_by_id(piece.id).is_checkpoint
+            {
+                params
+                    .chain([
+                        dim_text(&format!("gate {}", gates.get(&uid).copied().unwrap_or(0))),
+                        nudge("G-", ParamKind::Order, -1),
+                        nudge("G+", ParamKind::Order, 1),
+                    ])
+                    .collect()
+            } else {
+                params.collect()
+            };
+
             Column(Modifier::new().gap(dims::SPACE_LIST)).child([
                 Row(Modifier::new()
                     .gap(dims::SPACE_ROW)
@@ -396,21 +595,7 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
                     ctrl("Rotate", pusher(actions, UiAct::RotatePiece(uid))),
                     ctrl_danger("Remove", pusher(actions, UiAct::DeletePiece(uid))),
                 ]),
-                ctrl_row(
-                    [
-                        dim_text(&format!("len {len}")),
-                        nudge("L-", ParamKind::Length, -1),
-                        nudge("L+", ParamKind::Length, 1),
-                    ]
-                    .into_iter()
-                    .chain(radius)
-                    .chain([
-                        dim_text(&format!("bank {bank}°")),
-                        nudge("B-", ParamKind::Bank, -5),
-                        nudge("B+", ParamKind::Bank, 5),
-                    ])
-                    .collect::<Vec<_>>(),
-                ),
+                ctrl_row(params),
             ])
         })
         .collect()
@@ -424,6 +609,13 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
         "{count} pieces · {} selected",
         editor.selection.len()
     )));
+    // What the pointer is over, which is what [G] takes. Shown rather than left
+    // silent: a key that selects something the player cannot see is a coin toss.
+    let hover = match editor.hover.and_then(|uid| data.track.piece(uid)) {
+        Some(piece) => piece.id.label().to_string(),
+        None => "nothing".into(),
+    };
+    children.push(dim_text(&format!("Pointer over: {hover}")));
     children.push(dim_text(if crate::ui::library::persisted(&data.track) {
         "Saved to library"
     } else {
@@ -494,6 +686,11 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
         if editor.clipboard.len() == 1 { "" } else { "s" }
     )));
 
+    // The editor's own keys, so they can be found on the screen they work on.
+    // The camera keys in particular are meaningless without this: three of them
+    // sit under the left hand where the race puts the throttle.
+    children.push(controls_panel());
+
     let mut loaders: Vec<View> = Vec::new();
     for track in retrackt_format::builtin_tracks() {
         let label = format!("Load {}", track.name);
@@ -509,6 +706,46 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
     children.push(ctrl_row(row));
 
     children
+}
+
+/// The editor's own controls, on the screen they belong to.
+///
+/// Written out rather than implied, because the editor's keys are not the race's:
+/// the arrows and WASD move the camera here and the car there, and a player who
+/// crosses between the two has nothing but this to tell them so.
+fn controls_panel() -> View {
+    let lines: [(&str, &str); 9] = [
+        ("WASD / arrows", "move the camera"),
+        ("Q / E", "turn the camera"),
+        ("Wheel", "zoom"),
+        ("Shift + wheel", "edit height"),
+        ("Right drag", "move · middle or Ctrl + right: turn"),
+        ("Click / tap", "place · on a piece, select it"),
+        ("G", "select under the pointer"),
+        ("R / Space", "rotate the selection"),
+        ("X / Del", "delete the selection"),
+    ];
+    let rows: Vec<View> = lines
+        .iter()
+        .map(|(keys, what)| {
+            Row(Modifier::new().gap(dims::SPACE_ROW).fill_max_width()).child([
+                Box(Modifier::new().width(dims::KEY_W)).child(
+                    Text(*keys)
+                        .size(theme::sp(13.0))
+                        .color(theme::accent())
+                        .single_line(),
+                ),
+                Box(Modifier::new().flex_grow(1.0)).child(
+                    Text(*what)
+                        .size(theme::sp(13.0))
+                        .color(theme::text_dim())
+                        .single_line()
+                        .overflow_ellipsize(),
+                ),
+            ])
+        })
+        .collect();
+    list_panel_w("Controls", dims::panel_w(), rows)
 }
 
 /// Cursor cell, its six directions, and whether the next placement connects.

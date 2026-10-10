@@ -1,6 +1,6 @@
 use glam::Vec3;
 use repame_view3d::MeshGroup;
-use retrackt_format::geometry::{Centerline, RawMesh};
+use retrackt_format::geometry::{Centerline, RawMesh, reserve_extent};
 use retrackt_format::piece::catalog_by_id;
 use retrackt_format::{PieceId, PieceInstance, TrackDocument, piece_shape};
 
@@ -77,39 +77,16 @@ pub(super) fn cursor_group(doc: &TrackDocument, cell: [i16; 3]) -> MeshGroup {
     // Thin enough to read as an outline, thick enough not to disappear at the
     // distances the editor camera sits at.
     let t = (doc.cell_size * 0.06).max(0.12);
-    let lift = doc.cell_size * 0.01;
     let color = lin(CURSOR_TINT);
     let mut mesh = RawMesh::default();
-
-    for (u, v) in [
-        (Vec3::X, Vec3::Z),
-        (Vec3::NEG_X, Vec3::Z),
-        (Vec3::X, Vec3::NEG_Z),
-        (Vec3::NEG_X, Vec3::NEG_Z),
-    ] {
-        push_lit(
-            &mut mesh,
-            [
-                centre + u * half - v * half + Vec3::Y * lift,
-                centre + u * half + v * half + Vec3::Y * lift,
-                centre + u * (half - t) + v * half + Vec3::Y * lift,
-                centre + u * (half - t) - v * half + Vec3::Y * lift,
-            ],
-            Vec3::Y,
-            color,
-        );
-        push_lit(
-            &mut mesh,
-            [
-                centre + u * half - v * half + Vec3::Y * lift,
-                centre + u * half + v * half + Vec3::Y * lift,
-                centre + u * half + v * half - Vec3::Y * lift,
-                centre + u * half - v * half - Vec3::Y * lift,
-            ],
-            u,
-            color,
-        );
-    }
+    push_ground_outline(
+        &mut mesh,
+        (centre.x - half, centre.z - half),
+        (centre.x + half, centre.z + half),
+        centre.y,
+        t,
+        color,
+    );
 
     let mut group = raw_mesh_to_group(&mesh, true);
     group.normals.clear();
@@ -119,6 +96,91 @@ pub(super) fn cursor_group(doc: &TrackDocument, cell: [i16; 3]) -> MeshGroup {
     // would put an outline on top of scenery the piece is behind.
     group.depth_test = true;
     group
+}
+
+/// Outline around one placed piece, for what the pointer is over and what is
+/// selected.
+///
+/// Around the piece's reservation box rather than its mesh, so the shape is a
+/// rectangle the eye can read at a glance and the cost is four edges whatever
+/// the piece is. Without this the piece under the pointer is invisible, and
+/// taking it with a key is a guess.
+pub(super) fn outline_group(
+    doc: &TrackDocument,
+    inst: &PieceInstance,
+    tint: u32,
+    alpha: f32,
+) -> MeshGroup {
+    let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
+    let (lo, hi) = reserve_extent(&shape, doc.cell_size);
+    let world = inst.world_matrix(doc.cell_size);
+    let mut lo_corner = Vec3::splat(f32::MAX);
+    let mut hi_corner = Vec3::splat(f32::MIN);
+    for x in [lo.x, hi.x] {
+        for y in [lo.y, hi.y] {
+            for z in [lo.z, hi.z] {
+                let corner = world.transform_point3(Vec3::new(x, y, z));
+                lo_corner = lo_corner.min(corner);
+                hi_corner = hi_corner.max(corner);
+            }
+        }
+    }
+    let t = (doc.cell_size * 0.08).max(0.14);
+    let mut mesh = RawMesh::default();
+    push_ground_outline(
+        &mut mesh,
+        (lo_corner.x, lo_corner.z),
+        (hi_corner.x, hi_corner.z),
+        lo_corner.y,
+        t,
+        lin(tint),
+    );
+    let mut group = raw_mesh_to_group(&mesh, true);
+    group.normals.clear();
+    group.transparent = true;
+    group.alpha = alpha;
+    group.depth_test = true;
+    group
+}
+
+/// A flat wireframe rectangle on the ground plane, as a band of two quads per
+/// edge: one facing up, one facing out.
+///
+/// Drawn as quads rather than lines because the scene has no line primitive, and
+/// at a thickness in world units rather than in pixels, so an outline stays
+/// readable at the range the editor camera works at.
+fn push_ground_outline(
+    m: &mut RawMesh,
+    lo: (f32, f32),
+    hi: (f32, f32),
+    y: f32,
+    t: f32,
+    color: [f32; 3],
+) {
+    let at = |p: (f32, f32), d: f32| Vec3::new(p.0, y + d, p.1);
+    let corners = [(lo.0, lo.1), (hi.0, lo.1), (hi.0, hi.1), (lo.0, hi.1)];
+    for edge in 0..4 {
+        let (a, b) = (corners[edge], corners[(edge + 1) % 4]);
+        let along = Vec3::new(b.0 - a.0, 0.0, b.1 - a.1);
+        if along.length_squared() < 1e-12 {
+            continue;
+        }
+        let inward = Vec3::new(along.z, 0.0, -along.x).normalize();
+        // The band runs along the edge, inset by the thickness, so it lies inside
+        // the rectangle rather than straddling it.
+        push_lit(
+            m,
+            [
+                at(a, t),
+                at(b, t),
+                at((b.0 - inward.x * t, b.1 - inward.z * t), t),
+                at((a.0 - inward.x * t, a.1 - inward.z * t), t),
+            ],
+            Vec3::Y,
+            color,
+        );
+        push_lit(m, [at(a, t), at(a, -t), at(b, -t), at(b, t)], inward, color);
+    }
 }
 
 /// Replaces the stripe mask (white/black per quad) baked into decor colours

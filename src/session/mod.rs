@@ -4,14 +4,19 @@ use glam::Vec3;
 
 use crate::sim::world::{Gate, TrackWorld};
 
-/// Live race timing for a single time-trial run: `world.checkpoints` plus
-/// `world.finish` when present.
+/// Live race timing for a single time-trial run: `world.checkpoints` in the
+/// order the document gives them, and the run's finish lines once the last of
+/// them is behind the car.
 ///
 /// The clock counts ticks rather than seconds. One [`RaceSession::tick`] per
 /// simulated tick means the recorded time is exactly the number of steps the car
 /// ran, so it cannot drift from the tape the same run recorded.
 pub struct RaceSession {
-    gates: Vec<Gate>,
+    /// Checkpoint gates, in the order they must be passed.
+    checkpoints: Vec<Gate>,
+    /// Every finish line on the track. Any one of them ends the run, but only
+    /// once `next` is past the last checkpoint.
+    finishes: Vec<Gate>,
     next: usize,
     ticks: u32,
     splits: Vec<u32>,
@@ -23,7 +28,8 @@ pub struct RaceSession {
 impl RaceSession {
     pub fn new() -> Self {
         Self {
-            gates: Vec::new(),
+            checkpoints: Vec::new(),
+            finishes: Vec::new(),
             next: 0,
             ticks: 0,
             splits: Vec::new(),
@@ -33,10 +39,8 @@ impl RaceSession {
     }
 
     pub fn start(&mut self, world: &TrackWorld) {
-        self.gates = world.checkpoints.clone();
-        if let Some(finish) = world.finish {
-            self.gates.push(finish);
-        }
+        self.checkpoints = world.checkpoints.clone();
+        self.finishes = world.finishes.clone();
         self.next = 0;
         self.ticks = 0;
         self.splits.clear();
@@ -75,7 +79,7 @@ impl RaceSession {
     /// returned a little way along the facing instead — inside the gate, or driving
     /// out of it, and the session would count the gate a second time.
     pub fn recovery(&self) -> Option<(Vec3, f32)> {
-        let gate = self.gates.get(self.next.checked_sub(1)?)?;
+        let gate = self.checkpoints.get(self.next.checked_sub(1)?)?;
         let f = gate.facing;
         let along = gate.half.x.max(gate.half.z) + 1.0;
         // Heading is measured from +Z, the same convention `Car::at_spawn` takes.
@@ -94,18 +98,29 @@ impl RaceSession {
     }
 
     /// Test the gates against one tick of movement, from `from` to `to`.
+    ///
+    /// Checkpoints are strictly ordered: the car is at gate `next`, and a gate
+    /// further along the road counts for nothing until the one before it has
+    /// been crossed. The finish is a set rather than a single gate, and the run
+    /// ends at the first of them reached with every checkpoint behind it. A
+    /// car still owing a checkpoint that crosses the finish line has taken the
+    /// short way round, not finished.
     fn tick_from(&mut self, from: Vec3, to: Vec3) {
-        while self.next < self.gates.len() {
-            let gate = self.gates[self.next];
-            if !gate.crossed(from, to) {
-                break;
+        while self.next < self.checkpoints.len() {
+            if !self.checkpoints[self.next].crossed(from, to) {
+                return;
             }
-            if !gate.is_finish {
-                self.splits.push(self.ticks);
-            }
+            self.splits.push(self.ticks);
             self.next += 1;
         }
-        if !self.gates.is_empty() && self.next >= self.gates.len() {
+        if self.finishes.iter().any(|gate| gate.crossed(from, to)) {
+            self.finished = true;
+            return;
+        }
+        // A track with no finish line at all still has to end somewhere, and the
+        // validator refuses it as a race: the run closes on the last checkpoint
+        // that was passed rather than running on forever.
+        if self.finishes.is_empty() && self.next >= self.checkpoints.len() && self.next > 0 {
             self.finished = true;
         }
     }
@@ -124,15 +139,21 @@ impl RaceSession {
         &self.splits
     }
 
-    /// Gates crossed so far, in `0..checkpoint_count`.
+    /// Gates crossed so far, in `0..=checkpoint_count`.
+    ///
+    /// The finish line counts once the run has ended at one, so a finished run
+    /// reads as every gate crossed rather than one short of it for the rest of
+    /// the results screen. A track with no finish line has no such gate to
+    /// count, so its last checkpoint is the last gate.
     pub fn checkpoint(&self) -> usize {
-        self.next
+        self.next + usize::from(self.finished && !self.finishes.is_empty())
     }
 
-    /// Total gates in the run: every checkpoint plus the finish gate when the
-    /// track has one, checkpoints alone when it does not.
+    /// Total gates in the run: every checkpoint, plus one finish however many
+    /// finish lines the track has. A car ends the run at the first of them, so
+    /// there is only ever one left to cross.
     pub fn checkpoint_count(&self) -> usize {
-        self.gates.len()
+        self.checkpoints.len() + usize::from(!self.finishes.is_empty())
     }
 
     pub fn result(
@@ -177,7 +198,7 @@ mod tests {
         let mut w = TrackWorld::default();
         w.spawn = Vec3::new(-5.0, 0.0, 0.0);
         w.checkpoints = vec![gate(10.0, false), gate(20.0, false)];
-        w.finish = Some(gate(30.0, true));
+        w.finishes = vec![gate(30.0, true)];
         w
     }
 
@@ -194,18 +215,13 @@ mod tests {
     /// own facing. Bounded so a track whose gates cannot be reached this way fails
     /// the test rather than hanging it.
     fn drive_through(s: &mut RaceSession, w: &TrackWorld) {
-        for _ in 0..4 * (w.checkpoints.len() + usize::from(w.finish.is_some())) + 4 {
+        for _ in 0..4 * (w.checkpoints.len() + usize::from(!w.finishes.is_empty())) + 4 {
             if s.finished() {
                 return;
             }
-            let i = s.checkpoint();
-            let gate = if i < w.checkpoints.len() {
-                &w.checkpoints[i]
-            } else {
-                w.finish
-                    .as_ref()
-                    .expect("a track being walked has a finish")
-            };
+            let gate = w
+                .gate_at(s.checkpoint())
+                .expect("a track being walked has a gate left");
             // Two moves per gate, one just short of the box and one past it. The
             // first is a teleport rather than a crossing, so it cannot count the gate
             // it is approaching from behind.
@@ -352,15 +368,18 @@ mod tests {
 
         drive_through(&mut s, &w);
         assert!(s.finished());
-        let (pos, _) = s.recovery().expect("the finish gate is still a place");
-        assert!(pos.x > 32.0, "past the finish box, got {pos:?}");
+        // Recovery names the last checkpoint, not the line that ended the run:
+        // a finished run has nowhere to continue from, and the checkpoint is the
+        // last place the car was on the road.
+        let (pos, _) = s.recovery().expect("a checkpoint is still a place");
+        assert!(pos.x > 22.0, "past the last checkpoint, got {pos:?}");
     }
 
     #[test]
     fn several_gates_in_one_tick_are_all_processed_in_order() {
         let mut w = TrackWorld::default();
         w.checkpoints = vec![gate(0.0, false), gate(1.0, false), gate(2.0, false)];
-        w.finish = Some(gate(3.0, true));
+        w.finishes = vec![gate(3.0, true)];
 
         let mut s = RaceSession::new();
         s.start(&w);
@@ -429,7 +448,7 @@ mod tests {
         let mut w = TrackWorld::default();
         w.spawn = Vec3::new(-5.0, 0.0, 0.0);
         w.checkpoints = vec![gate(10.0, false), gate(20.0, false)];
-        w.finish = None;
+        w.finishes = Vec::new();
 
         let mut s = RaceSession::new();
         s.start(&w);
@@ -440,6 +459,57 @@ mod tests {
         assert!(s.finished());
         assert_eq!(s.splits(), &[1, 2]);
         assert_eq!(s.checkpoint(), s.checkpoint_count());
+    }
+
+    #[test]
+    fn several_finish_lines_all_end_the_run() {
+        // A circuit that splits near the line has two ways home. The run ends at
+        // either of them, and the one that is not reached costs nothing.
+        let mut w = spaced_world();
+        let second = gate(34.0, true);
+        w.finishes.push(second);
+
+        let mut s = RaceSession::new();
+        s.start(&w);
+        assert_eq!(
+            s.checkpoint_count(),
+            3,
+            "three gates, however many lines home"
+        );
+        drive_through(&mut s, &w);
+        assert!(s.finished(), "the first line reached ends the run");
+        assert_eq!(s.splits().len(), 2, "only checkpoints split");
+
+        // Reaching the other one instead is the same run.
+        let mut other = RaceSession::new();
+        other.start(&w);
+        for x in [10.0, 20.0] {
+            other.teleport(Vec3::new(x - 3.0, 0.0, 0.0));
+            other.tick(Vec3::new(x, 0.0, 0.0));
+        }
+        assert!(!other.finished());
+        other.teleport(Vec3::new(31.0, 0.0, 0.0));
+        other.tick(second.centre + Vec3::X * 1.5);
+        assert!(other.finished(), "the second line ends it too");
+    }
+
+    #[test]
+    fn the_finish_line_counts_for_nothing_before_the_last_checkpoint() {
+        // Driving straight over the line with a checkpoint still owed is taking
+        // the short way round, not finishing: the run keeps going until the
+        // gates before it have been crossed.
+        let w = spaced_world();
+        let mut s = RaceSession::new();
+        s.start(&w);
+        // Dropped just short of the line with both checkpoints still owed, which
+        // is what a shortcut round the outside of the circuit looks like.
+        s.teleport(Vec3::new(25.0, 0.0, 0.0));
+        s.tick(w.finishes[0].centre + Vec3::X * 1.5);
+        assert!(!s.finished(), "the line is not active yet");
+        assert_eq!(s.checkpoint(), 0, "no checkpoint was crossed either");
+
+        drive_through(&mut s, &w);
+        assert!(s.finished());
     }
 
     #[test]

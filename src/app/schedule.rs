@@ -445,12 +445,8 @@ mod chain_tests {
             let next = {
                 let s = sim.world.resource::<SessionRes>();
                 let w = sim.world.resource::<TrackRes>();
-                let n = s.0.checkpoint();
-                if n < w.0.checkpoints.len() {
-                    w.0.checkpoints[n]
-                } else {
-                    w.0.finish.expect("demo has a finish")
-                }
+                w.0.gate_at(s.0.checkpoint())
+                    .expect("the demo track has a gate at every step")
             };
             // The session's reference point goes behind the gate and the car past it, so
             // the one tick that counts is the one driving through the box along the

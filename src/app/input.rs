@@ -126,22 +126,27 @@ impl TouchStick {
     }
 }
 
-/// Cursor movement and one-shot editor commands, resolved from held keys.
+/// Cursor height and one-shot editor commands, resolved from held keys.
 ///
 /// Separate from the vehicle map because the editor reuses the arrow and WASD
-/// keys: while the editor is up the car is parked, and every key here moves the
-/// cursor or edits a piece instead.
+/// keys: while the editor is up the car is parked, and those keys move the
+/// camera instead. The cursor itself follows the mouse; only its height is a
+/// key press, because height is the one axis a ground-plane click knows nothing
+/// about.
 #[derive(Default)]
 struct EditorKeys {
-    /// Cell step to apply this frame, summed over the axes held. Screen up is
-    /// -Z and right is +X, so the axis and its sign live in one table and the two
-    /// cannot disagree.
-    step: [i16; 3],
-    /// How long each axis has been held, for the repeat delay.
-    held: [u32; 3],
-    /// Axes whose keys were already down when the editor opened or closed, and so
-    /// are not a press. Cleared per axis by a frame that releases it.
-    muted: [bool; 3],
+    /// Camera movement, as `(forward, right)` in -1..=1, for a key that is held
+    /// rather than tapped.
+    move_cam: [f32; 2],
+    /// Camera turn, -1 left to +1 right, likewise continuous.
+    turn_cam: f32,
+    /// Cells of height to move this frame, after the repeat delay.
+    step_y: i16,
+    /// How long the height keys have been held, for the repeat delay.
+    held_y: u32,
+    /// Whether the height key was already down when the editor opened, and so
+    /// is not a press. Cleared by a frame that releases it.
+    muted_y: bool,
     /// One-shot commands, all edge-latched. Level-triggered, a held Ctrl+C would
     /// copy once per frame and flood the notice bar.
     pressed: EditorCommand,
@@ -163,6 +168,11 @@ pub struct EditorCommand {
     pub select_all: bool,
     pub select_route: bool,
     pub select_none: bool,
+    /// Take the piece under the pointer.
+    pub select_hovered: bool,
+    /// Raise or lower the edited height by one cell.
+    pub height_up: bool,
+    pub height_down: bool,
 }
 
 impl EditorCommand {
@@ -171,39 +181,39 @@ impl EditorCommand {
     }
 }
 
-/// Frames a direction must be held before it repeats, and then how often.
+/// Frames a key must be held before the height repeats, and then how often.
 ///
-/// Without a repeat, crossing a long track means one key press per cell; without
+/// Without a repeat, climbing a long ramp is one key press per half cell; without
 /// a delay the first repeat lands while the key is still going down.
 const REPEAT_DELAY_FRAMES: u32 = 18;
 const REPEAT_PERIOD_FRAMES: u32 = 4;
 
-/// Axis and direction of each cursor key, as `(key, axis, step)`.
-const CURSOR_KEYS: [(PhysicalKey, usize, i16); 8] = [
-    (PhysicalKey::ArrowUp, 2, -1),
-    (PhysicalKey::KeyW, 2, -1),
-    (PhysicalKey::ArrowRight, 0, 1),
-    (PhysicalKey::KeyD, 0, 1),
-    (PhysicalKey::ArrowDown, 2, 1),
-    (PhysicalKey::KeyS, 2, 1),
-    (PhysicalKey::ArrowLeft, 0, -1),
-    (PhysicalKey::KeyA, 0, -1),
+/// Camera movement keys, as `(key, axis, direction)`. Axis 0 runs forwards and
+/// back, axis 1 left and right, both across the ground plane rather than the
+/// screen: dragging the view round with the mouse must not silently turn the
+/// keyboard's notion of "forwards" with it.
+///
+/// Arrows as well as WASD, because the arrows are where a hand sits when it is
+/// steering with the mouse.
+const CAMERA_KEYS: [(PhysicalKey, usize, f32); 8] = [
+    (PhysicalKey::ArrowUp, 0, 1.0),
+    (PhysicalKey::KeyW, 0, 1.0),
+    (PhysicalKey::ArrowDown, 0, -1.0),
+    (PhysicalKey::KeyS, 0, -1.0),
+    (PhysicalKey::ArrowRight, 1, 1.0),
+    (PhysicalKey::KeyD, 1, 1.0),
+    (PhysicalKey::ArrowLeft, 1, -1.0),
+    (PhysicalKey::KeyA, 1, -1.0),
 ];
 
-/// The direction an axis should step on this frame: every held key of that axis,
-/// summed, so opposite directions cancel rather than doubling up.
-///
-/// The pair of keys sharing an axis is why this cannot be done per key. Counting
-/// them separately cleared the shared counter on whichever key happened to be up,
-/// so the hold never lasted past one frame and hold-to-repeat became an
-/// unconditional slide.
-fn axis_step(axis: usize, held: &impl Fn(PhysicalKey) -> bool) -> i16 {
-    CURSOR_KEYS
-        .iter()
-        .filter(|(key, a, _)| *a == axis && held(*key))
-        .map(|(_, _, direction)| *direction)
-        .sum()
-}
+/// Camera turn keys. Left is negative.
+const CAMERA_TURN_KEYS: [(PhysicalKey, f32); 2] =
+    [(PhysicalKey::KeyQ, -1.0), (PhysicalKey::KeyE, 1.0)];
+
+/// The edited height, one cell per press. Up is the key under the left index
+/// finger, down the one under the left pinky, so a hand on the movement keys
+/// reaches both without leaving it.
+const HEIGHT_KEYS: [(PhysicalKey, i16); 2] = [(PhysicalKey::KeyF, 1), (PhysicalKey::KeyZ, -1)];
 
 impl EditorKeys {
     /// Resolve the held keys into this frame's commands.
@@ -211,44 +221,42 @@ impl EditorKeys {
         let held = |key: PhysicalKey| sched.held_keys.contains(&key);
         let ctrl = held(PhysicalKey::ControlLeft) || held(PhysicalKey::ControlRight);
         let shift = held(PhysicalKey::ShiftLeft) || held(PhysicalKey::ShiftRight);
+        // A modified key is not a movement key. Ctrl+D duplicates and Shift+A
+        // selects the route; neither should also slide the camera, or holding a
+        // modifier would quietly move the view out from under the edit.
+        let plain = |key: PhysicalKey| held(key) && !ctrl && !shift;
 
-        self.step = [0; 3];
-        for axis in 0..self.step.len() {
-            // A modified key is not a cursor key. Ctrl+D duplicates and Shift+A
-            // selects the route; neither should also slide the cursor, or holding
-            // a modifier would quietly move the piece about to be placed.
-            let plain = |key: PhysicalKey| held(key) && !ctrl && !shift;
-            let direction = axis_step(axis, &plain);
-            if direction == 0 {
-                // Nothing held, or the pair cancels. Both mean no step, and both
-                // clear the counter, so a released-then-pressed key waits out the
-                // delay again instead of resuming mid-repeat.
-                self.held[axis] = 0;
-                self.muted[axis] = false;
-                continue;
-            }
-            if self.muted[axis] {
-                // Already down when the editor opened or closed. Not a press, so it
-                // neither steps nor starts the delay: releasing the key is what arms
-                // it, and the frame after that behaves like any other press.
-                continue;
-            }
-            self.held[axis] += 1;
-            let n = self.held[axis];
-            // `n` counts the press frame as 1, so a delay of `DELAY` frames is
-            // `DELAY` quiet frames *after* it and the first repeat is the frame
-            // after those.
-            let repeats = n > REPEAT_DELAY_FRAMES
-                && (n - REPEAT_DELAY_FRAMES - 1) % REPEAT_PERIOD_FRAMES == 0;
-            if n == 1 || repeats {
-                self.step[axis] += direction;
-            }
+        self.move_cam = [0.0; 2];
+        for (axis, slot) in self.move_cam.iter_mut().enumerate() {
+            // Summed rather than picked, so opposite directions cancel instead of
+            // one of them silently winning.
+            let direction: f32 = CAMERA_KEYS
+                .iter()
+                .filter(|(key, a, _)| *a == axis && plain(*key))
+                .map(|(_, _, direction)| *direction)
+                .sum();
+            *slot = direction.clamp(-1.0, 1.0);
         }
+        self.turn_cam = CAMERA_TURN_KEYS
+            .iter()
+            .filter(|(key, _)| plain(*key))
+            .map(|(_, direction)| *direction)
+            .sum::<f32>()
+            .clamp(-1.0, 1.0);
+
+        let height: i16 = HEIGHT_KEYS
+            .iter()
+            .filter(|(key, _)| plain(*key))
+            .map(|(_, step)| *step)
+            .sum();
+        self.step_y(height);
 
         let now = EditorCommand {
             place: held(PhysicalKey::Enter) || held(PhysicalKey::NumpadEnter),
-            delete: held(PhysicalKey::Delete) || held(PhysicalKey::Backspace),
-            rotate: held(PhysicalKey::KeyR),
+            delete: held(PhysicalKey::Delete)
+                || held(PhysicalKey::Backspace)
+                || held(PhysicalKey::KeyX),
+            rotate: held(PhysicalKey::KeyR) || held(PhysicalKey::Space),
             duplicate: ctrl && held(PhysicalKey::KeyD),
             copy: ctrl && held(PhysicalKey::KeyC),
             paste: ctrl && held(PhysicalKey::KeyV),
@@ -257,10 +265,13 @@ impl EditorKeys {
             select_all: ctrl && held(PhysicalKey::KeyA),
             select_route: shift && held(PhysicalKey::KeyA),
             select_none: held(PhysicalKey::Escape),
+            select_hovered: held(PhysicalKey::KeyG),
+            height_up: height > 0,
+            height_down: height < 0,
         };
-        // Newly down this frame only. A command whose key is released clears the
-        // latch, so it can be pressed again without an intervening release.
-        self.pressed = EditorCommand {
+        // The height commands carry the repeat, so a held key raises one cell,
+        // waits, then repeats. Every other command here is edge-latched.
+        let pressed = EditorCommand {
             place: now.place && !self.down.place,
             delete: now.delete && !self.down.delete,
             rotate: now.rotate && !self.down.rotate,
@@ -272,8 +283,37 @@ impl EditorKeys {
             select_all: now.select_all && !self.down.select_all,
             select_route: now.select_route && !self.down.select_route,
             select_none: now.select_none && !self.down.select_none,
+            select_hovered: now.select_hovered && !self.down.select_hovered,
+            height_up: self.step_y > 0,
+            height_down: self.step_y < 0,
         };
+        self.pressed = pressed;
         self.down = now;
+    }
+
+    /// One cell of height this frame, with a delay before it repeats.
+    fn step_y(&mut self, direction: i16) {
+        self.step_y = 0;
+        if direction == 0 {
+            self.held_y = 0;
+            self.muted_y = false;
+            return;
+        }
+        if self.muted_y {
+            // Already down when the editor opened or closed. Not a press, so it
+            // neither steps nor starts the delay: releasing the key arms it.
+            return;
+        }
+        self.held_y += 1;
+        let n = self.held_y;
+        // `n` counts the press frame as 1, so a delay of `DELAY` frames is
+        // `DELAY` quiet frames *after* it and the first repeat is the frame
+        // after those.
+        let repeats =
+            n > REPEAT_DELAY_FRAMES && (n - REPEAT_DELAY_FRAMES - 1) % REPEAT_PERIOD_FRAMES == 0;
+        if n == 1 || repeats {
+            self.step_y = direction;
+        }
     }
 
     /// Reset the repeat counters when the editor closes.
@@ -284,14 +324,17 @@ impl EditorKeys {
     /// opens — a command fired by the player letting go of nothing.
     /// The editor was entered or left: forget this frame.
     ///
-    /// The axes are muted as well as reset. Zeroing alone would make a key that is
-    /// still physically down look like a fresh press on the next poll, so the
-    /// cursor would step — and then start repeating — under a finger that never
-    /// touched the editor. A muted axis does neither until a frame releases it.
+    /// The height axis is muted as well as reset. Zeroing alone would make a key
+    /// that is still physically down look like a fresh press on the next poll, so
+    /// the height would step, and then start repeating, under a finger that
+    /// never touched the editor. A muted axis does neither until a frame releases
+    /// it.
     fn release(&mut self) {
-        self.held = [0; 3];
-        self.muted = [true; 3];
-        self.step = [0; 3];
+        self.held_y = 0;
+        self.muted_y = true;
+        self.step_y = 0;
+        self.move_cam = [0.0; 2];
+        self.turn_cam = 0.0;
         self.pressed = EditorCommand::default();
     }
 }
@@ -430,15 +473,13 @@ impl InputState {
         })
     }
 
-    /// Editor commands for this frame, edge-latched and repeated as held.
-    ///
-    /// Only called while the editor is up. Every other frame calls
-    /// [`Self::release_editor`] so a key held on the way out of the editor is
-    /// not still "down" when it is next pressed.
+    /// Editor keys, read while the editor is up.
     pub fn poll_editor(&mut self, sched: &Scheduler) -> EditorFrame {
         self.editor.poll(sched);
         EditorFrame {
-            step: self.editor.step,
+            move_cam: self.editor.move_cam,
+            turn_cam: self.editor.turn_cam,
+            height: self.editor.step_y,
             pressed: self.editor.pressed,
         }
     }
@@ -451,8 +492,13 @@ impl InputState {
 /// One frame of editor input.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EditorFrame {
-    /// Cell step for the cursor, in grid axes.
-    pub step: [i16; 3],
+    /// Camera movement across the ground plane, as `(forward, right)` in
+    /// -1..=1. Continuous rather than repeated: a held key glides the view.
+    pub move_cam: [f32; 2],
+    /// Camera turn, -1 left to +1 right, likewise continuous.
+    pub turn_cam: f32,
+    /// Cells to move the edited height by this frame, after the repeat delay.
+    pub height: i16,
     /// Commands whose key went down this frame.
     pub pressed: EditorCommand,
 }
@@ -542,7 +588,7 @@ mod tests {
         stick.update(&sched, true);
         assert!(stick.knob.0 > 0.0, "a drag right steers right");
 
-        // Released: the knob centres and the finger is let go.
+        // Released: the knob centred and the finger is let go.
         sched.touch_points.clear();
         stick.update(&sched, true);
         assert_eq!(stick.finger, None);
@@ -680,20 +726,26 @@ mod tests {
         sched
     }
 
-    /// Hold `keys` for `frames` polls and collect every step produced.
-    fn steps_while_held(keys: &[PhysicalKey], frames: u32) -> Vec<[i16; 3]> {
+    /// Hold `keys` for `frames` polls and collect every height step produced.
+    fn steps_while_held(keys: &[PhysicalKey], frames: u32) -> Vec<i16> {
         let sched = sched_with(keys);
         let mut input = InputState::new();
         (0..frames)
-            .map(|_| input.poll_editor(&sched).step)
+            .map(|_| input.poll_editor(&sched).height)
             .collect()
     }
 
-    #[test]
-    fn a_direction_key_steps_once_then_repeats_after_a_delay() {
-        let frames = steps_while_held(&[PhysicalKey::ArrowUp], 40);
+    /// One frame of camera axes with `keys` held.
+    fn axes_while_held(keys: &[PhysicalKey]) -> EditorFrame {
+        let mut input = InputState::new();
+        input.poll_editor(&sched_with(keys))
+    }
 
-        assert_eq!(frames[0], [0, 0, -1], "the press itself fires");
+    #[test]
+    fn a_height_key_steps_once_then_repeats_after_a_delay() {
+        let frames = steps_while_held(&[PhysicalKey::KeyF], 40);
+
+        assert_eq!(frames[0], 1, "the press itself fires");
         // Silent until the delay has elapsed, counting from the frame *after* the
         // press: frame 0 already fired, so the quiet run is 1..DELAY.
         for (n, step) in frames
@@ -702,84 +754,108 @@ mod tests {
             .take(REPEAT_DELAY_FRAMES as usize)
             .skip(1)
         {
-            assert_eq!(*step, [0, 0, 0], "frame {n} must be inside the delay");
+            assert_eq!(*step, 0, "frame {n} must be inside the delay");
         }
         // Then it fires exactly once per period.
-        assert_eq!(
-            frames[REPEAT_DELAY_FRAMES as usize],
-            [0, 0, -1],
-            "the first repeat lands on the delay"
-        );
+        assert_eq!(frames[REPEAT_DELAY_FRAMES as usize], 1, "the first repeat");
         for n in 1..REPEAT_PERIOD_FRAMES {
             assert_eq!(
                 frames[(REPEAT_DELAY_FRAMES + n) as usize],
-                [0, 0, 0],
+                0,
                 "frame {n} of the period must be silent"
             );
         }
         assert_eq!(
             frames[(REPEAT_DELAY_FRAMES + REPEAT_PERIOD_FRAMES) as usize],
-            [0, 0, -1],
+            1,
             "and then it repeats"
         );
     }
 
     #[test]
-    fn the_repeat_stays_on_its_period_rather_than_drifting() {
-        let frames = steps_while_held(&[PhysicalKey::ArrowRight], 80);
-        for (n, step) in frames.iter().enumerate() {
-            let expected = n == 0
-                || (n as u32 >= REPEAT_DELAY_FRAMES
-                    && (n as u32 - REPEAT_DELAY_FRAMES) % REPEAT_PERIOD_FRAMES == 0);
-            assert_eq!(
-                *step == [1, 0, 0],
-                expected,
-                "frame {n}: step {:?} but expected a step = {expected}",
-                step
-            );
+    fn the_height_repeat_stays_on_its_period_rather_than_drifting() {
+        for key in [PhysicalKey::KeyF, PhysicalKey::KeyZ] {
+            let sign = if key == PhysicalKey::KeyF { 1 } else { -1 };
+            let frames = steps_while_held(&[key], 80);
+            for (n, step) in frames.iter().enumerate() {
+                let expected = n == 0
+                    || (n as u32 >= REPEAT_DELAY_FRAMES
+                        && (n as u32 - REPEAT_DELAY_FRAMES) % REPEAT_PERIOD_FRAMES == 0);
+                assert_eq!(
+                    *step == sign,
+                    expected,
+                    "frame {n}: step {step} but expected a step = {expected}"
+                );
+            }
         }
     }
 
     #[test]
-    fn releasing_a_direction_resets_its_repeat() {
+    fn releasing_a_height_key_resets_its_repeat() {
         let mut input = InputState::new();
         for _ in 0..REPEAT_DELAY_FRAMES + 2 {
-            input.poll_editor(&sched_with(&[PhysicalKey::ArrowRight]));
+            input.poll_editor(&sched_with(&[PhysicalKey::KeyF]));
         }
-        assert_eq!(input.poll_editor(&sched_with(&[])).step, [0, 0, 0]);
+        assert_eq!(input.poll_editor(&sched_with(&[])).height, 0);
         assert_eq!(
-            input
-                .poll_editor(&sched_with(&[PhysicalKey::ArrowRight]))
-                .step,
-            [1, 0, 0],
+            input.poll_editor(&sched_with(&[PhysicalKey::KeyF])).height,
+            1,
             "held again, it must fire at once rather than waiting out the delay"
         );
     }
 
     #[test]
-    fn the_wasd_letters_mirror_the_arrow_keys() {
-        // A separate input each time: the repeat counter is state, so the second
-        // poll on the same instance would be a different frame, not a comparison.
-        for (letter, arrow) in [
-            (PhysicalKey::KeyW, PhysicalKey::ArrowUp),
-            (PhysicalKey::KeyS, PhysicalKey::ArrowDown),
-            (PhysicalKey::KeyA, PhysicalKey::ArrowLeft),
-            (PhysicalKey::KeyD, PhysicalKey::ArrowRight),
-        ] {
-            assert_eq!(
-                steps_while_held(&[letter], 1),
-                steps_while_held(&[arrow], 1),
-                "{letter:?} must move the cursor the way {arrow:?} does"
-            );
+    fn the_movement_keys_move_the_camera_rather_than_the_cursor() {
+        // The cursor follows the mouse; the ground-plane keys belong to the view.
+        let forward = axes_while_held(&[PhysicalKey::KeyW, PhysicalKey::ArrowUp]);
+        assert_eq!(forward.move_cam, [1.0, 0.0]);
+        assert_eq!(forward.height, 0, "movement never moves the edited height");
+
+        let back = axes_while_held(&[PhysicalKey::KeyS, PhysicalKey::ArrowDown]);
+        assert_eq!(back.move_cam, [-1.0, 0.0]);
+
+        let left = axes_while_held(&[PhysicalKey::KeyA, PhysicalKey::ArrowLeft]);
+        assert_eq!(left.move_cam, [0.0, -1.0]);
+
+        let right = axes_while_held(&[PhysicalKey::KeyD, PhysicalKey::ArrowRight]);
+        assert_eq!(right.move_cam, [0.0, 1.0]);
+    }
+
+    #[test]
+    fn the_turn_keys_turn_left_and_right() {
+        assert_eq!(axes_while_held(&[PhysicalKey::KeyQ]).turn_cam, -1.0);
+        assert_eq!(axes_while_held(&[PhysicalKey::KeyE]).turn_cam, 1.0);
+        assert_eq!(
+            axes_while_held(&[PhysicalKey::KeyQ, PhysicalKey::KeyE]).turn_cam,
+            0.0,
+            "opposite turns cancel"
+        );
+        assert_eq!(axes_while_held(&[]).turn_cam, 0.0);
+    }
+
+    #[test]
+    fn a_held_movement_key_keeps_moving_the_camera_every_frame() {
+        // Continuous, not repeated: a camera glides, it does not step.
+        let sched = sched_with(&[PhysicalKey::KeyW]);
+        let mut input = InputState::new();
+        for _ in 0..60 {
+            assert_eq!(input.poll_editor(&sched).move_cam, [1.0, 0.0]);
         }
     }
 
     #[test]
-    fn opposite_directions_cancel_rather_than_accelerate_the_cursor() {
+    fn opposite_movement_cancel_rather_than_doubling_up() {
         assert_eq!(
-            steps_while_held(&[PhysicalKey::ArrowUp, PhysicalKey::ArrowDown], 1),
-            vec![[0, 0, 0]],
-            "a cursor cannot move two ways at once"
+            axes_while_held(&[PhysicalKey::KeyW, PhysicalKey::KeyS]).move_cam,
+            [0.0, 0.0]
+        );
+        assert_eq!(
+            axes_while_held(&[PhysicalKey::KeyA, PhysicalKey::KeyD]).move_cam,
+            [0.0, 0.0]
+        );
+        assert_eq!(
+            axes_while_held(&[PhysicalKey::ArrowUp, PhysicalKey::ArrowDown]).move_cam,
+            [0.0, 0.0]
         );
     }
 
@@ -803,24 +879,24 @@ mod tests {
     }
 
     #[test]
-    fn a_modified_direction_key_does_not_move_the_cursor() {
+    fn a_modified_movement_key_does_not_move_the_camera() {
         let mut input = InputState::new();
         let frame = input.poll_editor(&sched_with(&[PhysicalKey::ControlLeft, PhysicalKey::KeyD]));
         assert_eq!(
-            frame.step,
-            [0, 0, 0],
-            "Ctrl+D duplicates; it is not cursor-right"
+            frame.move_cam,
+            [0.0, 0.0],
+            "Ctrl+D duplicates; it is not camera-right"
         );
         assert!(frame.pressed.duplicate);
     }
 
     #[test]
-    fn shift_a_selects_the_route_and_plain_a_moves_the_cursor() {
-        let shifted = steps_while_held(&[PhysicalKey::ShiftLeft, PhysicalKey::KeyA], 1);
+    fn shift_a_selects_the_route_and_plain_a_moves_the_camera() {
+        let shifted = axes_while_held(&[PhysicalKey::ShiftLeft, PhysicalKey::KeyA]);
         assert_eq!(
-            shifted,
-            vec![[0, 0, 0]],
-            "a modified key is not a cursor key"
+            shifted.move_cam,
+            [0.0, 0.0],
+            "a modified key is not a movement key"
         );
 
         let mut input = InputState::new();
@@ -848,6 +924,43 @@ mod tests {
     }
 
     #[test]
+    fn either_of_rotate_or_space_turns_the_selection() {
+        for key in [PhysicalKey::KeyR, PhysicalKey::Space] {
+            let mut input = InputState::new();
+            assert!(
+                input.poll_editor(&sched_with(&[key])).pressed.rotate,
+                "{key:?} must rotate the selection"
+            );
+        }
+    }
+
+    #[test]
+    fn either_delete_backspace_or_x_removes_the_selection() {
+        for key in [
+            PhysicalKey::Delete,
+            PhysicalKey::Backspace,
+            PhysicalKey::KeyX,
+        ] {
+            let mut input = InputState::new();
+            assert!(
+                input.poll_editor(&sched_with(&[key])).pressed.delete,
+                "{key:?} must delete the selection"
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_selects_the_piece_under_the_pointer() {
+        let mut input = InputState::new();
+        assert!(
+            input
+                .poll_editor(&sched_with(&[PhysicalKey::KeyG]))
+                .pressed
+                .select_hovered
+        );
+    }
+
+    #[test]
     fn leaving_the_editor_does_not_fire_a_key_that_was_still_held() {
         let mut input = InputState::new();
         let sched = sched_with(&[PhysicalKey::Enter]);
@@ -864,22 +977,36 @@ mod tests {
     }
 
     #[test]
-    fn leaving_the_editor_resets_the_repeat_so_a_held_key_does_not_run() {
+    fn leaving_the_editor_mutes_the_height_and_the_commands() {
+        // The camera keys are continuous, so a key still held after leaving and
+        // re-entering keeps gliding, exactly as it should. What must not survive
+        // the trip is anything edge-latched: a command fired by the player
+        // letting go of nothing, or a height still mid-repeat.
         let mut input = InputState::new();
-        let sched = sched_with(&[PhysicalKey::ArrowRight]);
+        let sched = sched_with(&[PhysicalKey::KeyW, PhysicalKey::KeyF]);
         for _ in 0..REPEAT_DELAY_FRAMES + 2 {
             input.poll_editor(&sched);
         }
         input.release_editor();
-        // Quiet, because the key was already down when the editor closed.
-        assert_eq!(input.poll_editor(&sched).step, [0, 0, 0]);
+        let frame = input.poll_editor(&sched);
+        assert_eq!(frame.height, 0, "a held key must not raise the height");
+        assert!(
+            frame.pressed.is_empty(),
+            "nor fire any command: {:?}",
+            frame.pressed
+        );
+        // Released and pressed again, it behaves like any other press.
+        input.poll_editor(&sched_with(&[]));
+        assert_eq!(input.poll_editor(&sched).height, 1);
     }
 
     #[test]
     fn nothing_is_pressed_when_no_editor_key_is_held() {
         let mut input = InputState::new();
         let frame = input.poll_editor(&sched_with(&[]));
-        assert_eq!(frame.step, [0, 0, 0]);
+        assert_eq!(frame.move_cam, [0.0, 0.0]);
+        assert_eq!(frame.turn_cam, 0.0);
+        assert_eq!(frame.height, 0);
         assert!(frame.pressed.is_empty());
     }
 }

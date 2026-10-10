@@ -326,9 +326,15 @@ pub struct TrackWorld {
     pub boost_zones: Vec<[f32; 6]>,
     /// Checkpoint gates in track order, with the index of the piece.
     pub checkpoints: Vec<Gate>,
+    /// Every finish line on the track.
+    ///
+    /// A list rather than one gate because a circuit may end in more than one
+    /// place: a split near the line, or a second line tried out beside the
+    /// first. The run ends at whichever of them the car reaches once every
+    /// checkpoint is behind it.
+    pub finishes: Vec<Gate>,
     pub spawn: Vec3,
     pub spawn_yaw: f32,
-    pub finish: Option<Gate>,
     grid: Option<Grid>,
 }
 
@@ -395,10 +401,8 @@ fn segment_hits_box(from: Vec3, motion: Vec3, centre: Vec3, half: Vec3) -> bool 
 impl TrackWorld {
     /// Build collision, gates and spawn from a document.
     pub fn from_doc(doc: &TrackDocument) -> Self {
-        let mut triangles = Vec::new();
-        let mut boost_zones = Vec::new();
-        let mut checkpoints = Vec::new();
-        let mut finish = None;
+        let mut triangles: Vec<Triangle> = Vec::new();
+        let mut boost_zones: Vec<[f32; 6]> = Vec::new();
 
         // Race order, from the connected chain: gate sequence is what a run is
         // measured against, and taking it from the piece array made it a
@@ -444,31 +448,43 @@ impl TrackWorld {
                     (centre + half + pad).z,
                 ]);
             }
-            if def.is_checkpoint || def.is_finish {
-                let centre = piece_centre(doc, inst) + Vec3::new(0.0, doc.cell_size * 0.25, 0.0);
-                let half = Vec3::new(
+        }
+
+        // Gates are built from the document's own gate order, not from the walk
+        // above: a checkpoint's place in the run is something the author sets,
+        // and several may share one number.
+        let gate_for = |inst: &PieceInstance, index: usize, is_finish: bool| {
+            let world = instance_matrix(inst, doc);
+            Gate {
+                piece: inst.uid,
+                centre: piece_centre(doc, inst) + Vec3::new(0.0, doc.cell_size * 0.25, 0.0),
+                half: Vec3::new(
                     doc.cell_size * 0.5,
                     doc.cell_size * 0.75,
                     doc.cell_size * 0.5,
-                );
-                let gate = Gate {
-                    piece: inst.uid,
-                    centre,
-                    half,
-                    // A piece drives along its own local +Z, so the world
-                    // direction it expects to be met from is that axis rotated
-                    // by the instance. Never zero: the transform is a rotation
-                    // about Y, so the axis keeps its length.
-                    facing: world.transform_vector3(Vec3::Z).normalize_or_zero(),
-                    is_finish: def.is_finish,
-                    index: checkpoints.len(),
-                };
-                if def.is_finish {
-                    finish = Some(gate);
-                } else {
-                    checkpoints.push(gate);
-                }
+                ),
+                // A piece drives along its own local +Z, so the world
+                // direction it expects to be met from is that axis rotated
+                // by the instance. Never zero: the transform is a rotation
+                // about Y, so the axis keeps its length.
+                facing: world.transform_vector3(Vec3::Z).normalize_or_zero(),
+                is_finish,
+                index,
             }
+        };
+        let mut checkpoints: Vec<Gate> = Vec::new();
+        for (index, inst) in doc.checkpoint_sequence().into_iter().enumerate() {
+            checkpoints.push(gate_for(inst, index, false));
+        }
+        let mut finishes: Vec<Gate> = Vec::new();
+        for (index, inst) in doc
+            .race_order()
+            .iter()
+            .filter_map(|uid| doc.piece(*uid))
+            .filter(|inst| catalog_by_id(inst.id).is_finish)
+            .enumerate()
+        {
+            finishes.push(gate_for(inst, index, true));
         }
 
         let (spawn, spawn_yaw) = doc.spawn();
@@ -483,9 +499,23 @@ impl TrackWorld {
             checkpoints,
             spawn,
             spawn_yaw,
-            finish,
+            finishes,
             grid: Some(grid),
         }
+    }
+
+    /// The gate the run is waiting on: checkpoint number `next`, or the first
+    /// finish line once every checkpoint is behind the car.
+    ///
+    /// One method rather than arithmetic at each use, because "which gate comes
+    /// next" is a rule: a run counts its checkpoints in order, and may only end
+    /// at a finish line after the last of them. Written out at the call site,
+    /// that rule is one `if` away from being wrong.
+    pub fn gate_at(&self, next: usize) -> Option<Gate> {
+        if next < self.checkpoints.len() {
+            return Some(self.checkpoints[next]);
+        }
+        self.finishes.first().copied()
     }
 
     /// Nearest surface along a ray. Back faces are ignored, so a road seen
@@ -647,7 +677,7 @@ mod tests {
         for doc in builtin_tracks() {
             let w = TrackWorld::from_doc(&doc);
             assert!(!w.triangles.is_empty(), "{}: no triangles", doc.name);
-            assert!(w.finish.is_some(), "{}: needs a finish gate", doc.name);
+            assert!(!w.finishes.is_empty(), "{}: needs a finish gate", doc.name);
             assert!(!w.checkpoints.is_empty(), "{}: needs checkpoints", doc.name);
             assert!(!w.boost_zones.is_empty(), "{}: needs a boost pad", doc.name);
         }
@@ -753,7 +783,7 @@ mod tests {
     fn a_gate_is_hit_by_the_straight_line_along_its_own_facing() {
         for doc in builtin_tracks() {
             let w = TrackWorld::from_doc(&doc);
-            for gate in w.checkpoints.iter().chain(w.finish.iter()) {
+            for gate in w.checkpoints.iter().chain(w.finishes.iter()) {
                 assert!(
                     (gate.facing.length() - 1.0).abs() < 1e-3,
                     "{}: gate facing is not a unit vector: {:?}",
@@ -854,15 +884,69 @@ mod tests {
     }
 
     #[test]
-    fn gates_are_ordered_and_finish_is_last() {
+    fn gates_are_ordered_and_finishes_are_finishes() {
         let doc = builtin_tracks().remove(0);
         let w = TrackWorld::from_doc(&doc);
         for (i, g) in w.checkpoints.iter().enumerate() {
             assert_eq!(g.index, i, "checkpoints must be in order");
             assert!(!g.is_finish);
         }
-        let f = w.finish.expect("finish gate");
-        assert!(f.is_finish);
+        assert!(!w.finishes.is_empty(), "a built-in circuit has a finish");
+        for f in &w.finishes {
+            assert!(f.is_finish);
+        }
+    }
+
+    #[test]
+    fn an_explicit_checkpoint_order_reorders_the_gates_the_car_passes() {
+        // The last checkpoint on the road is handed order 1, so the run must
+        // count it first. This is the whole point of the field: without it the
+        // gate sequence is fixed by the geometry and an author cannot change it.
+        let mut doc = builtin_tracks().remove(0);
+        let road: Vec<PieceUid> = doc.checkpoint_sequence().iter().map(|p| p.uid).collect();
+        let last = *road.last().expect("a built-in circuit has checkpoints");
+        let slot = doc.pieces.iter_mut().find(|p| p.uid == last).unwrap();
+        slot.params = slot.params.order(1);
+
+        let world = TrackWorld::from_doc(&doc);
+        let gated: Vec<PieceUid> = world.checkpoints.iter().map(|g| g.piece).collect();
+        assert_eq!(gated.first(), Some(&last), "order 1 is passed first");
+        assert_eq!(gated.len(), road.len(), "every gate is still there");
+        for (i, g) in world.checkpoints.iter().enumerate() {
+            assert_eq!(g.index, i, "the index is the position in the run");
+        }
+    }
+
+    #[test]
+    fn every_finish_line_on_the_track_becomes_a_gate() {
+        let mut doc = builtin_tracks().remove(0);
+        // A second finish, well off the road, so it is a gate nothing reaches.
+        let uid = doc.next_piece_uid();
+        doc.pieces.push(
+            retrackt_format::PieceInstance::new(PieceId::Finish, [90, 0, 90])
+                .with_uid(uid)
+                .with_params(retrackt_format::PieceParams::default().length(2)),
+        );
+        doc.normalize_uids();
+
+        let world = TrackWorld::from_doc(&doc);
+        assert_eq!(
+            world.finishes.len(),
+            2,
+            "both finish lines are gates: the run may end at either"
+        );
+        assert_eq!(
+            world.finishes.iter().filter(|g| g.is_finish).count(),
+            2,
+            "and they are finish gates, not checkpoints"
+        );
+        assert!(
+            !world
+                .checkpoints
+                .iter()
+                .any(|g| world.finishes.iter().any(|f| f.piece == g.piece)),
+            "a finish is never also a checkpoint"
+        );
     }
 
     #[test]

@@ -15,8 +15,14 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
     // fingerprint of an identical track.
     pieces.sort_by_key(|p| p.uid);
 
+    // The domain is bumped because the per-piece byte stream gained a byte: the
+    // checkpoint order decides the order the gates come in, which decides the
+    // run, so it cannot be left out of the hash. That costs every record and tape
+    // written before it arrived its match. They were made against a different
+    // gate sequence than the document now says it has, and calling them the same
+    // track would let a ghost from one be raced on the other.
     let mut h = blake3::Hasher::new();
-    h.update(b"retrackt-track-v1");
+    h.update(b"retrackt-track-v2");
     h.update(&doc.format.to_le_bytes());
     h.update(&doc.cell_size.to_bits().to_le_bytes());
 
@@ -44,6 +50,7 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
         h.update(&[p.params.length_cells.unwrap_or(0)]);
         h.update(&[p.params.radius_cells.unwrap_or(0)]);
         h.update(&[p.params.bank_deg.unwrap_or(0) as u8]);
+        h.update(&[p.params.checkpoint_order.unwrap_or(0)]);
     }
 
     finish(&h.finalize())
@@ -106,6 +113,24 @@ mod tests {
         let mut b = demo();
         b.pieces[2].cell[2] += 1;
         assert_ne!(gameplay_fingerprint(&a), gameplay_fingerprint(&b));
+    }
+
+    #[test]
+    fn the_gate_order_is_part_of_the_run_and_so_of_the_hash() {
+        // Two documents with identical pieces and different gate orders are the
+        // same road and different runs: a ghost recorded on one is not a ghost of
+        // the other.
+        let mut a = demo();
+        a.pieces[1].id = PieceId::Checkpoint;
+        a.pieces[2].id = PieceId::Checkpoint;
+        let mut b = a.clone();
+        b.pieces[2].params = b.pieces[2].params.order(1);
+
+        assert_ne!(
+            gameplay_fingerprint(&a),
+            gameplay_fingerprint(&b),
+            "the gate order must enter the hash"
+        );
     }
 
     #[test]

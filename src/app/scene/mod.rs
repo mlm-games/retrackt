@@ -26,6 +26,12 @@ const PREVIEW_ALPHA: f32 = 0.55;
 /// The cursor cell outline, in the editor accent.
 const CURSOR_TINT: u32 = 0xFFB020;
 const CURSOR_ALPHA: f32 = 0.30;
+/// The piece under the pointer, in near-white, so it is never mistaken for the
+/// selection's amber.
+const HOVER_TINT: u32 = 0xF2F4F7;
+/// Opacity of both outlines: enough to read over any surface, little enough that
+/// the piece inside them is still the piece being looked at.
+const OUTLINE_ALPHA: f32 = 0.55;
 
 const HORIZON: u32 = 0xCFE6F7;
 const ZENITH: u32 = 0x4E9BE0;
@@ -345,8 +351,9 @@ impl App {
         frame
     }
 
-    /// Editor furniture: the cursor cell and a translucent preview of the piece
-    /// the next placement would drop.
+    /// Editor furniture: the cursor cell, a translucent preview of the piece the
+    /// next placement would drop, and outlines around what is selected and what
+    /// the pointer is over.
     ///
     /// Built per frame rather than cached with the track because both move with
     /// the cursor, and both are a handful of triangles — caching would cost a
@@ -359,7 +366,7 @@ impl App {
             editor.cursor,
             crate::app::SNAP_REACH,
         );
-        vec![
+        let mut groups = vec![
             track::preview_group(
                 &self.data.track,
                 &retrackt_format::PieceInstance::new(editor.armed, place.anchor)
@@ -371,6 +378,30 @@ impl App {
                 },
             ),
             track::cursor_group(&self.data.track, editor.cursor),
-        ]
+        ];
+        // What a key or a click will act on, drawn before it is acted on: the
+        // selection in the accent, and the piece under the pointer in white so
+        // the two are never the same colour.
+        for uid in &editor.selection {
+            if let Some(inst) = self.data.track.piece(*uid) {
+                groups.push(track::outline_group(
+                    &self.data.track,
+                    inst,
+                    CURSOR_TINT,
+                    OUTLINE_ALPHA,
+                ));
+            }
+        }
+        if let Some(uid) = editor.hover.filter(|uid| !editor.is_selected(*uid))
+            && let Some(inst) = self.data.track.piece(uid)
+        {
+            groups.push(track::outline_group(
+                &self.data.track,
+                inst,
+                HOVER_TINT,
+                OUTLINE_ALPHA,
+            ));
+        }
+        groups
     }
 }

@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod edit;
 pub mod history;
 pub mod input;
 pub mod placement;
@@ -9,7 +10,8 @@ pub mod theme;
 
 use repame_sim::Sim;
 use repame_view3d::{BatchDesc, GeomHandle, MeshGroup, Viewport3d};
-use repose_core::{RenderContext, Scheduler, View};
+use repose_core::{Modifier, RenderContext, Scheduler, View};
+use repose_ui::{ViewExt, ZStack};
 use retrackt_format::{
     PieceInstance, ReplayTape, TrackDocument, builtin_tracks, demo_track, gameplay_fingerprint,
 };
@@ -66,6 +68,15 @@ pub struct App {
     /// What the editor looked like when Playtest was pressed, so returning from
     /// a playtest restores the view instead of dropping the player at a default.
     editor_return: Option<EditorView>,
+    /// Pointer state for the editor, shared with the viewport's event closures.
+    editor_gesture: std::rc::Rc<std::cell::RefCell<edit::EditorGesture>>,
+    /// What the pointer is over in the editor, re-resolved every frame.
+    editor_hover: edit::EditorHover,
+    /// Pick boxes for that hover, rebuilt only when the track changes.
+    editor_pick: edit::PickBoxes,
+    /// Whether Shift was held on the last frame, for the scroll handler that
+    /// cannot ask the runtime itself.
+    editor_shift: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 /// Editor state to come back to after a playtest.
@@ -82,6 +93,8 @@ pub enum ParamKind {
     Length,
     Radius,
     Bank,
+    /// Where a checkpoint sits in the sequence the car must pass.
+    Order,
 }
 
 /// Quarter turns about +Y that make a full turn. A piece's `yaw` is a count of
@@ -150,6 +163,10 @@ impl App {
             history: History::new(),
             editor_cam: editor_camera(),
             editor_return: None,
+            editor_gesture: edit::EditorGesture::new_handle(),
+            editor_hover: edit::EditorHover::default(),
+            editor_pick: edit::PickBoxes::default(),
+            editor_shift: std::rc::Rc::new(std::cell::Cell::new(false)),
         };
         app.set_track(demo_track());
         app
@@ -189,9 +206,30 @@ impl App {
         // moment is not read as a fresh press — or as a held key that starts
         // repeating — when the editor is opened again.
         if self.data.screen == Screen::Editor {
-            self.poll_editor_keys(sched);
+            let editor = self.input.poll_editor(sched);
+            // The raw wall-clock delta, not the playback-scaled one: the editor
+            // is not a replay, and a camera that slowed down because a tape was
+            // paused somewhere else would feel broken. Clamped, so a hitch that
+            // stalls the window does not fling the view across the track.
+            let wall = frame.as_secs_f32().clamp(0.0, 0.1);
+            self.move_editor_camera(wall, editor.move_cam, editor.turn_cam);
+            self.poll_editor_keys(editor);
+            // Re-resolved every frame rather than on pointer-move alone: the
+            // pointer is usually still while the camera moves under it, and the
+            // piece it names changes with the view.
+            let shift = sched
+                .held_keys
+                .contains(&repose_core::input::PhysicalKey::ShiftLeft)
+                || sched
+                    .held_keys
+                    .contains(&repose_core::input::PhysicalKey::ShiftRight);
+            self.editor_shift.set(shift);
+            self.update_editor_hover();
         } else {
             self.input.release_editor();
+            self.editor_hover = edit::EditorHover::default();
+            self.data.editor.hover = None;
+            self.release_editor_gesture();
         }
 
         // Playback speed scales the wall clock, not the step. `Sim::time_scale`
@@ -346,49 +384,22 @@ impl App {
         crate::ui::root_view(&self.data, &self.data.actions, viewport)
     }
 
-    /// The 3D viewport, wired to the editor camera while the editor is up.
-    ///
-    /// The event callback cannot borrow `self`, so it pushes onto the action
-    /// queue and the work happens at the top of the next frame. One frame of
-    /// latency on a camera drag is invisible; borrowing across the view build
-    /// would not compile.
+    /// The 3D viewport. While the editor is up the scene is drawn under an
+    /// overlay that owns every pointer gesture over it, because the editor's
+    /// gesture set is not the viewport's: the left button places a piece rather
+    /// than orbiting, and the middle button orbits rather than panning.
     fn viewport(&mut self, frame: repame_view3d::Frame3d) -> View {
-        let queue = self.data.actions.clone();
-        let editing = self.data.screen == Screen::Editor;
-        let cell_size = self.data.track.cell_size;
-        Viewport3d(
-            frame,
-            self.geom.clone(),
-            "scene.main",
-            BatchDesc::default(),
-            move |ev| {
-                if !editing {
-                    return;
-                }
-                match ev {
-                    repame_view3d::View3dEvent::Orbit { dx, dy } => {
-                        state::push(&queue, UiAct::EditorOrbit(dx, dy))
-                    }
-                    repame_view3d::View3dEvent::Pan { dx, dy } => {
-                        state::push(&queue, UiAct::EditorPan(dx, dy))
-                    }
-                    repame_view3d::View3dEvent::Zoom { factor } => {
-                        state::push(&queue, UiAct::EditorZoom(factor))
-                    }
-                    // The ground plane is where the cursor lives. A click sets
-                    // X and Z only: Y belongs to the cursor, so clicking beside a
-                    // ramp cannot teleport a piece up it.
-                    repame_view3d::View3dEvent::GroundClick { x, z } => {
-                        let cell = retrackt_format::geometry::to_grid(
-                            glam::Vec3::new(x, 0.0, z),
-                            cell_size,
-                        );
-                        state::push(&queue, UiAct::SetCursorXZ(cell[0], cell[2]))
-                    }
-                    _ => {}
-                }
-            },
-        )
+        let geom = self.geom.clone();
+        if self.data.screen != Screen::Editor {
+            return Viewport3d(frame, geom, "scene.main", BatchDesc::default(), |_| {});
+        }
+        let scene = Viewport3d(frame, geom, "scene.main", BatchDesc::default(), |_| {});
+        let overlay = edit::gesture_overlay(
+            self.editor_gesture.clone(),
+            self.editor_shift.clone(),
+            self.data.actions.clone(),
+        );
+        ZStack(Modifier::new().fill_max_size()).child(vec![scene, overlay])
     }
 
     fn drain_actions(&mut self) {
@@ -470,13 +481,12 @@ impl App {
                 self.set_cursor(cell);
             }
             UiAct::SetCursor(cell) => self.set_cursor(cell),
-            UiAct::SetCursorXZ(x, z) => {
-                let cell = self.data.editor.cursor;
-                self.set_cursor([x, cell[1], z]);
-            }
             UiAct::EditorOrbit(dx, dy) => self.editor_cam.orbit(dx, dy),
             UiAct::EditorPan(dx, dy) => self.editor_cam.pan(dx, dy),
             UiAct::EditorZoom(factor) => self.editor_cam.zoom(factor),
+            UiAct::EditorPointer(x, y) => self.editor_pointer(x, y),
+            UiAct::EditorClick(x, y) => self.resolve_editor_click(x, y),
+            UiAct::SelectHovered => self.select_hovered(),
             UiAct::SelectPiece(uid) => self.data.editor.selection = vec![uid],
             UiAct::ToggleSelect(uid) => {
                 let selection = &mut self.data.editor.selection;
@@ -1096,6 +1106,7 @@ impl App {
         }
         self.sim.world.insert_resource(TrackRes(world));
         self.sim.world.insert_resource(CarRes(car));
+        self.editor_pick = edit::PickBoxes::build(&self.data.track);
         self.track_mesh = None;
         self.ground_mesh = None;
         self.prev_car = None;
@@ -1162,11 +1173,10 @@ impl App {
     /// Pushing rather than applying directly, because the cursor step and the
     /// commands are read from a single snapshot: applying the step first would
     /// recompute the placement preview before the command was seen.
-    fn poll_editor_keys(&mut self, sched: &repose_core::runtime::Scheduler) {
-        let frame = self.input.poll_editor(sched);
+    fn poll_editor_keys(&mut self, frame: input::EditorFrame) {
         let q = &self.data.actions;
-        if frame.step != [0, 0, 0] {
-            state::push(q, UiAct::MoveCursor(frame.step));
+        if frame.height != 0 {
+            state::push(q, UiAct::MoveCursor([0, frame.height, 0]));
         }
         let pressed = frame.pressed;
         for act in [
@@ -1181,6 +1191,7 @@ impl App {
             pressed.select_all.then_some(UiAct::SelectAll),
             pressed.select_route.then_some(UiAct::SelectRoute),
             pressed.select_none.then_some(UiAct::SelectNone),
+            pressed.select_hovered.then_some(UiAct::SelectHovered),
         ]
         .into_iter()
         .flatten()
@@ -1584,6 +1595,19 @@ impl App {
     }
 
     fn adjust_pieces(&mut self, uids: &[retrackt_format::PieceUid], kind: ParamKind, delta: i8) {
+        // The gate sequence, snapshotted before the first edit. Read per piece it
+        // would be re-derived after each one, so a whole selection nudged at once
+        // would walk the number up with every piece rather than moving together.
+        let gates: Vec<retrackt_format::PieceUid> = match kind {
+            ParamKind::Order => self
+                .data
+                .track
+                .checkpoint_sequence()
+                .iter()
+                .map(|p| p.uid)
+                .collect(),
+            _ => Vec::new(),
+        };
         let mut count = 0;
         for uid in uids {
             let Some(existing) = self.data.track.piece(*uid).copied() else {
@@ -1611,6 +1635,27 @@ impl App {
                 }
                 ParamKind::Bank => {
                     params.bank_deg = Some((bank as i16 + i16::from(delta)).clamp(-45, 45) as i8);
+                }
+                // The checkpoint order is the one parameter with no default to
+                // fall back to: it is the piece's place in the run, which the
+                // road gives it until the author says otherwise. Nudging it
+                // writes the number it is being moved away from, so a piece the
+                // author never touched keeps its road order exactly.
+                ParamKind::Order => {
+                    if !retrackt_format::piece::catalog_by_id(existing.id).is_checkpoint {
+                        if uids.len() == 1 {
+                            self.data.notice =
+                                Some(format!("{} has no checkpoint order.", existing.id.label()));
+                        }
+                        continue;
+                    }
+                    let place = gates
+                        .iter()
+                        .position(|uid| *uid == existing.uid)
+                        .map(|i| i + 1)
+                        .unwrap_or(1);
+                    let next = (place as i16 + i16::from(delta)).clamp(1, 255) as u8;
+                    params.checkpoint_order = Some(next);
                 }
             }
             let after = PieceInstance { params, ..existing };

@@ -84,34 +84,74 @@ pub fn thumbnail(doc: &TrackDocument, size: f32) -> Option<View> {
     if plan.is_empty() {
         return None;
     }
+    Some(plan_grid(plan, size, None))
+}
+
+/// A `size`-square icon of one piece, drawn from its own footprint.
+///
+/// The occupied cells rather than the reservation box, because the box is a
+/// rectangle *around* whatever shape the piece is: a curve would come out as a
+/// filled square and a loop as a slab, and the palette would be a wall of
+/// squares. The occupied cells are the road itself, so a curve reads as a corner
+/// and a loop as a ring.
+pub fn piece_icon(
+    id: PieceId,
+    params: &retrackt_format::PieceParams,
+    cell: f32,
+    size: f32,
+) -> Option<View> {
+    let shape = retrackt_format::piece_shape(id, params, cell);
+    let tint = cell_color(id);
+    let plan: BTreeMap<Plan, Color> = shape
+        .occupied
+        .iter()
+        .map(|c| ((c[0], c[2]), tint))
+        .collect();
+    if plan.is_empty() {
+        return None;
+    }
+    Some(plan_grid(plan, size, Some(tint)))
+}
+
+/// Draw a plan of coloured cells into a `size`-square box.
+///
+/// `tint` also fills the empty cells at a fraction of itself, which is what gives
+/// a piece's shape something to read against: a one-cell straight is otherwise a
+/// single dot with nothing to say which way the road runs.
+fn plan_grid(plan: BTreeMap<Plan, Color>, size: f32, tint: Option<Color>) -> View {
     let (Some(lo_x), Some(hi_x)) = (
         plan.keys().map(|(x, _)| *x).min(),
         plan.keys().map(|(x, _)| *x).max(),
     ) else {
-        return None;
+        return Box(Modifier::new()
+            .width(theme::dp(size))
+            .height(theme::dp(size)));
     };
     let (Some(lo_z), Some(hi_z)) = (
         plan.keys().map(|(_, z)| *z).min(),
         plan.keys().map(|(_, z)| *z).max(),
     ) else {
-        return None;
+        return Box(Modifier::new()
+            .width(theme::dp(size))
+            .height(theme::dp(size)));
     };
 
     let span_x = i32::from(hi_x - lo_x) + 1;
     let span_z = i32::from(hi_z - lo_z) + 1;
-    // One scale for both axes, so the drawing keeps the track's proportions: a
-    // thumbnail that stretched a long circuit into a square would misdescribe it.
+    // One scale for both axes, so the drawing keeps the proportions: an icon that
+    // stretched a long ramp into a square would misdescribe it.
     let cell_px = (size / span_x.max(span_z) as f32).max(1.0);
+    let empty = tint.map(|tint| tint.with_alpha_f32(0.12));
 
     // Every cell is a fixed size and must not be squeezed: a flex row would
-    // otherwise shrink a long track's cells to fit the box and the drawing would
-    // no longer be to scale.
+    // otherwise shrink a long piece's cells to fit the box and the drawing would
+    // be no longer to scale.
     let cell_modifier = |paint: Option<Color>| {
         let mut m = Modifier::new()
             .width(theme::dp(cell_px))
             .height(theme::dp(cell_px))
             .flex_shrink(0.0);
-        if let Some(color) = paint {
+        if let Some(color) = paint.or(empty) {
             m = m.background(color);
         }
         m
@@ -131,15 +171,13 @@ pub fn thumbnail(doc: &TrackDocument, size: f32) -> Option<View> {
         );
     }
 
-    Some(
-        Box(Modifier::new()
-            .width(theme::dp(size))
-            .height(theme::dp(size))
-            .background(theme::background())
-            .border(theme::dp(1.0), theme::text_dim(), theme::dp(4.0))
-            .clip_rounded(theme::dp(4.0)))
-        .child(Column(Modifier::new()).child(rows)),
-    )
+    Box(Modifier::new()
+        .width(theme::dp(size))
+        .height(theme::dp(size))
+        .background(theme::background())
+        .border(theme::dp(1.0), theme::text_dim(), theme::dp(4.0))
+        .clip_rounded(theme::dp(4.0)))
+    .child(Column(Modifier::new()).child(rows))
 }
 
 /// The piece covering a plan-view cell, if any. Lowest uid wins so two pieces

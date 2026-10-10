@@ -65,16 +65,19 @@ pub enum UiAct {
     MoveCursor([i16; 3]),
     /// Put the cursor at an absolute cell, from a click in the viewport.
     SetCursor([i16; 3]),
-    /// Put the cursor's X and Z, leaving its height alone. A ground-plane click
-    /// knows nothing about Y, and taking it from the click would drop a piece
-    /// placed above the terrain.
-    SetCursorXZ(i16, i16),
     /// Editor camera orbit, pan and zoom, in viewport px and a wheel factor.
     EditorOrbit(f32, f32),
     EditorPan(f32, f32),
     EditorZoom(f32),
+    /// Where the pointer is over the editor's viewport, in viewport px, so a
+    /// hover can be re-resolved against a camera that has since moved.
+    EditorPointer(f32, f32),
+    /// A click in the viewport that did not drag: place or select.
+    EditorClick(f32, f32),
     /// Replace the selection with this one piece.
     SelectPiece(retrackt_format::PieceUid),
+    /// Select the piece the pointer is over.
+    SelectHovered,
     /// Add or remove one piece from the selection.
     ToggleSelect(retrackt_format::PieceUid),
     SelectAll,
@@ -268,6 +271,10 @@ pub struct EditorData {
     pub code_out: String,
     /// Whether the library draws a schematic of each track beside its name.
     pub thumbnails: bool,
+    /// The piece the pointer is over, so the editor can name it before a
+    /// selection is made. Runtime state rather than a decision: it tracks the
+    /// view, which changes while the pointer is still.
+    pub hover: Option<retrackt_format::PieceUid>,
 }
 
 impl Default for EditorData {
@@ -284,6 +291,7 @@ impl Default for EditorData {
             code_draft: String::new(),
             code_out: String::new(),
             thumbnails: true,
+            hover: None,
         }
     }
 }

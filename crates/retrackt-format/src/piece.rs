@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 
 /// Per-instance shape parameters. Unset fields fall back to the piece's
 /// own default, so the common case is a bare `PieceInstance`.
+///
+/// `checkpoint_order` is the one field that does not describe geometry: it is
+/// the gate sequence a checkpoint takes in the run, which is otherwise read off
+/// the connected chain. Unset means "wherever the road puts it", so every
+/// document written before the field existed keeps the order it had.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PieceParams {
     /// Straight / ramp / bank / jump length in cells.
@@ -15,6 +20,13 @@ pub struct PieceParams {
     /// Bank angle in degrees, signed.
     #[serde(default)]
     pub bank_deg: Option<i8>,
+    /// Position of a checkpoint in the sequence the car must pass, 1-based.
+    ///
+    /// Checkpoints sharing a number are a set: the car may pass any of them to
+    /// advance that step. Unset keeps the piece where the chain puts it, which
+    /// is what makes the field optional on every existing track.
+    #[serde(default)]
+    pub checkpoint_order: Option<u8>,
 }
 
 impl PieceParams {
@@ -35,6 +47,13 @@ impl PieceParams {
     pub fn bank(self, deg: i8) -> Self {
         Self {
             bank_deg: Some(deg),
+            ..self
+        }
+    }
+
+    pub fn order(self, nth: u8) -> Self {
+        Self {
+            checkpoint_order: Some(nth),
             ..self
         }
     }

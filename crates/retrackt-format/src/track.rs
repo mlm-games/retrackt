@@ -198,15 +198,18 @@ impl TrackDocument {
     }
 
     /// World spawn point and heading. Falls back to the Start piece.
+    ///
+    /// Several Start pieces are allowed and the last one placed is the one the
+    /// run uses: building a second start beside a track being edited is how a
+    /// variant of a circuit gets tried, and refusing the document for it would
+    /// throw the work away. "Last placed" is the highest uid, not the last slot
+    /// in the file. The array is an unordered set, and reading it as an order
+    /// made the spawn depend on how the document happened to be saved.
     pub fn spawn(&self) -> (glam::Vec3, f32) {
         if let Some(xyz) = self.spawn_xyz {
             return (glam::Vec3::from(xyz), self.spawn_yaw_deg.to_radians());
         }
-        match self
-            .pieces
-            .iter()
-            .find(|p| crate::piece::catalog_by_id(p.id).is_start)
-        {
+        match self.active_start() {
             Some(start) => {
                 let shape = crate::geometry::piece_shape(start.id, &start.params, self.cell_size);
                 let entry = shape.ports.first().map(|p| p.cell).unwrap_or([0, 0, 0]);
@@ -221,6 +224,56 @@ impl TrackDocument {
             }
             None => (glam::Vec3::new(0.0, 1.0, 0.0), 0.0),
         }
+    }
+
+    /// The Start piece the run uses: the last one placed.
+    ///
+    /// Highest uid, because a placement is handed the next uid above everything
+    /// already in the document. That makes it the same answer on every load,
+    /// where the position in the piece array is not.
+    pub fn active_start(&self) -> Option<&PieceInstance> {
+        self.pieces
+            .iter()
+            .filter(|p| crate::piece::catalog_by_id(p.id).is_start)
+            .max_by_key(|p| p.uid)
+    }
+
+    /// Every checkpoint, in the order the car has to pass them.
+    ///
+    /// The order is a piece's own `checkpoint_order` when it has one, and its
+    /// place on the road when it does not. That fallback is what keeps every
+    /// existing track on the sequence it already had: the field was added later,
+    /// and a document that never sets it must not be re-ordered by its arrival.
+    ///
+    /// A tie on the number is broken in favour of the piece that set it, and
+    /// then by the road. Otherwise handing a gate the number it already sits at
+    /// would change nothing, and "make this the first gate" would be a control
+    /// that does nothing at all. Within one number the road order breaks the
+    /// tie, so a set of checkpoints sharing a number is ordered by where they
+    /// sit rather than by how the file lists them.
+    pub fn checkpoint_sequence(&self) -> Vec<&PieceInstance> {
+        let checkpoints: Vec<(usize, &PieceInstance)> = self
+            .race_order()
+            .iter()
+            .filter_map(|uid| self.piece(*uid))
+            .filter(|p| crate::piece::catalog_by_id(p.id).is_checkpoint)
+            .enumerate()
+            .map(|(nth, p)| (nth, p))
+            .collect();
+        let mut keyed: Vec<((u32, u8, usize), &PieceInstance)> = checkpoints
+            .iter()
+            .map(|(nth, p)| {
+                // Explicit first, then the road's own numbering for everything
+                // that never set one.
+                let (order, set) = match p.params.checkpoint_order {
+                    Some(order) => (u32::from(order), 0),
+                    None => (*nth as u32 + 1, 1),
+                };
+                ((order, set, *nth), *p)
+            })
+            .collect();
+        keyed.sort_by_key(|(key, _)| *key);
+        keyed.into_iter().map(|(_, p)| p).collect()
     }
 
     /// Start, finish and checkpoint pieces, in race order.
@@ -411,16 +464,17 @@ impl TrackDocument {
 
     /// Ordered chain of piece UIDs from the Start piece, following exits to
     /// entries. Stops at the first dead end.
+    ///
+    /// The Start it begins at is the one the run uses ([`Self::active_start`]).
+    /// A document with two starts and a chain from each would otherwise be
+    /// walked from one and spawned in another, so the car would start beside
+    /// the gates it is being timed against.
     pub fn route(&self) -> Vec<PieceUid> {
-        // Lowest uid, not the first Start in the array: a shuffled file is the
-        // same track, so which Start the chain begins at cannot depend on where
-        // it happens to sit in the file.
-        let Some(start) = self
-            .pieces
-            .iter()
-            .filter(|p| crate::piece::catalog_by_id(p.id).is_start)
-            .min_by_key(|p| p.uid)
-        else {
+        // Lowest uid among the active start only: `active_start` is already one
+        // piece, so there is nothing left to choose. A shuffled file is the same
+        // track, so which Start the chain begins at cannot depend on where it
+        // happens to sit in the file.
+        let Some(start) = self.active_start() else {
             return Vec::new();
         };
         let mut out = vec![start.uid];
@@ -450,7 +504,10 @@ impl TrackDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::demo::ChainBuilder;
+    use crate::fingerprint::gameplay_fingerprint;
     use crate::piece::PieceId;
+    use crate::piece::catalog_by_id;
 
     #[test]
     fn demo_track_chains_from_start_to_finish() {
@@ -571,6 +628,94 @@ mod tests {
         let before = doc.pieces.clone();
         doc.normalize_uids();
         assert_eq!(doc.pieces, before, "re-normalising must not change uids");
+    }
+
+    /// A start, three checkpoints and a finish, all on one chain. Checkpoints
+    /// are one cell long by default, so each sits where the road passes it.
+    fn gated_doc() -> TrackDocument {
+        let mut b = ChainBuilder::new("gates");
+        b.step(PieceId::Start, PieceParams::default().length(2));
+        b.step(PieceId::Checkpoint, PieceParams::default());
+        b.step(PieceId::Checkpoint, PieceParams::default());
+        b.step(PieceId::Checkpoint, PieceParams::default());
+        b.step(PieceId::Finish, PieceParams::default().length(2));
+        b.build()
+    }
+
+    /// Uids of the checkpoints, in the order the document says the car must pass
+    /// them.
+    fn sequence(doc: &TrackDocument) -> Vec<PieceUid> {
+        doc.checkpoint_sequence().iter().map(|p| p.uid).collect()
+    }
+
+    /// Road position of each checkpoint, so a reordering is visible as a set of
+    /// uids that is not the order the chain has them in.
+    fn road_order(doc: &TrackDocument) -> Vec<PieceUid> {
+        doc.pieces
+            .iter()
+            .filter(|p| catalog_by_id(p.id).is_checkpoint)
+            .map(|p| p.uid)
+            .collect()
+    }
+
+    #[test]
+    fn a_document_that_sets_no_order_keeps_the_order_the_road_gives() {
+        let doc = gated_doc();
+        assert_eq!(
+            sequence(&doc),
+            road_order(&doc),
+            "the field is new: a track that never set it must not be reordered"
+        );
+    }
+
+    #[test]
+    fn an_explicit_order_moves_a_checkpoint_up_along_the_finish() {
+        let mut doc = gated_doc();
+        // The last gate on the road is taken first.
+        let last = *road_order(&doc).last().expect("three checkpoints");
+        let slot = doc.pieces.iter_mut().find(|p| p.uid == last).unwrap();
+        slot.params = slot.params.order(1);
+
+        let wanted = sequence(&doc);
+        assert_eq!(wanted.first(), Some(&last), "order 1 is passed first");
+        assert_eq!(wanted.len(), 3);
+        assert_eq!(
+            wanted,
+            vec![last, road_order(&doc)[0], road_order(&doc)[1]],
+            "the others keep the road order behind it"
+        );
+    }
+
+    #[test]
+    fn checkpoints_sharing_an_order_are_passed_in_road_order() {
+        let mut doc = gated_doc();
+        // Two gates on the same number: either may be the one passed, so the
+        // tie is the road's own order rather than the file's.
+        let road = road_order(&doc);
+        for uid in [road[0], road[2]] {
+            let slot = doc.pieces.iter_mut().find(|p| p.uid == uid).unwrap();
+            slot.params = slot.params.order(3);
+        }
+
+        assert_eq!(
+            sequence(&doc),
+            vec![road[1], road[0], road[2]],
+            "the gate that kept its own number is first, then the pair in road order"
+        );
+    }
+
+    #[test]
+    fn reordering_the_gates_changes_the_fingerprint() {
+        let plain = gated_doc();
+        let mut reordered = plain.clone();
+        let last = *road_order(&reordered).last().expect("three checkpoints");
+        let slot = reordered.pieces.iter_mut().find(|p| p.uid == last).unwrap();
+        slot.params = slot.params.order(1);
+        assert_ne!(
+            gameplay_fingerprint(&plain),
+            gameplay_fingerprint(&reordered),
+            "a different gate sequence is a different run"
+        );
     }
 
     #[test]
