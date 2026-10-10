@@ -165,3 +165,113 @@ pub fn ghost_save_row(data: &AppData, actions: &ActionQueue) -> View {
             .child(ghost_btn("Save Ghost", save)),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::fit::tests::WINDOW;
+    use repose_core::{
+        SceneNode, calculate_window_size_class, set_window_container_size,
+        set_window_size_class_default,
+    };
+    use repose_ui::layout_and_paint;
+    use std::collections::HashMap;
+
+    /// A library long enough that the panel has to scroll to reach its own Close
+    /// button.
+    ///
+    /// The list used to have a scroller of its own, nested inside the panel's. That
+    /// nested XY scroller left its content at its own width so it could grow
+    /// sideways, which gave the rows nothing to wrap against: a row of a name and
+    /// three buttons came out 718 dp wide inside a 520 dp panel, and the last button
+    /// needed a horizontal scrollbar to reach. Two entries fit without the panel ever
+    /// scrolling, so the scroll path is the part that was never exercised.
+    #[test]
+    fn a_long_library_wraps_its_rows_and_still_scrolls() {
+        let sizes = [
+            (1600.0f32, 1000.0f32),
+            (1280.0, 800.0),
+            (1024.0, 600.0),
+            (360.0, 780.0),
+        ];
+        for (w, h) in sizes {
+            let _turn = WINDOW.lock().unwrap_or_else(|e| e.into_inner());
+            set_window_container_size(w, h);
+            set_window_size_class_default(calculate_window_size_class(w as u32, h as u32, 1.0));
+
+            let mut data = AppData::default();
+            let fp = retrackt_format::gameplay_fingerprint(&data.track);
+            data.ghosts = (0..14)
+                .map(|i| crate::save::GhostEntry {
+                    name: format!("Aurora Sprint {i}"),
+                    file: format!("g{i}.ghost"),
+                    track: fp.clone(),
+                    physics: retrackt_format::fingerprint::TrackFingerprint::default(),
+                    ticks: 90_000 + i as u32 * 1_000,
+                })
+                .collect();
+
+            let (scene, hits, _) = layout_and_paint(
+                &ghosts_ui(&data, &Rc::new(std::cell::RefCell::new(Vec::new()))),
+                (w as u32, h as u32),
+                &HashMap::new(),
+                &Default::default(),
+                None,
+            );
+
+            // The panel is the widest bordered box, and it scrolls its own body, so
+            // the list has to be reachable by scrolling rather than by overflowing.
+            let panel = scene
+                .nodes
+                .iter()
+                .filter_map(|n| match n {
+                    SceneNode::Border { rect, .. } if rect.w > 200.0 => Some(*rect),
+                    _ => None,
+                })
+                .max_by_key(|r| (r.h * r.w) as i64)
+                .expect("a panel");
+            let inner = (panel.x + 20.0, panel.x + panel.w - 20.0);
+
+            let scrolls = hits.iter().any(|r| {
+                r.on_scroll.is_some()
+                    && r.rect.x >= panel.x - 1.0
+                    && r.rect.x + r.rect.w <= panel.x + panel.w + 1.0
+            });
+            assert!(
+                scrolls,
+                "at {w:.0}x{h:.0} the panel does not scroll, so a long library \
+                 cannot reach its own Close button"
+            );
+
+            // Every row's controls stay inside the panel, and the row wraps rather
+            // than growing sideways out of it.
+            for n in &scene.nodes {
+                if let SceneNode::Text { rect, text, .. } = n {
+                    if text.as_ref() == "Race" || text.as_ref() == "Delete" {
+                        assert!(
+                            rect.x >= inner.0 - 0.5 && rect.x + rect.w <= inner.1 + 0.5,
+                            "at {w:.0}x{h:.0} {text:?} runs from {:.0} to {:.0}, \
+                             outside the panel's {:.0}..{:.0}",
+                            rect.x,
+                            rect.x + rect.w,
+                            inner.0,
+                            inner.1
+                        );
+                    }
+                }
+            }
+
+            // The last row is below the fold rather than beside the first: a library
+            // this size has to need scrolling to reach the end of it.
+            let folded = scene.nodes.iter().any(|n| match n {
+                SceneNode::Text { rect, .. } if rect.y > panel.y + panel.h => true,
+                _ => false,
+            });
+            assert!(
+                folded,
+                "at {w:.0}x{h:.0} every row fits, so the panel's scroller was never \
+                 exercised by this test"
+            );
+        }
+    }
+}

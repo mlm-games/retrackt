@@ -188,13 +188,19 @@ fn at(center: (f32, f32), radius_dp: f32) -> (Option<Dp>, Option<Dp>, Option<Dp>
 mod tests {
     use super::*;
     use crate::app::input::STICK_TRAVEL_DP;
+    use crate::app::state::AppData;
     use crate::ui::fit::tests::WINDOW;
     use repose_core::{
-        SceneNode, calculate_window_size_class, set_window_container_size,
+        HitRegion, Rect, SceneNode, calculate_window_size_class, set_window_container_size,
         set_window_size_class_default,
     };
     use repose_ui::layout_and_paint;
     use std::collections::HashMap;
+    use std::rc::Rc;
+
+    fn queue() -> crate::app::state::ActionQueue {
+        Rc::new(std::cell::RefCell::new(Vec::new()))
+    }
 
     /// The discs only exist during a race under a finger, neither of which a test
     /// can produce, so at least check it composes and comes out the depth it should.
@@ -255,6 +261,118 @@ mod tests {
                     (found_x - want_x).abs() < 2.0 && (found_y - want_y).abs() < 2.0,
                     "at {w:.0}x{h:.0} a touch at px{anchor:?} drew the base at \
                      {found_x:.1},{found_y:.1} dp instead of {want_x:.1},{want_y:.1}"
+                );
+            }
+        }
+    }
+
+    /// The bottom band: the key hints and the race buttons must never be drawn over
+    /// each other, and neither may run off the window.
+    ///
+    /// The hint block is left-anchored and the buttons right-anchored, which holds
+    /// only while the two fit across the window together — the test that decides it
+    /// is their widths added up, not the window's size class, because a 900 dp window
+    /// is not compact and is still too narrow for a 520 dp hint block beside three
+    /// 150 dp buttons. That conditional was inverted once while the fix was being
+    /// written, and the numbers still looked plausible at a glance.
+    #[test]
+    fn the_bottom_band_never_overlaps_or_overflows() {
+        let sizes = [
+            (1600.0f32, 1000.0f32),
+            (1280.0, 800.0),
+            (1024.0, 600.0),
+            (900.0, 640.0),
+            (640.0, 900.0),
+            (360.0, 780.0),
+        ];
+        for (w, h) in sizes {
+            let _turn = WINDOW.lock().unwrap_or_else(|e| e.into_inner());
+            set_window_container_size(w, h);
+            set_window_size_class_default(calculate_window_size_class(w as u32, h as u32, 1.0));
+            // Practice adds the third button, which is the widest the row gets.
+            let mut data = AppData::default();
+            data.practice = true;
+            let (scene, hits, _) = layout_and_paint(
+                &race_ui(&data, &queue(), Spacer()),
+                (w as u32, h as u32),
+                &HashMap::new(),
+                &Default::default(),
+                None,
+            );
+
+            // The buttons are the clickable things in the bottom of the screen; the
+            // hint lines are text below the HUD that is not inside one of them.
+            let buttons: Vec<&HitRegion> = hits
+                .iter()
+                .filter(|r| r.on_click.is_some() && r.rect.h >= 35.0 && r.rect.y > h * 0.5)
+                .collect();
+            assert!(
+                !buttons.is_empty(),
+                "no race buttons found in the bottom half at {w:.0}x{h:.0}"
+            );
+            let inside = |r: Rect| {
+                buttons.iter().any(|b| {
+                    r.x >= b.rect.x - 0.5
+                        && r.y >= b.rect.y - 0.5
+                        && r.x + r.w <= b.rect.x + b.rect.w + 0.5
+                        && r.y + r.h <= b.rect.y + b.rect.h + 0.5
+                })
+            };
+            let hints: Vec<Rect> = scene
+                .nodes
+                .iter()
+                .filter_map(|n| match n {
+                    SceneNode::Text { rect, .. }
+                        if rect.h >= 16.0
+                            && rect.h <= 30.0
+                            && rect.y > h * 0.5
+                            && !inside(*rect) =>
+                    {
+                        Some(*rect)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                !hints.is_empty(),
+                "no hint lines found in the bottom half at {w:.0}x{h:.0}"
+            );
+
+            for hint in &hints {
+                for b in &buttons {
+                    let hit_w = (hint.x + hint.w).min(b.rect.x + b.rect.w) - hint.x.max(b.rect.x);
+                    let hit_h = (hint.y + hint.h).min(b.rect.y + b.rect.h) - hint.y.max(b.rect.y);
+                    assert!(
+                        hit_w <= 2.0 || hit_h <= 2.0,
+                        "at {w:.0}x{h:.0} the hint text {hint:?} is drawn over the \
+                         button at {:.0},{:.0} {:.0}x{:.0}",
+                        b.rect.x,
+                        b.rect.y,
+                        b.rect.w,
+                        b.rect.h
+                    );
+                }
+                assert!(
+                    hint.x >= -0.5 && hint.x + hint.w <= w + 0.5,
+                    "at {w:.0}x{h:.0} a hint line {hint:?} runs off the window"
+                );
+            }
+            for b in &buttons {
+                assert!(
+                    b.rect.x >= -0.5 && b.rect.x + b.rect.w <= w + 0.5,
+                    "at {w:.0}x{h:.0} a race button at {:.0},{:.0} {:.0}x{:.0} runs off the window",
+                    b.rect.x,
+                    b.rect.y,
+                    b.rect.w,
+                    b.rect.h
+                );
+                assert!(
+                    b.rect.y + b.rect.h <= h + 0.5,
+                    "at {w:.0}x{h:.0} a race button at {:.0},{:.0} {:.0}x{:.0} runs off the bottom",
+                    b.rect.x,
+                    b.rect.y,
+                    b.rect.w,
+                    b.rect.h
                 );
             }
         }
