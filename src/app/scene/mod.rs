@@ -12,8 +12,18 @@ use crate::app::state::Screen;
 
 const GROUND_Y: f32 = -0.5;
 const TILE: f32 = 8.0;
-const GROUND_TILES: i32 = 64;
-const GROUND_MARGIN: f32 = 64.0;
+/// How far past the track the built-up ground runs, in metres. Far enough to
+/// reach past the far plane from wherever the track is, so the outermost frame
+/// is only ever seen softening into the fog rather than ending.
+const GROUND_RUN: f32 = 2200.0;
+/// Width of the fine frame beside the road, where the eye can still resolve
+/// detail, and how each graded frame's radius grows over the last.
+const GROUND_FINE_RUN: f32 = 40.0;
+const GROUND_GROWTH: f32 = 2.0;
+/// Tiles across a graded frame's outer edge, which its pitch is derived from. A
+/// frame holds a fixed count whatever its radius, so a frame far out has the
+/// same tile count as one up close and simply larger tiles.
+const GROUND_EDGE: f32 = 11.0;
 
 /// Preview tints. Amber means the piece will join the road it is dropped beside;
 /// blue means it will sit where the cursor is, unattached. Two flat colours that
@@ -52,13 +62,15 @@ const MOUNTAIN_INNER: f32 = 100.0;
 const MOUNTAIN_STEP: f32 = 100.0;
 /// Height a full-height sample is raised by.
 const MOUNTAIN_SCALE: f32 = 100.0;
-/// Height bands per ring, and the fraction of them ending on the ground. The
-/// track faces a gap in the range: a wall of mountain against the road would
-/// box it in.
+/// Height bands per ring. The track faces an apron of flat ground: a wall of
+/// mountain built straight against the road would box the circuit in.
 const MOUNTAIN_BANDS: usize = 8;
-const MOUNTAIN_FLAT_ENDS: usize = 2;
 /// Far ground sits a hair under the detailed ground so the two never z-fight.
 const FAR_GROUND_DROP: f32 = 0.05;
+/// Edge of the plain, and the renderer's far plane it has to reach past from
+/// wherever the camera has got to, which is the whole reason it tracks the view.
+const PLAIN_REACH: f32 = 3200.0;
+const FAR_PLANE: f32 = 2000.0;
 /// Inner radius of the terrain ring must stay inside the renderer's far plane,
 /// or the range is clipped away and the bug it fixes looks like it never ran.
 const MOUNTAIN_MAX_INNER: f32 = 1700.0;
@@ -184,77 +196,132 @@ fn ground_group(bounds: ([f32; 3], [f32; 3])) -> MeshGroup {
     let a = lin(GRASS_A);
     let b = lin(GRASS_B);
     let (lo, hi) = bounds;
-    for z in tile_range(lo[2], hi[2]) {
-        for x in tile_range(lo[0], hi[0]) {
-            let tint = if (x + z).rem_euclid(2) == 0 { a } else { b };
-            let x0 = x as f32 * TILE;
-            let z0 = z as f32 * TILE;
-            group.push_quad_lit(
-                [x0, GROUND_Y, z0],
-                [x0, GROUND_Y, z0 + TILE],
-                [x0 + TILE, GROUND_Y, z0 + TILE],
-                [x0 + TILE, GROUND_Y, z0],
-                tint,
-                [0.0, 1.0, 0.0],
-            );
-        }
+    let centre = [(lo[0] + hi[0]) * 0.5, (lo[2] + hi[2]) * 0.5];
+    // The *narrower* of the two extents, so the first frame starts inside the
+    // track's own box and the corners either side of a long thin circuit are
+    // ground rather than a hole in it.
+    let inner = (hi[0] - lo[0]).min(hi[2] - lo[2]).max(1.0) * 0.5;
+
+    // Fine tile beside the road: the pitch that gives parallax when the camera
+    // is close in, which is the only place the eye can resolve it.
+    let fine = inner + GROUND_FINE_RUN;
+    emit_frame(&mut group, centre, inner, fine, TILE, a, b);
+
+    // Then frames whose tile count is fixed, so the pitch grows with distance
+    // instead. The same two greens at every distance, with only the size of a
+    // square of grass changing: a dappling that simply runs out is a line the
+    // eye finds instantly, and a pitch that grows is not.
+    let mut radius = fine;
+    while radius < inner + GROUND_RUN {
+        let outer = radius * GROUND_GROWTH;
+        emit_frame(
+            &mut group,
+            centre,
+            radius,
+            outer,
+            (2.0 * outer / GROUND_EDGE).max(TILE),
+            a,
+            b,
+        );
+        radius = outer;
     }
-    // The detailed ground stops a little past the track. Beyond it the frame
-    // below carries the same colour out to the mountain base, so the plain does
-    // not simply stop in the middle distance.
-    frame_to(&mut group, reach_of(bounds));
     group
 }
 
-/// Outermost radius the plain has to cover to meet the terrain ring.
-fn reach_of(bounds: ([f32; 3], [f32; 3])) -> f32 {
-    let (lo, hi) = bounds;
-    let half_x = (hi[0] - lo[0]) * 0.5;
-    let half_z = (hi[2] - lo[2]) * 0.5;
-    let inner = mountain_inner(half_x, half_z);
-    inner + MOUNTAIN_STEP * MOUNTAIN_BANDS as f32
+/// One square frame from `radius` to `outer`, tiled at `pitch`.
+///
+/// Four strips, with the corners belonging to the horizontal ones so nothing is
+/// drawn twice. The inner and outer bounds are worked out per axis: reading one
+/// axis's bound where the other's belongs leaves the hole a quadrant rather than
+/// a square, which is a hole the size of the track beside the track.
+fn emit_frame(
+    group: &mut MeshGroup,
+    centre: [f32; 2],
+    radius: f32,
+    outer: f32,
+    pitch: f32,
+    a: [f32; 3],
+    b: [f32; 3],
+) {
+    let tint = |i: i32, j: i32| if (i + j).rem_euclid(2) == 0 { a } else { b };
+    let (i_lo, i_hi) = (
+        ((centre[0] - outer) / pitch).floor() as i32,
+        ((centre[0] + outer) / pitch).ceil() as i32,
+    );
+    let (i_in, i_out) = (
+        ((centre[0] - radius) / pitch).ceil() as i32,
+        ((centre[0] + radius) / pitch).floor() as i32,
+    );
+    let (j_lo, j_hi) = (
+        ((centre[1] - outer) / pitch).floor() as i32,
+        ((centre[1] + outer) / pitch).ceil() as i32,
+    );
+    let (j_in, j_out) = (
+        ((centre[1] - radius) / pitch).ceil() as i32,
+        ((centre[1] + radius) / pitch).floor() as i32,
+    );
+    // Horizontal strips carry the corners.
+    for i in i_lo..i_hi {
+        for j in (j_lo..j_in).chain(j_out + 1..j_hi) {
+            push_tile(group, i, j, pitch, tint(i, j));
+        }
+    }
+    for j in j_in..j_out + 1 {
+        for i in (i_lo..i_in).chain(i_out + 1..i_hi) {
+            push_tile(group, i, j, pitch, tint(i, j));
+        }
+    }
 }
 
-/// A flat frame from the detailed ground's edge out to `reach`.
+/// One tile of `pitch`, at tile-index coordinates.
+fn push_tile(group: &mut MeshGroup, i: i32, j: i32, pitch: f32, tint: [f32; 3]) {
+    let (x0, z0) = (i as f32 * pitch, j as f32 * pitch);
+    group.push_quad_lit(
+        [x0, GROUND_Y, z0],
+        [x0, GROUND_Y, z0 + pitch],
+        [x0 + pitch, GROUND_Y, z0 + pitch],
+        [x0 + pitch, GROUND_Y, z0],
+        tint,
+        [0.0, 1.0, 0.0],
+    );
+}
+
+/// Plain out to the horizon, tracking the view.
 ///
-/// Stripes and corners rather than one big quad, so nothing overlaps the ground
-/// already drawn: two coplanar quads at the same height would z-fight, and a
-/// quad lowered to avoid it leaves a step the eye finds instantly.
-fn frame_to(group: &mut MeshGroup, reach: f32) {
-    let edge = {
-        let mut far = 0.0f32;
-        for p in &group.positions {
-            far = far.max(p[0].abs()).max(p[2].abs());
-        }
-        far
+/// Detailed ground is built once around the track, so flying the editor camera
+/// off it would leave the plain ending under the wheels and the sky showing
+/// through. This follows the camera instead.
+///
+/// One flat quad rather than a grid: the detailed tiles beside the track already
+/// supply the parallax, the plain is mostly at distance and softening into the
+/// fog, and a grid tall enough to reach past the far plane costs thousands of
+/// triangles a frame for a pattern the eye cannot resolve out there. The colour
+/// is the lighter of the two the tiles alternate between, so the change from
+/// checked to plain reads as distance rather than as a step in hue.
+fn plain_group(centre: Vec3) -> MeshGroup {
+    let mut group = MeshGroup {
+        depth_test: true,
+        ..MeshGroup::default()
     };
-    if reach <= edge {
-        return;
-    }
+    assert!(
+        PLAIN_REACH > FAR_PLANE,
+        "the plain must reach past the far plane or its edge shows"
+    );
     let y = GROUND_Y - FAR_GROUND_DROP;
-    let tint = lin(GRASS_A);
-    // The plane is centered on the origin, so the ground built around a track
-    // that is not is reached by covering the union of both extents.
-    let outer = edge.max(reach);
-    for (x0, x1, z0, z1) in [
-        (-outer, -edge, -outer, outer),
-        (edge, outer, -outer, outer),
-        (-edge, edge, -outer, -edge),
-        (-edge, edge, edge, outer),
-        (-outer, -edge, -outer, -edge),
-        (edge, outer, -outer, -edge),
-        (-outer, -edge, edge, edge),
-        (edge, outer, edge, edge),
-    ] {
-        group.push_quad_lit(
-            [x0, y, z0],
-            [x0, y, z1],
-            [x1, y, z1],
-            [x1, y, z0],
-            tint,
-            [0.0, 1.0, 0.0],
-        );
-    }
+    let r = PLAIN_REACH;
+    // Centred on the view rather than snapped to a grid: a quad laid out from a
+    // grid origin covers 3200 m forward of that origin, which puts its far edge
+    // a metre past the camera whenever the view sits near the end of a cell.
+    let (x0, z0) = (centre.x - r, centre.z - r);
+    group.push_quad_lit(
+        [x0, y, z0],
+        [x0, y, z0 + r * 2.0],
+        [x0 + r * 2.0, y, z0 + r * 2.0],
+        [x0 + r * 2.0, y, z0],
+        lin(GRASS_A),
+        [0.0, 1.0, 0.0],
+    );
+    group
 }
 
 /// Inner radius of the terrain ring: far enough to clear the track's own
@@ -281,32 +348,15 @@ fn mountain_group(bounds: ([f32; 3], [f32; 3])) -> MeshGroup {
     }
     let centre = [(lo[0] + hi[0]) * 0.5, 0.0, (lo[2] + hi[2]) * 0.5];
     let columns = (inner * 0.1).max(8.0) as usize;
-    let mut heights: Vec<[f32; MOUNTAIN_BANDS]> = Vec::with_capacity(columns);
-    let mut state: u32 = 0x2545_F491;
-    let mut next = move || {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        (state as f32 / u32::MAX as f32) - 0.5
-    };
-    for _ in 0..columns {
-        let mut row = [0.0f32; MOUNTAIN_BANDS];
-        for (band, slot) in row.iter_mut().enumerate() {
-            // The innermost two bands meet the plain, and the outermost ends
-            // flat: a range that runs to a point at the far side looks like a
-            // spike rather than a ridge.
-            let flat = band < MOUNTAIN_FLAT_ENDS || band == MOUNTAIN_BANDS - 1;
-            let mut v = next();
-            if flat {
-                v = 0.0;
-            }
-            *slot = v;
-        }
-        heights.push(row);
-    }
+    let mut noise = Noise::new(0x2545_F491);
 
     let rock_a = lin(0x6F7A63);
     let rock_b = lin(0x8A9078);
+    let mut profiles: Vec<[f32; MOUNTAIN_BANDS]> = Vec::with_capacity(columns);
+    for _ in 0..columns {
+        profiles.push(profile(&mut noise));
+    }
+
     let mut column = 0usize;
     while column < columns {
         let here = column;
@@ -316,8 +366,8 @@ fn mountain_group(bounds: ([f32; 3], [f32; 3])) -> MeshGroup {
         for band in 0..MOUNTAIN_BANDS - 1 {
             let r0 = inner + MOUNTAIN_STEP * band as f32;
             let r1 = inner + MOUNTAIN_STEP * (band + 1) as f32;
-            let (h0, h1) = (heights[here][band], heights[here][band + 1]);
-            let (h2, h3) = (heights[next_col][band], heights[next_col][band + 1]);
+            let (h0, h1) = (profiles[here][band], profiles[here][band + 1]);
+            let (h2, h3) = (profiles[next_col][band], profiles[next_col][band + 1]);
             let tint = if (column + band) % 2 == 0 {
                 rock_a
             } else {
@@ -337,6 +387,58 @@ fn mountain_group(bounds: ([f32; 3], [f32; 3])) -> MeshGroup {
         column += 1;
     }
     group
+}
+
+/// One column's height across the bands, smooth and never below the plain.
+///
+/// The profile is a couple of summed sines rather than an independent random per
+/// band. Independent randoms make a sawtooth: each band a step from the last,
+/// with 100 m of height over 100 m of radius at full amplitude, which reads as
+/// spikes on a pincushion rather than as a range. Summed sines give a silhouette
+/// that rolls, and the ends are pinned flat so the range meets the plain at both
+/// the inner and the outer edge.
+fn profile(noise: &mut Noise) -> [f32; MOUNTAIN_BANDS] {
+    let mut out = [0.0f32; MOUNTAIN_BANDS];
+    let (phase, frequency) = (noise.unit() * TAU, 1.0 + noise.unit() * 2.0);
+    let (phase2, frequency2) = (noise.unit() * TAU, 3.0 + noise.unit() * 4.0);
+    let mut peak = 0.0f32;
+    for (band, slot) in out.iter_mut().enumerate() {
+        let u = band as f32 / (MOUNTAIN_BANDS - 1) as f32;
+        let v =
+            (u * frequency * TAU + phase).sin() * 0.6 + (u * frequency2 * TAU + phase2).sin() * 0.4;
+        // Held above the plain: a negative height would put the terrain under
+        // the ground and read as a trench.
+        *slot = v.max(0.0);
+        peak = peak.max(*slot);
+    }
+    out[0] = 0.0;
+    out[MOUNTAIN_BANDS - 1] = 0.0;
+    if peak > 1e-4 {
+        for v in out.iter_mut() {
+            *v /= peak;
+        }
+    }
+    out
+}
+
+/// Fixed-seed generator. The range has to be the same range on every load, or a
+/// saved run's background differs from the run it was recorded against.
+struct Noise {
+    state: u32,
+}
+
+impl Noise {
+    fn new(seed: u32) -> Self {
+        Self { state: seed | 1 }
+    }
+
+    /// Uniform in 0..1.
+    fn unit(&mut self) -> f32 {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 17;
+        self.state ^= self.state << 5;
+        self.state as f32 / u32::MAX as f32
+    }
 }
 
 /// Outward normal of the triangle `a, b, c`.
@@ -375,14 +477,6 @@ fn push_quad(
     group
         .indices
         .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-}
-
-fn tile_range(lo: f32, hi: f32) -> std::ops::Range<i32> {
-    let start = (((lo - GROUND_MARGIN) / TILE).floor() as i32).clamp(-GROUND_TILES, GROUND_TILES);
-    let end = (((hi + GROUND_MARGIN) / TILE).ceil() as i32)
-        .clamp(-GROUND_TILES, GROUND_TILES)
-        .max(start + 1);
-    start..end
 }
 
 /// Unlit gradient dome, centred on the car so the horizon stays put. No
@@ -522,6 +616,9 @@ impl App {
             car.pos
         };
         frame.push(self.sky.at(centre));
+        // The plain follows the view, so it is built here rather than cached with
+        // the ground: the detailed tiles are static and this one is not.
+        frame.push(plain_group(centre));
         // Ground and track are handed over by value: `Frame3d` owns its groups
         // and repame-view3d has no shared-group handle, so a per-frame clone is
         // the price of them appearing in every frame. They stay separate groups
@@ -691,5 +788,94 @@ mod tests {
             assert!(n[1] > 0.0, "normal {i} points into the ground: {n:?}");
         }
         assert_eq!(group.normals.len(), group.positions.len());
+    }
+
+    #[test]
+    fn the_plain_covers_every_axis_past_the_far_plane_from_anywhere() {
+        // A quad laid out from a grid origin covers 3200 m forward of that
+        // origin, whichever puts its edge a metre past the camera when the view
+        // sits near the end of a cell. Checked from several positions, including
+        // one far outside any track, because "fly the camera off the plain" is
+        // the case this exists for.
+        for centre in [
+            Vec3::new(45.0, 0.0, 45.0),
+            Vec3::new(-3199.0, 0.0, 3199.0),
+            Vec3::new(-9000.0, 0.0, 4000.0),
+            Vec3::new(0.0, 0.0, 0.0),
+        ] {
+            let group = plain_group(centre);
+            assert_eq!(group.tri_count(), 2, "the plain is one quad");
+            let cover = |axis: usize| {
+                let lo = group
+                    .positions
+                    .iter()
+                    .map(|p| p[axis])
+                    .fold(f32::MAX, f32::min);
+                let hi = group
+                    .positions
+                    .iter()
+                    .map(|p| p[axis])
+                    .fold(f32::MIN, f32::max);
+                (centre[axis] - lo).min(hi - centre[axis])
+            };
+            for axis in [0, 2] {
+                assert!(
+                    cover(axis) > FAR_PLANE,
+                    "at {:?} the plain covers only {} on axis {axis}",
+                    centre,
+                    cover(axis)
+                );
+            }
+        }
+    }
+
+    /// Every point beyond the ground's inner radius has ground under it.
+    ///
+    /// The hole the frames leave behind is the track's own *narrower* extent,
+    /// because a circuit 20 m wide and 300 m long puts most of its bounding box
+    /// off the road. Starting the frames at the wider extent left those corners
+    /// open, which reads as a square hole in the ground beside the track.
+    #[test]
+    fn the_ground_leaves_no_hole_beside_a_non_square_track() {
+        for doc in retrackt_format::builtin_tracks() {
+            let (_, bounds) = track::build_group(&doc);
+            let group = ground_group(bounds);
+            let centre = [
+                (bounds.0[0] + bounds.1[0]) * 0.5,
+                (bounds.0[2] + bounds.1[2]) * 0.5,
+            ];
+            let reach = (bounds.1[0] - bounds.0[0])
+                .max(bounds.1[2] - bounds.0[2])
+                .min(group.positions.iter().fold(0.0f32, |acc, p| {
+                    acc.max((p[0] - centre[0]).abs())
+                        .max((p[2] - centre[1]).abs())
+                }));
+            for step in 0..24usize {
+                let angle = std::f32::consts::TAU * step as f32 / 24.0;
+                for fraction in [0.55f32, 0.8, 1.0, 1.4] {
+                    let r = reach * fraction;
+                    let (x, z) = (centre[0] + angle.cos() * r, centre[1] + angle.sin() * r);
+                    let covered = group.positions.chunks_exact(4).any(|quad| {
+                        // Every tile is axis-aligned, so its four corners give
+                        // its extent directly. Comparing corner to corner would
+                        // demand the point sit on the corner itself.
+                        let (mut x_lo, mut x_hi) = (f32::MAX, f32::MIN);
+                        let (mut z_lo, mut z_hi) = (f32::MAX, f32::MIN);
+                        for corner in quad {
+                            x_lo = x_lo.min(corner[0]);
+                            x_hi = x_hi.max(corner[0]);
+                            z_lo = z_lo.min(corner[2]);
+                            z_hi = z_hi.max(corner[2]);
+                        }
+                        x >= x_lo && x <= x_hi && z >= z_lo && z <= z_hi
+                    });
+                    assert!(
+                        covered,
+                        "{}: no ground at ({x:.0}, {z:.0}), {} m from centre",
+                        doc.name, r
+                    );
+                }
+            }
+        }
     }
 }
