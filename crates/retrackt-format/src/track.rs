@@ -680,10 +680,25 @@ mod tests {
         // Matching on direction alone would also let an entry satisfy an
         // entry, inventing a route; matching by port index prevents it.
         let mut doc = TrackDocument::empty();
-        doc.pieces = vec![
-            PieceInstance::new(PieceId::Straight, [0, 0, 0]).with_uid(PieceUid(1)),
-            PieceInstance::new(PieceId::Straight, [0, 0, 1]).with_uid(PieceUid(2)),
-        ];
+        doc.pieces = vec![PieceInstance::new(PieceId::Straight, [0, 0, 0]).with_uid(PieceUid(1))];
+        doc.normalize_uids();
+        // The second piece goes wherever the first one leaves, so the pair is
+        // joined whatever a straight happens to be sized at.
+        let exit = crate::geometry::from_grid(
+            crate::geometry::piece_shape(PieceId::Straight, &PieceParams::default(), doc.cell_size)
+                .ports
+                .last()
+                .map(|p| {
+                    let w = crate::piece::rotate_local_xz(p.cell, 0);
+                    w
+                })
+                .unwrap_or([1, 0, 0]),
+            doc.cell_size,
+        );
+        let exit_cell = crate::geometry::to_grid(exit, doc.cell_size);
+        doc.pieces
+            .push(PieceInstance::new(PieceId::Straight, exit_cell).with_uid(doc.next_piece_uid()));
+        doc.normalize_uids();
         assert_eq!(doc.joins(PieceUid(1)), Some(PieceUid(2)));
         assert_eq!(doc.joins(PieceUid(2)), None, "tail is a dead end");
     }
@@ -1052,12 +1067,43 @@ mod tests {
         // second. Both straights sit there and both leave into the same cell, so
         // the route is three long whichever one is taken.
         let mut doc = TrackDocument::empty();
-        doc.pieces = vec![
-            PieceInstance::new(PieceId::Start, [0, 0, 0]).with_uid(PieceUid(1)),
-            PieceInstance::new(PieceId::Straight, [0, 0, 2]).with_uid(PieceUid(2)),
-            PieceInstance::new(PieceId::Straight, [0, 0, 2]).with_uid(PieceUid(3)),
-            PieceInstance::new(PieceId::Straight, [0, 0, 3]).with_uid(PieceUid(4)),
-        ];
+        doc.pieces = vec![PieceInstance::new(PieceId::Start, [0, 0, 0]).with_uid(PieceUid(1))];
+        doc.normalize_uids();
+        // The Start piece's own exit, rather than a cell number written by hand.
+        let start_exit = crate::geometry::to_grid(
+            crate::geometry::from_grid(
+                crate::geometry::piece_shape(
+                    PieceId::Start,
+                    &PieceParams::default(),
+                    doc.cell_size,
+                )
+                .ports
+                .last()
+                .map(|p| crate::piece::rotate_local_xz(p.cell, 0))
+                .unwrap_or([0, 0, 0]),
+                doc.cell_size,
+            ),
+            doc.cell_size,
+        );
+        let straight = PieceParams::default();
+        let straight_len = crate::geometry::to_grid(
+            crate::geometry::from_grid(
+                crate::geometry::piece_shape(PieceId::Straight, &straight, doc.cell_size)
+                    .ports
+                    .last()
+                    .map(|p| crate::piece::rotate_local_xz(p.cell, 0))
+                    .unwrap_or([1, 0, 0]),
+                doc.cell_size,
+            ),
+            doc.cell_size,
+        )[2];
+        // Both straights sit on the same exit, so they contest it. The fourth
+        // piece continues whichever one the walk takes.
+        let after = [start_exit[0], start_exit[1], start_exit[2] + straight_len];
+        for cell in [start_exit, start_exit, after] {
+            doc.pieces
+                .push(PieceInstance::new(PieceId::Straight, cell).with_uid(doc.next_piece_uid()));
+        }
         doc.normalize_uids();
         let forward = doc.chain();
         assert!(

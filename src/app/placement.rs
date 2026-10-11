@@ -168,16 +168,17 @@ mod tests {
     use super::*;
     use retrackt_format::{PieceUid, demo::ChainBuilder};
 
-    /// Two chained straights. Each default straight is one cell long, so the
-    /// first occupies z 0..1 and its exit sits on z=1, which the second piece's
-    /// entry meets: the pair is connected, and the only open exit is the
-    /// second's, at z=2.
+    /// Two chained straights. The second is anchored wherever the first one
+    /// leaves, rather than at a cell number written by hand, so the fixture
+    /// stays connected whatever a straight happens to be sized at.
     fn straight_doc() -> TrackDocument {
         let mut doc = TrackDocument::empty();
-        doc.pieces = vec![
-            PieceInstance::new(PieceId::Straight, [0, 0, 0]).with_uid(PieceUid(1)),
-            PieceInstance::new(PieceId::Straight, [0, 0, 1]).with_uid(PieceUid(2)),
-        ];
+        doc.pieces = vec![PieceInstance::new(PieceId::Straight, [0, 0, 0]).with_uid(PieceUid(1))];
+        doc.normalize_uids();
+        let first = doc.pieces[0];
+        let exit = exit_cell(&doc, &first);
+        doc.pieces
+            .push(PieceInstance::new(PieceId::Straight, exit).with_uid(doc.next_piece_uid()));
         doc.normalize_uids();
         assert_eq!(
             doc.joins(PieceUid(1)),
@@ -198,11 +199,13 @@ mod tests {
     #[test]
     fn a_cursor_near_an_open_exit_snaps_the_piece_onto_it() {
         let doc = straight_doc();
-        // The open exit is at z=2; a cursor one cell past it still snaps.
-        let p = placement_at(&doc, PieceId::Straight, [0, 0, 3], 1, 0, true);
+        // The open exit is one past the second piece's end.
+        let open = exit_cell(&doc, doc.pieces.last().unwrap());
+        let near = step_cell(open, [0, 0, 1]);
+        let p = placement_at(&doc, PieceId::Straight, near, 1, 0, true);
         assert!(p.snapped, "an exit within reach must be snapped to");
         assert_eq!(p.yaw, 0, "the chain runs along +Z");
-        assert_eq!(p.anchor, [0, 0, 2], "entry lands on the open exit");
+        assert_eq!(p.anchor, open, "entry lands on the open exit");
     }
 
     /// Heading a piece leaves in, read off its exit port.
@@ -279,29 +282,29 @@ mod tests {
     #[test]
     fn an_exit_already_taken_is_not_snapped_to() {
         let doc = straight_doc();
-        // z=1 is where the second piece starts: the first exit is met, and the
-        // only open exit is at z=2, which is out of reach.
-        let p = placement_at(&doc, PieceId::Straight, [0, 0, 1], 0, 0, true);
+        // The first piece's exit is already met by the second piece's entry.
+        let first_exit = exit_cell(&doc, &doc.pieces[0]);
+        let p = placement_at(&doc, PieceId::Straight, first_exit, 0, 0, true);
         assert!(!p.snapped, "must not double up on a connected port");
     }
 
     #[test]
     fn the_nearest_open_exit_wins_over_a_further_one() {
-        // Three chained straights: open exits are at z=2 and z=3.
-        let mut doc = TrackDocument::empty();
-        doc.pieces = vec![
-            PieceInstance::new(PieceId::Straight, [0, 0, 0]).with_uid(PieceUid(1)),
-            PieceInstance::new(PieceId::Straight, [0, 0, 1]).with_uid(PieceUid(2)),
-            PieceInstance::new(PieceId::Straight, [0, 0, 2]).with_uid(PieceUid(3)),
-        ];
+        // Three chained straights: open exits are the second's and the third's.
+        let mut doc = straight_doc();
+        let third = PieceInstance::new(
+            PieceId::Straight,
+            exit_cell(&doc, doc.pieces.last().unwrap()),
+        )
+        .with_uid(doc.next_piece_uid());
+        doc.pieces.push(third);
         doc.normalize_uids();
-        let p = placement_at(&doc, PieceId::Straight, [0, 0, 4], 2, 0, true);
+        // Two cells past the third piece: the nearest open exit is the third's.
+        let target = exit_cell(&doc, doc.pieces.last().unwrap());
+        let near = step_cell(target, [0, 0, 1]);
+        let p = placement_at(&doc, PieceId::Straight, near, 2, 0, true);
         assert!(p.snapped, "placement: {p:?}");
-        assert_eq!(
-            p.anchor,
-            [0, 0, 3],
-            "z=3 is nearer than z=2, so it is the one to join"
-        );
+        assert_eq!(p.anchor, target, "the nearest open exit is the one to join");
     }
 
     #[test]

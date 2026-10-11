@@ -10,6 +10,16 @@ use glam::{Quat, Vec3};
 use crate::piece::{GridDir, PieceId, PieceParams, catalog_by_id, resolve_params};
 use crate::{KERB_HEIGHT, ROAD_HALF_CELLS};
 
+/// Height of one grid step on the vertical axis, in cells.
+///
+/// Less than a whole cell, so a slope can be made at an angle the grid can
+/// actually carry: at a 5 m cell a whole-cell step would quantise a 20 m ramp
+/// to a rise of 0, 5, 10 or 15 m and nothing between, which is the difference
+/// between a ramp and a cliff. A quarter cell keeps the snapping that makes a
+/// neighbour's port meet this piece's exit, and still gives 1.25 m of height
+/// resolution to place it at.
+pub const GRID_Y_CELLS: f32 = 0.25;
+
 /// One triangle: three corner positions and its normal.
 pub type TriangleData = ([f32; 3], [f32; 3], [f32; 3], [f32; 3]);
 
@@ -204,14 +214,14 @@ const STRAIGHT_SEGMENTS: usize = 1;
 const LOOP_SEGMENTS: usize = 48;
 
 /// The one entry point. `id` plus resolved params define the whole shape.
-/// Rise snapped to the nearest half cell, which is the increment the grid
-/// quantises height to.
+/// Rise snapped to the nearest vertical grid step, which is the increment the
+/// grid quantises height to.
 ///
 /// A slope's two ends have to land on half cells or a neighbour anchored on the
 /// exit port meets the road a few centimetres off it, and every join on the
 /// track carries that step.
 fn snap_half_cells(rise: f32, cell: f32) -> f32 {
-    let step = cell * 0.5;
+    let step = cell * GRID_Y_CELLS;
     (rise / step).round() * step
 }
 
@@ -391,7 +401,7 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
         PieceId::Wall => {
             // Not drivable: a thin upright barrier, half a cell tall.
             c.half_width = cell * 0.06;
-            let h = cell * 0.5;
+            let h = cell * 0.25;
             push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
                 (Vec3::new(0.0, h, u * l), Vec3::Z, Vec3::X)
             });
@@ -664,7 +674,7 @@ fn entry_exit_ports(c: &Centerline, cell: f32) -> Vec<Port> {
 pub fn to_grid(p: Vec3, cell: f32) -> [i16; 3] {
     [
         (p.x / cell).round() as i16,
-        (p.y / (cell * 0.5)).round() as i16,
+        (p.y / (cell * GRID_Y_CELLS)).round() as i16,
         (p.z / cell).round() as i16,
     ]
 }
@@ -673,7 +683,7 @@ pub fn to_grid(p: Vec3, cell: f32) -> [i16; 3] {
 pub fn from_grid(c: [i16; 3], cell: f32) -> Vec3 {
     Vec3::new(
         c[0] as f32 * cell,
-        c[1] as f32 * (cell * 0.5),
+        c[1] as f32 * (cell * GRID_Y_CELLS),
         c[2] as f32 * cell,
     )
 }
@@ -760,14 +770,21 @@ mod tests {
     }
 
     #[test]
-    fn straight_ends_exactly_one_cell_later() {
+    fn straight_spans_a_whole_number_of_cells_and_exits_level() {
         let c = center(PieceId::Straight);
-        assert!((c.length() - C).abs() < 1e-3, "len {}", c.length());
         let shape = piece_shape(PieceId::Straight, &PieceParams::default(), C);
+        // It runs level, so it occupies one grid row in y and ends on it.
         assert_eq!(shape.ports[0].cell, [0, 0, 0]);
         assert_eq!(shape.ports[0].outward, GridDir::NegZ);
-        assert_eq!(shape.ports[1].cell, [0, 0, 1]);
+        assert_eq!(
+            shape.ports[1].cell,
+            to_grid(*c.pos.last().unwrap(), C),
+            "the exit cell must be where the centreline actually ends"
+        );
         assert_eq!(shape.ports[1].outward, GridDir::PosZ);
+        // And a whole number of cells long, so the next piece's anchor is a cell.
+        let cells = c.length() / C;
+        assert!((cells - cells.round()).abs() < 1e-3, "len {} cells", cells);
     }
 
     #[test]
@@ -775,33 +792,59 @@ mod tests {
         let c = center(PieceId::CurveRight90);
         let p = ports(PieceId::CurveRight90);
         assert_eq!(p[0].cell, [0, 0, 0]);
-        assert_eq!(p[1].cell, [1, 0, 1], "exit cell");
+        assert_eq!(p[1].cell, to_grid(*c.pos.last().unwrap(), C), "exit cell");
         assert_eq!(p[1].outward, GridDir::PosX, "exit faces +X");
-        // Total swept angle must be a quarter turn.
+        // A quarter turn of a circle of radius r ends r along +X and r along +Z.
         let (p, t, _, _) = c.sample(c.length()).unwrap();
-        assert!(p.distance(Vec3::new(C, 0.0, C)) < 1e-3, "exit at {p:?}");
+        let r = p.x.max(p.z);
+        assert!((p - Vec3::new(r, 0.0, r)).length() < 1e-3, "exit at {p:?}");
         assert!(t.dot(Vec3::X) > 0.999, "exit tangent {t:?}");
     }
 
     #[test]
     fn left_curve_is_the_mirror_of_the_right() {
         let p = ports(PieceId::CurveLeft90);
-        assert_eq!(p[1].cell, [-1, 0, 1]);
+        let c = center(PieceId::CurveLeft90);
+        assert_eq!(p[1].cell, to_grid(*c.pos.last().unwrap(), C), "exit cell");
         assert_eq!(p[1].outward, GridDir::NegX);
+        // The mirror of the right curve: same sweep, the other way across.
+        let right = center(PieceId::CurveRight90);
+        assert!(
+            (c.pos.last().unwrap().x + right.pos.last().unwrap().x).abs() < 1e-3,
+            "the two must be equal and opposite across x"
+        );
     }
 
     #[test]
-    fn ramp_up_ends_at_an_integer_height() {
+    fn ramp_up_ends_on_the_vertical_grid() {
         let shape = piece_shape(PieceId::RampUp, &PieceParams::default(), C);
+        let c = center(PieceId::RampUp);
         assert_eq!(shape.ports[0].cell, [0, 0, 0]);
-        // Two cells long, rising one cell edge.
-        assert_eq!(shape.ports[1].cell, [0, 2, 2], "ramp exit cell");
+        let exit = to_grid(*c.pos.last().unwrap(), C);
+        assert_eq!(shape.ports[1].cell, exit, "ramp exit cell");
+        // The rise lands on a whole vertical grid step, which is what lets a
+        // neighbour anchor on the exit cell and meet the road exactly.
+        let steps = c.pos.last().unwrap().y / (C * GRID_Y_CELLS);
+        assert!(
+            (steps - steps.round()).abs() < 1e-3,
+            "rise {} is not a whole step",
+            c.pos.last().unwrap().y
+        );
     }
 
     #[test]
     fn ramp_surface_normal_matches_its_slope() {
-        // A ramp rises one cell edge over two cells: 0.5 of run, not flat.
-        for (id, dy) in [(PieceId::RampUp, 0.5f32), (PieceId::RampDown, -0.5f32)] {
+        // The rise over the run, read off the piece rather than assumed: this is
+        // the property that must hold whatever the piece is sized at.
+        let (up, down) = (center(PieceId::RampUp), center(PieceId::RampDown));
+        let run = up.pos.last().unwrap().z;
+        for (id, dy) in [
+            // Rise over run, both read off the piece.
+            (PieceId::RampUp, up.pos.last().unwrap().y / run),
+            // A ramp down is anchored at its foot and climbs, so its drop is
+            // its first sample, not its last.
+            (PieceId::RampDown, -down.pos.first().unwrap().y / run),
+        ] {
             let tangent = Vec3::new(0.0, dy, 1.0).normalize();
             let shape = piece_shape(id, &PieceParams::default(), C);
             assert!(!shape.surface.is_empty(), "{id:?} has no drivable surface");
@@ -821,46 +864,62 @@ mod tests {
     fn ramp_up_and_down_mate_in_world_space() {
         let up = piece_shape(PieceId::RampUp, &PieceParams::default(), C);
         let down = piece_shape(PieceId::RampDown, &PieceParams::default(), C);
+        let up_c = center(PieceId::RampUp);
 
-        // A two-cell ramp rises exactly one cell edge and ends at its far port.
+        // The exit is where the centreline ends, on the vertical grid.
+        let up_exit = to_grid(*up_c.pos.last().unwrap(), C);
         assert_eq!(up.ports[0].cell, [0, 0, 0], "ramp up enters at its base");
         assert_eq!(
-            up.ports[1].cell,
-            [0, 2, 2],
-            "ramp up exits two cells on, one edge up"
+            up.ports[1].cell, up_exit,
+            "ramp up exits at the end of its centreline"
         );
 
         // A ramp down is the mirror image: it enters at its top and returns
-        // to the level below over its own length.
-        assert_eq!(down.ports[0].cell, [0, 2, 0], "ramp down enters at its top");
-        assert_eq!(down.ports[1].cell, [0, 0, 2], "ramp down exits at its base");
-
-        // One cell edge above and two cells on from a ramp up's exit, so the
-        // two join with no gap and no kink.
+        // to the level below over its own length. Its height is the one that
+        // matters, not its whole anchor: a ramp down is anchored at its foot and
+        // climbs, while a ramp up is anchored at its base.
         assert_eq!(
-            down.ports[0].cell,
-            [0, 2, 0],
-            "ramp down must enter one edge above its own base"
+            down.ports[0].cell[1], up_exit[1],
+            "ramp down enters at the height ramp up exits at"
         );
+        let down_c = center(PieceId::RampDown);
+        assert_eq!(
+            down.ports[1].cell[1],
+            to_grid(*down_c.pos.last().unwrap(), C)[1],
+            "ramp down exits at its own base"
+        );
+
+        // A ramp down descends by the same amount a ramp up rises, over the
+        // same run, so the two meet with no gap and no kink.
         assert!(
             (up.center.length() - down.center.length()).abs() < 1e-3,
             "matching ramps must match length"
         );
-        // A ramp down ends lower than it started, by exactly one edge.
         let drop = down.center.pos[0].y - down.center.pos[down.center.pos.len() - 1].y;
+        let rise = up.center.pos.last().unwrap().y - up.center.pos[0].y;
         assert!(
-            (drop - C).abs() < 1e-3,
-            "ramp down should drop one cell edge, dropped {drop}"
+            (drop - rise).abs() < 1e-3,
+            "a ramp down must drop as much as a ramp up rises, dropped {drop} vs {rise}"
         );
     }
 
     #[test]
     fn loop_is_a_full_turn_with_an_inward_normal() {
         let c = center(PieceId::Loop);
-        assert!((c.length() - std::f32::consts::TAU * 2.0 * C).abs() < 0.1);
+        // One full turn of a circle: the circumference is the length, and the
+        // radius is whatever the piece was built at.
+        let lo = c.pos.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+        let hi = c.pos.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+        let radius = (hi - lo) * 0.5;
+        assert!(
+            (c.length() - std::f32::consts::TAU * radius).abs() < 0.1 * radius,
+            "length {} is not a circle of radius {}",
+            c.length(),
+            radius
+        );
         let (p, _, n, _) = c.sample(c.length() * 0.5).unwrap();
-        // At the apex the car is upside down at 2 loop-radii.
-        assert!((p.y - 4.0 * C).abs() < 0.1, "apex height {}", p.y);
+        // At the apex the car is upside down, two radii up.
+        assert!((p.y - 2.0 * radius).abs() < 0.1, "apex height {}", p.y);
         assert!(
             n.dot(Vec3::NEG_Y) > 0.99,
             "apex normal must face down, got {n:?}"
@@ -998,11 +1057,11 @@ mod tests {
                 C,
             );
             let rise = shape.center.pos.last().expect("samples").y;
-            let half = C * 0.5;
-            let cells = rise / half;
+            let step = C * GRID_Y_CELLS;
+            let cells = rise / step;
             assert!(
                 (cells - cells.round()).abs() < 1e-3,
-                "a {deg} degree ramp rises {rise}, which is {cells} half cells"
+                "a {deg} degree ramp rises {rise}, which is {cells} vertical steps"
             );
             // And the exit port agrees with where the road actually ends.
             assert_eq!(

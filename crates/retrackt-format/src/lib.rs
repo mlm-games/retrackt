@@ -23,9 +23,17 @@ pub use replay::{PackedInput, ReplayError, ReplayTape, decode_replay, encode_rep
 pub use track::{FORMAT_VERSION, MAX_PIECES, PieceInstance, PieceUid, TrackDocument, TrackError};
 pub use validate::{Diagnostic, Severity, is_unraceable, validate};
 
-/// Half the drivable road width, in cells. Road is one cell wide.
-pub const ROAD_HALF_CELLS: f32 = 0.5;
+/// Half the drivable road width, in cells.
+///
+/// A carriageway is wider than one grid cell. At a 5 m cell this is a 13 m
+/// road, which is what the pieces are modelled against: a road one cell wide
+/// puts the car's wheels within its own body length of both kerbs and makes
+/// every piece read as a corridor rather than as a road.
+pub const ROAD_HALF_CELLS: f32 = 1.315;
 /// Kerb height in metres, drawn either side of the drivable surface.
-pub const KERB_HEIGHT: f32 = 0.16;
+pub const KERB_HEIGHT: f32 = 0.5;
 /// Cell edge length in metres.
-pub const DEFAULT_CELL_SIZE: f32 = 4.0;
+///
+/// The same in all three axes as the game this is modelled against, so a grid
+/// cell is a cube and a piece is a whole number of cells long, wide and tall.
+pub const DEFAULT_CELL_SIZE: f32 = 5.0;

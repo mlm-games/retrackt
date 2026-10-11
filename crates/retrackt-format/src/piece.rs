@@ -244,7 +244,7 @@ pub struct PieceDef {
 pub const CATALOG: &[PieceDef] = &[
     PieceDef {
         id: PieceId::Start,
-        default_length_cells: 2,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 0,
@@ -255,7 +255,7 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::Straight,
-        default_length_cells: 1,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 0,
@@ -267,7 +267,7 @@ pub const CATALOG: &[PieceDef] = &[
     PieceDef {
         id: PieceId::CurveRight90,
         default_length_cells: 0,
-        default_radius_cells: 1,
+        default_radius_cells: 2,
         default_bank_deg: 0,
         default_slope_deg: 0,
         is_start: false,
@@ -278,7 +278,7 @@ pub const CATALOG: &[PieceDef] = &[
     PieceDef {
         id: PieceId::CurveLeft90,
         default_length_cells: 0,
-        default_radius_cells: 1,
+        default_radius_cells: 2,
         default_bank_deg: 0,
         default_slope_deg: 0,
         is_start: false,
@@ -289,7 +289,7 @@ pub const CATALOG: &[PieceDef] = &[
     PieceDef {
         id: PieceId::Curve180,
         default_length_cells: 0,
-        default_radius_cells: 1,
+        default_radius_cells: 2,
         default_bank_deg: 0,
         default_slope_deg: 0,
         is_start: false,
@@ -299,7 +299,7 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::RampUp,
-        default_length_cells: 2,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 27,
@@ -310,7 +310,7 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::RampDown,
-        default_length_cells: 2,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 27,
@@ -321,7 +321,7 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::BankLeft,
-        default_length_cells: 1,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 20,
         default_slope_deg: 0,
@@ -332,7 +332,7 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::BankRight,
-        default_length_cells: 1,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 20,
         default_slope_deg: 0,
@@ -344,7 +344,7 @@ pub const CATALOG: &[PieceDef] = &[
     PieceDef {
         id: PieceId::Loop,
         default_length_cells: 0,
-        default_radius_cells: 2,
+        default_radius_cells: 3,
         default_bank_deg: 0,
         default_slope_deg: 0,
         is_start: false,
@@ -365,7 +365,7 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::Checkpoint,
-        default_length_cells: 1,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 0,
@@ -376,7 +376,7 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::Boost,
-        default_length_cells: 1,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 0,
@@ -387,7 +387,7 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::Finish,
-        default_length_cells: 2,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 0,
@@ -398,7 +398,7 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::Wall,
-        default_length_cells: 1,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 0,
@@ -530,7 +530,11 @@ mod tests {
     #[test]
     fn params_fall_back_to_catalog_defaults() {
         let (l, r, b) = resolve_params(PieceId::Straight, &PieceParams::default());
-        assert_eq!((l, r, b), (1, 0, 0));
+        // Four cells: a straight is a length of road, not a marker one cell
+        // long. The catalogue's own value is the expectation, so this moves with
+        // it instead of pinning a number that was only ever a default.
+        let want = catalog_by_id(PieceId::Straight).default_length_cells;
+        assert_eq!((l, r, b), (want, 0, 0));
         let (l, r, _) = resolve_params(PieceId::Straight, &PieceParams::default().length(4));
         assert_eq!((l, r), (4, 0));
         assert_eq!(

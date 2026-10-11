@@ -15,13 +15,15 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
     // fingerprint of an identical track.
     pieces.sort_by_key(|p| p.uid);
 
-    // Bumped because the per-piece byte stream gained another byte: the
-    // steepness of a slope decides what the car does on it, so like the gate
-    // order it cannot be left out of the hash. That costs every record and tape
-    // written before it arrived its match, which is the price of two tracks with
-    // different slopes not being the same run.
+    // Bumped because the world was resized. A cell is 5 m rather than 4, a road
+    // is 2.6 cells wide rather than one, and every piece defaults to four cells
+    // of length. `cell_size` is already hashed, but the road width and the piece
+    // defaults are not, and the same document describing a 4 m corridor and a
+    // 20 m road hashes the same. Two tracks of different size are not the same
+    // run, so the domain moves and every record written before it loses its
+    // match, which is the price of not mislabelling them.
     let mut h = blake3::Hasher::new();
-    h.update(b"retrackt-track-v3");
+    h.update(b"retrackt-track-v4");
     h.update(&doc.format.to_le_bytes());
     h.update(&doc.cell_size.to_bits().to_le_bytes());
 

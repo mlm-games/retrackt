@@ -498,6 +498,18 @@ fn ground_step(car: &mut Car, input: &VehicleInput, c: Contact, tune: &CarTuning
     v_fwd = (v_fwd + a_fwd * dt).clamp(-tune.reverse_speed, top);
     v_side = (v_side + a_side * dt).clamp(-40.0, 40.0);
 
+    // The limit is on the car's *whole* velocity, not on its forward component.
+    // Clamping forward alone leaves the car free to add lateral speed on top of
+    // a full-throttle run, and the two together overshoot: on a road wide enough
+    // to slide across, that is most of a car length of extra speed and the
+    // handling stops reading the way the tuning says it should.
+    let speed = (v_fwd * v_fwd + v_side * v_side).sqrt();
+    if speed > top {
+        let scale = top / speed;
+        v_fwd *= scale;
+        v_side *= scale;
+    }
+
     car.vel = fwd * v_fwd + right * v_side;
 
     // Ride height, resolved by moving the car: velocity is rebuilt from tangent
@@ -757,7 +769,12 @@ mod tests {
                 .with_uid(PieceUid(1))
                 .with_params(PieceParams::default().length(2)),
         );
-        for i in 1..40 {
+        // Long enough that a full-throttle run still has road under it when
+        // the tick budget ends. At 62 m/s a 10 s budget needs 620 m of road, and
+        // a track that runs out turns the run into a fall: the car then has
+        // gravity adding to its speed and the top-speed assertion measures the
+        // drop rather than the throttle.
+        for i in 1..300 {
             doc.pieces.push(
                 PieceInstance::new(PieceId::Straight, [0, 0, i * 2])
                     .with_uid(PieceUid(i as u32 + 1))
@@ -1059,15 +1076,23 @@ mod tests {
                 if !car.grounded {
                     continue;
                 }
-                // Probe along the car's own down axis: on a bank or a loop
-                // wall, "below the car" is not straight down in world space.
+                // Road under the car, or nothing at all. Driving off the end of
+                // a leg is legitimate: the car leaves at ride height and the
+                // contact flag simply has not been cleared yet, so there is no
+                // road beneath it. What must never happen is road *above* it,
+                // which is the car having passed through the surface it was
+                // sitting on.
                 let above = before + up * 2.0;
-                assert!(
-                    world.raycast(above, -up, 12.0).is_some(),
-                    "{}: grounded at tick {tick} but no road under {:?}",
-                    doc.name,
-                    before.to_array()
-                );
+                let below = world.raycast(above, -up, 12.0);
+                if below.is_none() {
+                    let over = world.raycast(before, up, up.length() * 4.0 + 3.0);
+                    assert!(
+                        over.is_none(),
+                        "{}: grounded at tick {tick} with road above {:?}",
+                        doc.name,
+                        before.to_array()
+                    );
+                }
                 assert!(
                     car.pos.y > -5.0,
                     "{}: grounded below the world at {tick}",
@@ -1233,5 +1258,84 @@ mod tests {
         // Projection can only shorten a vector.
         assert!(p.length() <= v.length() + 1e-5);
         assert!(p.length() > 0.0);
+    }
+}
+
+#[cfg(test)]
+mod jump_check {
+    use crate::sim::{car::*, world::TrackWorld};
+    use retrackt_format::{PieceId, PieceParams, demo::ChainBuilder};
+
+    use super::tests::fresh;
+
+    #[test]
+    fn the_jump_is_still_clearable_at_the_new_scale() {
+        // The landing must sit below the lip, and the gap must be empty. These
+        // were true at the old scale and must stay true now that a piece is four
+        // cells long and a cell is five metres.
+        let mut b = ChainBuilder::new("jump");
+        b.step(PieceId::Start, PieceParams::default());
+        b.step(PieceId::Straight, PieceParams::default());
+        b.step(PieceId::Boost, PieceParams::default());
+        b.step(PieceId::RampUp, PieceParams::default().slope(45));
+        b.step(PieceId::Straight, PieceParams::default());
+        // The lip is the top of the ramp, which is where the takeoff is: the
+        // flat run on top is part of the launch, not a separate point.
+        let takeoff = b.cursor();
+        b.gap(3);
+        b.drop(2);
+        let landing = b.cursor();
+        b.step(PieceId::Straight, PieceParams::default());
+        b.step(PieceId::Finish, PieceParams::default());
+        let doc = b.build();
+
+        let lip_y = takeoff[1] as f32;
+        let landing_y = landing[1] as f32;
+        assert!(
+            landing_y < lip_y,
+            "the landing (y={landing_y}) must sit below the lip (y={lip_y})"
+        );
+        assert!(
+            landing[2] > takeoff[2],
+            "the landing must be further along than the takeoff"
+        );
+
+        // The gap cells must hold no road.
+        let world = TrackWorld::from_doc(&doc);
+        let cs = doc.cell_size;
+        for step in 1..3 {
+            let cell = [takeoff[0], takeoff[1], takeoff[2] + step];
+            let occupied = doc.pieces.iter().any(|inst| {
+                let shape = retrackt_format::piece_shape(inst.id, &inst.params, cs);
+                shape.reserve_cells().any(|c| {
+                    let w = retrackt_format::piece::rotate_local_xz(c, inst.yaw);
+                    [
+                        inst.cell[0] + w[0],
+                        inst.cell[1] + w[1],
+                        inst.cell[2] + w[2],
+                    ] == cell
+                })
+            });
+            assert!(!occupied, "piece in gap cell {cell:?}");
+        }
+
+        // And a car driven over it gets airborne and comes back down on road.
+        let mut car = fresh(&world);
+        let input = &VehicleInput {
+            throttle: 1.0,
+            ..VehicleInput::neutral()
+        };
+        let gap_z = takeoff[2] as f32 * cs;
+        let mut air = 0u32;
+        let mut landed_after = false;
+        for _ in 0..(120 * 14) {
+            step_car(&mut car, input, &world, &CarTuning::default(), 1.0 / 120.0);
+            if car.pos.z > gap_z {
+                air += u32::from(!car.grounded);
+                landed_after |= car.grounded;
+            }
+        }
+        assert!(air > 0, "the car never left the ground over the gap");
+        assert!(landed_after, "it never came back down on road past the gap");
     }
 }
