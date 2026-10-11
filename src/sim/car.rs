@@ -334,6 +334,12 @@ fn contact(world: &TrackWorld, car: &Car, tune: &CarTuning) -> Option<Contact> {
 
     // Probing only downward leaves the car a frame behind a rising surface at
     // speed; the probe aims down rather than level so it meets upcoming road.
+    //
+    // Only road that has *risen* out from under the wheels counts. A crest is
+    // the case the other way round: the landing ahead is level with the lip and
+    // then falls, so the probe found it, reported contact, and held the car on
+    // the ground across a gap it was meant to fly. Requiring the hit above the
+    // wheels is what lets a jump happen at all.
     let closing = car.vel.dot(fwd);
     if closing > 0.5 {
         let ahead = reach + closing * tune.look_ahead;
@@ -341,6 +347,9 @@ fn contact(world: &TrackWorld, car: &Car, tune: &CarTuning) -> Option<Contact> {
         if let Some(h) = world.raycast(car.pos, aim, ahead)
             // Facing the car: road being climbed, not a wall scraped sideways.
             && h.normal.dot(-aim) > 0.12
+            // Above the wheels: the road has risen to meet the car, rather than
+            // fallen away ahead of it.
+            && h.point.y > car.pos.y - tune.ride_height + 0.05
         {
             return Some(Contact {
                 normal: h.normal,
@@ -445,7 +454,11 @@ fn ground_step(car: &mut Car, input: &VehicleInput, c: Contact, tune: &CarTuning
     car.orient = frame_from(n, fwd, car.steer_angle, tune, dt);
 
     // Decompose velocity in the surface frame. Any normal component is
-    // contact noise from the previous step and is discarded.
+    // contact noise from the previous step and is discarded: a car running up a
+    // ramp onto level road is redirected by its suspension, not launched, which
+    // is why a surface that rises and falls is driveable at all. What makes it
+    // leave the ground is the road *ending* under the wheels, which is left to
+    // the probe below rather than fought here.
     let v_t = project(car.vel, n);
     let mut v_fwd = v_t.dot(fwd);
     let mut v_side = v_t.dot(right);
@@ -510,6 +523,8 @@ fn ground_step(car: &mut Car, input: &VehicleInput, c: Contact, tune: &CarTuning
         v_side *= scale;
     }
 
+    // Carried through the clamp: momentum leaving the surface is not throttle,
+    // so holding top speed must not eat it.
     car.vel = fwd * v_fwd + right * v_side;
 
     // Ride height, resolved by moving the car: velocity is rebuilt from tangent
@@ -829,6 +844,36 @@ mod tests {
         );
     }
 
+    /// Horizontal run of the track's longest ramp, in metres.
+    fn ramp_run(doc: &retrackt_format::TrackDocument, cell: f32) -> f32 {
+        doc.pieces
+            .iter()
+            .filter(|p| p.id == PieceId::RampUp)
+            .map(|p| {
+                retrackt_format::geometry::piece_shape(p.id, &p.params, cell)
+                    .center
+                    .length()
+            })
+            .fold(0.0f32, f32::max)
+            .max(1.0)
+    }
+
+    /// Rise of the track's steepest ramp, in metres, read off the piece.
+    fn ramp_rise(doc: &retrackt_format::TrackDocument, cell: f32) -> f32 {
+        doc.pieces
+            .iter()
+            .filter(|p| p.id == PieceId::RampUp)
+            .map(|p| {
+                retrackt_format::geometry::piece_shape(p.id, &p.params, cell)
+                    .center
+                    .pos
+                    .last()
+                    .map(|v| v.y)
+                    .unwrap_or(0.0)
+            })
+            .fold(0.0f32, f32::max)
+    }
+
     #[test]
     fn the_car_climbs_a_ramp_without_leaving_the_road() {
         use retrackt_format::demo::ChainBuilder;
@@ -842,7 +887,8 @@ mod tests {
         for _ in 0..8 {
             b.step(PieceId::Straight, PieceParams::default().length(2));
         }
-        let world = TrackWorld::from_doc(&b.build());
+        let doc = b.build();
+        let world = TrackWorld::from_doc(&doc);
 
         let mut car = fresh(&world);
         let start_y = car.pos.y;
@@ -851,15 +897,18 @@ mod tests {
             throttle: 1.0,
             ..VehicleInput::neutral()
         };
+        // How high the ramp actually is, read off the piece rather than assumed:
+        // the piece's angle is a catalogue default and moves with it.
+        let rise = ramp_rise(&doc, doc.cell_size);
         let mut airborne_before_top = 0;
         let mut reached_top = false;
-        // How far the body leaned off world up: a ramp's face is 26.57 deg, so
-        // a car that stays level was told the road is flat.
+        // How far the body leaned off world up: a ramp's face is steepened by
+        // the bank, so a car that stays level was told the road is flat.
         let mut max_tilt = 0.0f32;
         for _ in 0..400 {
             step_car(&mut car, &input, &world, &tune, DT);
             max_tilt = max_tilt.max(1.0 - car.up().dot(Vec3::Y));
-            if car.pos.y > start_y + 3.5 {
+            if car.pos.y > start_y + rise * 0.9 {
                 reached_top = true;
                 break;
             }
@@ -870,16 +919,21 @@ mod tests {
 
         assert!(
             reached_top,
-            "never gained the ramp's 4 m; ended {:+.2} m up",
+            "never gained the ramp's {rise:.2} m; ended {:+.2} m up",
             car.pos.y - start_y
         );
         assert!(
             airborne_before_top <= 10,
             "left the road {airborne_before_top} ticks before the top"
         );
+        // The lean a ramp of this angle demands, rather than a fixed number:
+        // the angle is a catalogue default and the last threshold was tuned to
+        // an angle the piece no longer has, so it was steeper than the road.
+        let wanted = 1.0 - (rise / ramp_run(&doc, doc.cell_size)).cos();
         assert!(
-            max_tilt > 0.05,
-            "never pitched to the slope: max lean {max_tilt:.4} (up {:+?})",
+            max_tilt > wanted * 0.7,
+            "never pitched to the slope: max lean {max_tilt:.4} of {wanted:.4} wanted \
+             (up {:+?})",
             car.up()
         );
     }
@@ -1337,5 +1391,97 @@ mod jump_check {
         }
         assert!(air > 0, "the car never left the ground over the gap");
         assert!(landed_after, "it never came back down on road past the gap");
+    }
+}
+
+#[cfg(test)]
+mod drive_tests {
+    use super::tests::fresh;
+    use super::{CarTuning, TrackWorld, VehicleInput, step_car};
+    use retrackt_format::demo::ChainBuilder;
+    use retrackt_format::{PieceId, PieceParams};
+
+    /// A road that rises and falls is *driven*, not launched from.
+    ///
+    /// The suspension redirects the car when the surface normal changes; holding
+    /// the velocity that leaves the old surface instead makes every ramp a
+    /// launch pad, and the car hops its way down a perfectly smooth climb.
+    #[test]
+    fn a_road_that_climbs_and_descends_is_driven_not_launched_from() {
+        let mut b = ChainBuilder::new("climb");
+        b.step(PieceId::Start, PieceParams::default().length(4));
+        b.step(PieceId::Straight, PieceParams::default().length(2));
+        b.step(PieceId::RampUp, PieceParams::default().length(2));
+        b.step(PieceId::Straight, PieceParams::default().length(2));
+        b.step(PieceId::RampUp, PieceParams::default().length(2));
+        b.step(PieceId::Straight, PieceParams::default().length(2));
+        b.step(PieceId::RampDown, PieceParams::default().length(2));
+        b.step(PieceId::Straight, PieceParams::default().length(2));
+        b.step(PieceId::Finish, PieceParams::default().length(2));
+        let doc = b.build();
+        // Length of the road, so the run stops before the car drives off the end.
+        let far = doc.pieces.iter().map(|p| p.cell[2]).max().unwrap_or(0) as f32 * doc.cell_size;
+        let world = TrackWorld::from_doc(&doc);
+        let mut car = fresh(&world);
+        let input = VehicleInput {
+            throttle: 1.0,
+            ..VehicleInput::neutral()
+        };
+        let mut air = 0u32;
+        for _ in 0..(120 * 12) {
+            step_car(&mut car, &input, &world, &CarTuning::default(), 1.0 / 120.0);
+            // While there is still road ahead of it, the car is on it.
+            if car.pos.z < far - doc.cell_size {
+                air += u32::from(!car.grounded);
+            }
+        }
+        assert_eq!(
+            air, 0,
+            "the car left a road with {air} airborne ticks while road remained"
+        );
+    }
+
+    /// A lip is what makes a jump, not a separate piece.
+    #[test]
+    fn a_car_flying_off_a_lip_lands_on_the_far_side() {
+        let mut b = ChainBuilder::new("crest");
+        b.step(PieceId::Start, PieceParams::default().length(4));
+        b.step(PieceId::Straight, PieceParams::default().length(6));
+        b.step(PieceId::Boost, PieceParams::default().length(2));
+        b.step(PieceId::RampUp, PieceParams::default().length(4).slope(45));
+        b.step(PieceId::Straight, PieceParams::default().length(2));
+        let lip = b.cursor();
+        b.gap(4);
+        b.drop(4);
+        let landing = b.cursor();
+        b.step(PieceId::Straight, PieceParams::default().length(6));
+        b.step(PieceId::Finish, PieceParams::default());
+        let doc = b.build();
+
+        let world = TrackWorld::from_doc(&doc);
+        let mut car = fresh(&world);
+        let input = VehicleInput {
+            throttle: 1.0,
+            ..VehicleInput::neutral()
+        };
+        let lip_z = lip[2] as f32 * doc.cell_size;
+        let land_z = landing[2] as f32 * doc.cell_size;
+        let mut air = 0u32;
+        let mut peak = 0.0f32;
+        let mut landed_back = false;
+        for _ in 0..(120 * 12) {
+            step_car(&mut car, &input, &world, &CarTuning::default(), 1.0 / 120.0);
+            if car.pos.z > lip_z {
+                air += u32::from(!car.grounded);
+                peak = peak.max(car.pos.y);
+                landed_back |= car.grounded && car.pos.z > land_z;
+            }
+        }
+        assert!(air > 0, "the car never left the lip");
+        assert!(
+            peak > car.pos.y,
+            "it never rose above its landing height while airborne"
+        );
+        assert!(landed_back, "it never came back down on road past the gap");
     }
 }

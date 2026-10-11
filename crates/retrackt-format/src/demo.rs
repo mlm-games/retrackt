@@ -57,7 +57,13 @@ impl ChainBuilder {
     /// cursor forward and leaves its height alone, which puts the landing level
     /// with the takeoff and makes the gap impossible for any car at any speed.
     pub fn drop(&mut self, cells: i16) {
-        self.cursor[1] = self.cursor[1].saturating_sub(cells);
+        // Cells here mean the same as they do everywhere else in the API: a
+        // step the road travels. So a drop of 2 is 2 * cell_size metres, and
+        // taking it in the vertical axis's own units instead made `drop(2)` two
+        // and a half metres, which is a kerb rather than the fall a jump lands on.
+        let step = (1.0 / crate::geometry::GRID_Y_CELLS).round() as i16;
+        let metres = cells.saturating_mul(step.max(1));
+        self.cursor[1] = self.cursor[1].saturating_sub(metres);
     }
 
     /// Append a piece whose *entry* port lands exactly on the current cursor,
