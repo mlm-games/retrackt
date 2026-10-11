@@ -1030,26 +1030,35 @@ mod tests {
             ..VehicleInput::neutral()
         };
         let mut car = fresh(&world);
-        // Held steer on a long straight: the car leaves the road sideways long
-        // before it runs out of length, so this measures the turn while it is
-        // still on the road. Letting it fall means measuring a tumbling car,
-        // which says nothing about the steering.
+        // Held steer on a long straight. The car leaves the road sideways long
+        // before it runs out of length, so the turn is measured over the window
+        // it is still on the road and the heading is tracked there. Driving on
+        // until it has gone all the way round would measure the plain, not the
+        // steering.
+        let start = car.heading_dir;
         drive_car(
             &mut car,
-            240,
+            90,
             &VehicleInput {
                 steer: 0.8,
                 ..input
             },
             &world,
         );
+        assert!(car.grounded, "the car left the road inside the window");
         assert!(
-            car.forward().x < -0.5,
+            car.forward().x < -0.2,
             "holding right steer must curve the car right, forward is {:?}",
             car.forward().to_array()
         );
         assert!(
-            car.heading_dir.x < -0.2,
+            car.heading_dir.x < start.x - 0.1,
+            "the heading must move rightward, {:?} from {:?}",
+            car.heading_dir,
+            start
+        );
+        assert!(
+            car.heading_dir.x < -0.05,
             "heading should swing toward -X on a right turn from +Z: {:?}",
             car.heading_dir.to_array()
         );
@@ -1495,5 +1504,93 @@ mod drive_tests {
             "it never rose above its landing height while airborne"
         );
         assert!(landed_back, "it never came back down on road past the gap");
+    }
+}
+
+#[cfg(test)]
+mod ground_tests {
+    use super::tests::fresh;
+    use super::{CarTuning, TrackWorld, VehicleInput, step_car};
+    use retrackt_format::demo::ChainBuilder;
+    use retrackt_format::{PieceId, PieceParams};
+
+    /// Leaving the road lands the car on the plain, and the run carries on.
+    ///
+    /// The plain used to exist only in the scene: the collision world was built
+    /// from the track's pieces and nothing else, so a car that left the road fell
+    /// into the void and the only thing that could happen next was a teleport.
+    #[test]
+    fn leaving_the_road_lands_on_the_plain_rather_than_the_void() {
+        let mut b = ChainBuilder::new("flat");
+        b.step(PieceId::Start, PieceParams::default().length(4));
+        b.step(PieceId::Straight, PieceParams::default().length(10));
+        b.step(PieceId::Finish, PieceParams::default());
+        let doc = b.build();
+        let world = TrackWorld::from_doc(&doc);
+
+        // Ground well off the road, at the height the road itself runs at.
+        let (x, z) = (40.0f32, 200.0f32);
+        let hit = world.ground_at(glam::Vec3::new(x, 20.0, z), 60.0);
+        let on = world.ground_at(glam::Vec3::new(0.0, 20.0, 30.0), 60.0);
+        assert!(hit.is_some(), "there is nothing to land on off the road");
+        assert!(
+            (hit.unwrap().point.y - on.unwrap().point.y).abs() < 1e-3,
+            "the plain must not sit below the road: {:?} vs {:?}",
+            hit.map(|h| h.point.y),
+            on.map(|h| h.point.y)
+        );
+
+        // And a car driven off the side keeps driving on it.
+        let mut car = fresh(&world);
+        let input = VehicleInput {
+            throttle: 1.0,
+            steer: 1.0,
+            ..VehicleInput::neutral()
+        };
+        let mut lowest = f32::MAX;
+        for _ in 0..(120 * 6) {
+            step_car(&mut car, &input, &world, &CarTuning::default(), 1.0 / 120.0);
+            lowest = lowest.min(car.pos.y);
+        }
+        assert!(
+            lowest > -1.0,
+            "the car fell out of the world to {lowest} instead of landing"
+        );
+        assert!(
+            car.pos.x.abs() > 7.0 && car.grounded,
+            "the car never left the road to drive on the plain: {:?}",
+            car.pos.to_array()
+        );
+    }
+
+    /// The plain never cuts through the track, whatever the track's height.
+    #[test]
+    fn the_plain_sits_below_every_piece_of_road() {
+        for doc in retrackt_format::builtin_tracks() {
+            let world = TrackWorld::from_doc(&doc);
+            let (mut lowest, mut highest) = (f32::MAX, f32::MIN);
+            for t in &world.triangles {
+                // The two plain triangles are the only ones with no owner.
+                if t.owner.0 == 0 {
+                    continue;
+                }
+                for v in [t.a, t.b, t.c] {
+                    lowest = lowest.min(v.y);
+                    highest = highest.max(v.y);
+                }
+            }
+            let plain = world
+                .triangles
+                .iter()
+                .find(|t| t.owner.0 == 0)
+                .map(|t| t.a.y);
+            if let Some(plain_y) = plain {
+                assert!(
+                    plain_y <= lowest + 1e-3,
+                    "{}: the plain at {plain_y} cuts the road, whose lowest point is {lowest}",
+                    doc.name
+                );
+            }
+        }
     }
 }

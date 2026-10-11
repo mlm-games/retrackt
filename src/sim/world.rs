@@ -22,6 +22,10 @@ pub struct Triangle {
     pub owner: PieceUid,
 }
 
+/// Half-width of the plain in the collision world. Far past the renderer's far
+/// plane, so a car that wanders always finds ground rather than an edge.
+pub const GROUND_REACH: f32 = 8000.0;
+
 impl Triangle {
     #[inline]
     pub fn area(&self) -> f32 {
@@ -491,6 +495,39 @@ impl TrackWorld {
         // Lift the spawn clear of the road so the car settles rather than
         // starting embedded in the surface.
         let spawn = spawn + Vec3::Y * 0.6;
+
+        // The plain, as something to land on. Without it the car that leaves the
+        // road falls into the void, and the only thing that can happen next is a
+        // teleport: there is nothing under it to drive on and no way back up. Its
+        // height is the road's own lowest point, so the plain never cuts through
+        // the track, and it reaches far past the far plane so its edge is never
+        // inside the view.
+        let ground_y = triangles
+            .iter()
+            .flat_map(|t| [t.a.y, t.b.y, t.c.y])
+            .fold(f32::INFINITY, f32::min);
+        if ground_y.is_finite() {
+            let reach = GROUND_REACH.max(doc.cell_size * 64.0);
+            let (a, b, c) = (
+                Vec3::new(-reach, ground_y, -reach),
+                Vec3::new(reach, ground_y, -reach),
+                Vec3::new(reach, ground_y, reach),
+            );
+            triangles.push(Triangle {
+                a,
+                b,
+                c,
+                normal: Vec3::Y,
+                owner: PieceUid(0),
+            });
+            triangles.push(Triangle {
+                a,
+                b: c,
+                c: Vec3::new(-reach, ground_y, reach),
+                normal: Vec3::Y,
+                owner: PieceUid(0),
+            });
+        }
 
         let grid = Grid::build(&triangles, (doc.cell_size * 0.5).max(1.0));
         Self {
