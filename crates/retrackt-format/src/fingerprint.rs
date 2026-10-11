@@ -15,14 +15,13 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
     // fingerprint of an identical track.
     pieces.sort_by_key(|p| p.uid);
 
-    // The domain is bumped because the per-piece byte stream gained a byte: the
-    // checkpoint order decides the order the gates come in, which decides the
-    // run, so it cannot be left out of the hash. That costs every record and tape
-    // written before it arrived its match. They were made against a different
-    // gate sequence than the document now says it has, and calling them the same
-    // track would let a ghost from one be raced on the other.
+    // Bumped because the per-piece byte stream gained another byte: the
+    // steepness of a slope decides what the car does on it, so like the gate
+    // order it cannot be left out of the hash. That costs every record and tape
+    // written before it arrived its match, which is the price of two tracks with
+    // different slopes not being the same run.
     let mut h = blake3::Hasher::new();
-    h.update(b"retrackt-track-v2");
+    h.update(b"retrackt-track-v3");
     h.update(&doc.format.to_le_bytes());
     h.update(&doc.cell_size.to_bits().to_le_bytes());
 
@@ -51,6 +50,7 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
         h.update(&[p.params.radius_cells.unwrap_or(0)]);
         h.update(&[p.params.bank_deg.unwrap_or(0) as u8]);
         h.update(&[p.params.checkpoint_order.unwrap_or(0)]);
+        h.update(&[p.params.slope_deg.unwrap_or(0)]);
     }
 
     finish(&h.finalize())

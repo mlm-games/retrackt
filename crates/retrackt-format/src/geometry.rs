@@ -5,9 +5,9 @@
 //! metres. Grid `+Y` is compressed (a cell step is half a cell edge), so `n`
 //! cells of ramp rise `n/2` cell edges.
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
-use crate::piece::{GridDir, PieceId, PieceParams, resolve_params};
+use crate::piece::{GridDir, PieceId, PieceParams, catalog_by_id, resolve_params};
 use crate::{KERB_HEIGHT, ROAD_HALF_CELLS};
 
 /// One triangle: three corner positions and its normal.
@@ -109,12 +109,33 @@ pub struct Centerline {
     /// Cumulative arc length; `arc[0] == 0`.
     pub arc: Vec<f32>,
     pub half_width: f32,
+    /// One flag per span, true where the road is not there.
+    ///
+    /// A jump is the only piece that uses this: its middle is air, and the span
+    /// across it must not be built, or the car drives over a hole that is not
+    /// there. Parallel to the spans, so `gap[i]` covers `pos[i]` to `pos[i+1]`.
+    pub gap: Vec<bool>,
+    /// Height the road's sides hang down to, or `None` for a piece that sits on
+    /// the ground.
+    ///
+    /// A slope is a surface in the air, and a surface with nothing under it
+    /// reads as a floating ribbon: the skirt turns it into a solid ramp, and
+    /// gives the far side of a climb a wall to drop behind.
+    pub floor: Option<f32>,
     /// Pieces with a gap (jumps) or no rail (walls) set this so the guide
     /// leaves the car to ordinary grounding instead of constraining it.
     pub skip: bool,
 }
 
 impl Centerline {
+    /// Mark the spans in `[from, to)` of the sample index as airborne.
+    pub fn gap_spans(&mut self, from: usize, to: usize) {
+        self.gap = vec![false; self.pos.len().saturating_sub(1)];
+        for span in from..to.min(self.gap.len()) {
+            self.gap[span] = true;
+        }
+    }
+
     pub fn length(&self) -> f32 {
         self.arc.last().copied().unwrap_or(0.0)
     }
@@ -197,8 +218,54 @@ const STRAIGHT_SEGMENTS: usize = 1;
 const LOOP_SEGMENTS: usize = 48;
 
 /// The one entry point. `id` plus resolved params define the whole shape.
+/// Rise snapped to the nearest half cell, which is the increment the grid
+/// quantises height to.
+///
+/// A slope's two ends have to land on half cells or a neighbour anchored on the
+/// exit port meets the road a few centimetres off it, and every join on the
+/// track carries that step.
+fn snap_half_cells(rise: f32, cell: f32) -> f32 {
+    let step = cell * 0.5;
+    (rise / step).round() * step
+}
+
+/// Bank lean of a piece, in radians, in the convention that positive is a
+/// left-hand lean: the road's outside edge, on the right, is raised.
+///
+/// A right-hand piece leans the other way. The magnitude is the author's; the
+/// hand of the piece picks the sign, which is what makes one `bank` value mean
+/// "banked" on a left corner and on a right one alike.
+fn bank_lean(id: PieceId, bank_deg: i8) -> f32 {
+    let right_handed = matches!(id, PieceId::BankRight | PieceId::CurveRight90);
+    let lean = f32::from(bank_deg).to_radians();
+    if right_handed { -lean } else { lean }
+}
+
+/// Road normal for a sample, banked about the piece's own tangent.
+///
+/// `up` is the face the car rides on before the bank is applied, and the caller
+/// owns it because it is not always world up: a road that has bent vertical has
+/// no horizontal face any more, and its normal is whichever way the surface
+/// turns out to be pointing. Rotating about the tangent rather than about world
+/// +Y is what keeps the two perpendicular all the way round a corner.
+fn banked(tangent: Vec3, up: Vec3, lean: f32) -> Vec3 {
+    Quat::from_axis_angle(tangent, lean) * up
+}
+
+/// Slope steepness of a piece, in degrees, falling back to the catalogue
+/// default.
+///
+/// A separate resolver from [`resolve_params`] because the angle is not
+/// geometry the shape builder is handed: it is a knob with a range of its own
+/// and a default every existing document relies on.
+pub fn resolve_slope(id: PieceId, params: &PieceParams) -> f32 {
+    let default = catalog_by_id(id).default_slope_deg;
+    f32::from(params.slope_deg.unwrap_or(default)).clamp(5.0, 75.0)
+}
+
 pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerline {
     let (len_cells, rad_cells, bank_deg) = resolve_params(id, params);
+    let slope = resolve_slope(id, params);
     let half = ROAD_HALF_CELLS * cell;
     let hw = half;
 
@@ -221,15 +288,16 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
         }
 
         PieceId::RampUp | PieceId::RampDown => {
-            // A RampUp placed at the base and a RampDown at the top meet with
-            // no gap: up rises over its length, down descends to its base.
-            let rise = len_cells as f32 * (cell * 0.5);
+            // Steepness the author asked for, snapped to the half-cell the grid
+            // quantises height to. The snap is what lets a neighbour anchor on
+            // the exit cell and meet the road exactly: a ramp that ended 8 cm
+            // above its own port would leave a step at every join. The default
+            // angle is the one whose snap is the rise this piece always had, so
+            // a document that never set one is unchanged.
+            let rise = snap_half_cells(l * slope.to_radians().tan(), cell);
             let up = id == PieceId::RampUp;
-            // Both report their exit at the correct absolute height relative
-            // to their anchor.
-            let n = 4;
-            push_segment(&mut c, n, |u| {
-                let y = if up { u * rise } else { (1.0 - u) * rise };
+            push_segment(&mut c, 4, |u| {
+                let y = if up { u * rise } else { rise - u * rise };
                 let dy = if up { rise } else { -rise };
                 let t = Vec3::new(0.0, dy, l).normalize();
                 // Out of the sloped face, never world up: the collision world
@@ -238,26 +306,72 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
                 let nrm = Vec3::new(0.0, l, -dy).normalize();
                 (Vec3::new(0.0, y, u * l), t, nrm)
             });
+            // The road is a surface in the air: without a skirt down to the
+            // piece's lowest point a ramp reads as a floating ribbon, and the
+            // drop on the far side of a climb has nothing to be its far wall.
+            c.floor = Some(0.0);
         }
 
+        PieceId::SCurve => {
+            // Two quarter arcs of opposite hand: right then left, so the road
+            // leaves heading the way it came in, offset across by two radii.
+            // One piece rather than two, because the pair is one shape and a
+            // chicane built from two pieces has a seam through the middle of it.
+            //
+            // One parameterisation rather than two pushed segments, so the
+            // sample where they meet exists once: two segments both push their
+            // own end and start, and the duplicate pair is a zero-length span,
+            // which is a degenerate triangle in the road mesh.
+            let lean = bank_lean(id, bank_deg);
+            let n = ARC_SEGMENTS_PER_QUARTER * 2;
+            push_segment(&mut c, n, |u| {
+                let v = u * 2.0;
+                let (pos, tangent) = if v <= 1.0 {
+                    // Right-hand quarter, centre at (+r, 0, 0).
+                    let th = std::f32::consts::PI - v * std::f32::consts::FRAC_PI_2;
+                    (
+                        Vec3::new(r, 0.0, 0.0) + Vec3::new(th.cos(), 0.0, th.sin()) * r,
+                        Vec3::new(th.sin(), 0.0, -th.cos()),
+                    )
+                } else {
+                    // Left-hand quarter from where the first left off, centre at
+                    // (+r, 0, +2r).
+                    let th = -std::f32::consts::FRAC_PI_2 + (v - 1.0) * std::f32::consts::FRAC_PI_2;
+                    (
+                        Vec3::new(r, 0.0, 2.0 * r) + Vec3::new(th.cos(), 0.0, th.sin()) * r,
+                        Vec3::new(-th.sin(), 0.0, th.cos()),
+                    )
+                };
+                (pos, tangent, banked(tangent, Vec3::Y, lean))
+            });
+        }
         PieceId::BankLeft | PieceId::BankRight => {
-            // Bank leans the outside edge up. `bank_deg > 0` lowers the
-            // right-hand side, matching a right-hand banked corner.
-            let b = bank_deg as f32 * std::f32::consts::PI / 180.0;
-            let nrm = Vec3::new(b.sin(), b.cos(), 0.0);
+            // Bank leans the outside edge up: the normal tilts away from the low
+            // side, and the low side of a left-hand bank is the right-hand edge.
+            // The two hands are mirrors of each other, so the sign is the whole
+            // difference between them. Getting it wrong is silent, because both
+            // pieces still look like a banked road and still drive like one,
+            // just the wrong way round, which is why the stunt track used to
+            // place `BankRight` twice with opposite bank angles to fake a
+            // `BankLeft`.
+            let lean = bank_lean(id, bank_deg);
+            let nrm = Vec3::new(lean.sin(), lean.cos(), 0.0);
             push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
                 (Vec3::new(0.0, 0.0, u * l), Vec3::Z, nrm)
             });
         }
 
-        PieceId::CurveRight90 => {
+        PieceId::CurveRight90 | PieceId::Curve180 => {
             // Entry at the origin heading +Z, exit at (+r, 0, +r) heading +X.
             let center = Vec3::new(r, 0.0, 0.0);
-            let n = ARC_SEGMENTS_PER_QUARTER;
+            let sweeps = if id == PieceId::Curve180 { 2 } else { 1 };
+            let n = ARC_SEGMENTS_PER_QUARTER * sweeps;
+            let lean = bank_lean(id, bank_deg);
             push_segment(&mut c, n, |u| {
-                let th = std::f32::consts::PI - u * std::f32::consts::FRAC_PI_2;
+                let th = std::f32::consts::PI - u * std::f32::consts::FRAC_PI_2 * sweeps as f32;
                 let pos = center + Vec3::new(th.cos(), 0.0, th.sin()) * r;
-                (pos, Vec3::new(th.sin(), 0.0, -th.cos()), Vec3::Y)
+                let tangent = Vec3::new(th.sin(), 0.0, -th.cos());
+                (pos, tangent, banked(tangent, Vec3::Y, lean))
             });
         }
 
@@ -265,21 +379,12 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
             // Entry at the origin heading +Z, exit at (-r, 0, +r) heading -X.
             let center = Vec3::new(-r, 0.0, 0.0);
             let n = ARC_SEGMENTS_PER_QUARTER;
+            let lean = bank_lean(id, bank_deg);
             push_segment(&mut c, n, |u| {
                 let th = u * std::f32::consts::FRAC_PI_2;
                 let pos = center + Vec3::new(th.cos(), 0.0, th.sin()) * r;
-                (pos, Vec3::new(-th.sin(), 0.0, th.cos()), Vec3::Y)
-            });
-        }
-
-        PieceId::Curve180 => {
-            // Entry at the origin heading +Z, exit at (+2r, 0, 0) heading -Z.
-            let center = Vec3::new(r, 0.0, 0.0);
-            let n = ARC_SEGMENTS_PER_QUARTER * 2;
-            push_segment(&mut c, n, |u| {
-                let th = std::f32::consts::PI - u * std::f32::consts::PI;
-                let pos = center + Vec3::new(th.cos(), 0.0, th.sin()) * r;
-                (pos, Vec3::new(th.sin(), 0.0, -th.cos()), Vec3::Y)
+                let tangent = Vec3::new(-th.sin(), 0.0, th.cos());
+                (pos, tangent, banked(tangent, Vec3::Y, lean))
             });
         }
 
@@ -298,19 +403,66 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
         }
 
         PieceId::JumpGap => {
-            // Launch lip, airborne gap, landing ramp. The guide skips it so
-            // the car actually detaches instead of riding a phantom rail.
-            let n = 4;
-            let half_len = len_cells as f32 * cell * 0.5;
-            let lip = 0.8;
-            push_segment(&mut c, n, |u| {
-                let z = u * half_len;
-                // The lip rises, so neither its heading nor its face is flat.
-                let t = Vec3::new(0.0, lip, half_len).normalize();
-                let nrm = Vec3::new(0.0, half_len, -lip).normalize();
-                (Vec3::new(0.0, z * lip / half_len, z), t, nrm)
+            // A jump is three things: a lip to launch off, air, and a landing to
+            // arrive on. One centreline, so the ports are the ends of the whole
+            // flight, with the air's spans marked airborne so no road is built or
+            // collided across them.
+            //
+            // The old piece was a lip and nothing else: its centreline stopped at
+            // half its length while its exit port quantised two cells further on,
+            // so a successor was anchored in mid air past the end of the road.
+            // Both the lip's rise and the landing's fall are snapped to half
+            // cells, for the reason a ramp's is: the piece that follows has to
+            // meet the landing exactly.
+            let lip = snap_half_cells(cell * 0.5, cell);
+            let span = l / 4.0;
+            // Lip: the first quarter, climbing.
+            push_segment(&mut c, 3, |u| {
+                let z = u * span;
+                let y = u * lip;
+                let tangent = Vec3::new(0.0, lip, span).normalize();
+                (
+                    Vec3::new(0.0, y, z),
+                    tangent,
+                    Vec3::new(0.0, span, -lip).normalize(),
+                )
             });
+            let air_from = c.pos.len().saturating_sub(1);
+            // Air: the middle half, a parabola over the gap. The car is off the
+            // road here, so its shape only has to be honest about the height it
+            // reserves, which is what keeps a piece placed overhead from being
+            // built straight through the flight.
+            let apex = lip;
+            push_segment(&mut c, 4, |u| {
+                let z = span + u * span * 2.0;
+                let y = lip + apex * 4.0 * u * (1.0 - u);
+                let dy = apex * 4.0 * (1.0 - 2.0 * u);
+                let tangent = Vec3::new(0.0, dy, span * 2.0).normalize_or_zero();
+                // Perpendicular to the flight, as a frame has to be. No surface
+                // is built from these samples, so the direction is arbitrary;
+                // the orthogonality is not, because every consumer that reads
+                // a frame divides by it.
+                let nrm = Vec3::new(0.0, -tangent.z, tangent.y).normalize_or_zero();
+                (Vec3::new(0.0, y, z), tangent, nrm)
+            });
+            let air_to = c.pos.len().saturating_sub(1);
+            // Landing: the last quarter, descending back to the height the exit
+            // port will be read at, which is the height the lip left from.
+            push_segment(&mut c, 3, |u| {
+                let z = span * 3.0 + u * span;
+                let y = lip - u * lip;
+                let tangent = Vec3::new(0.0, -lip, span).normalize();
+                (
+                    Vec3::new(0.0, y, z),
+                    tangent,
+                    Vec3::new(0.0, span, lip).normalize(),
+                )
+            });
+            c.gap_spans(air_from, air_to + 1);
+            // No rail through a jump: the car has to leave the road, which is
+            // the entire point of having one.
             c.skip = true;
+            c.floor = Some(0.0);
         }
 
         PieceId::Wall => {
@@ -364,8 +516,8 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
             RawMesh::default(),
             ribbon(&center, center.half_width, KERB_HEIGHT * 3.0).1,
         ),
-        // A jump's launch lip is drivable; the gap and landing are built by
-        // the piece above it, so no kerbs here.
+        // A jump's lip and landing are drivable; the flight between them is not
+        // built at all, so there are no kerbs either.
         PieceId::JumpGap => (ribbon(&center, half, 0.0).0, RawMesh::default()),
         _ => {
             let (a, b) = ribbon(&center, half, KERB_HEIGHT);
@@ -421,6 +573,12 @@ fn ribbon(c: &Centerline, half: f32, kerb: f32) -> (RawMesh, RawMesh) {
         return (flat, walls);
     }
     for i in 0..c.pos.len() - 1 {
+        // A span the road is not on is not built. Bridging it would put a
+        // drivable surface across a jump's gap, which is the one thing a jump
+        // must not have.
+        if c.gap.get(i).copied().unwrap_or(false) {
+            continue;
+        }
         let (p0, p1) = (c.pos[i], c.pos[i + 1]);
         let (t0, t1) = (c.tan[i], c.tan[i + 1]);
         let (n0, n1) = (c.nrm[i], c.nrm[i + 1]);
@@ -447,6 +605,30 @@ fn ribbon(c: &Centerline, half: f32, kerb: f32) -> (RawMesh, RawMesh) {
                     kerb,
                     face,
                 );
+            }
+        }
+        // A skirt hanging from the road's edges down to the piece's floor. A
+        // slope is a surface in the air, and without this it reads as a ribbon
+        // floating over nothing; with it, a climb is a solid ramp and the drop
+        // beyond it has a far wall.
+        if let Some(floor) = c.floor {
+            for (a, b, sign) in [(l0, l1, -1.0), (rr0, rr1, 1.0)] {
+                // Only where the road is above the floor: a skirt along a level
+                // approach would put a wall through a piece of flat road. Both
+                // ends are measured, because a slope's two edges are at two
+                // heights and dropping them both by the first one leaves the
+                // skirt at an angle instead of hanging under the road.
+                let (drop_a, drop_b) = (floor - a.y, floor - b.y);
+                if a.y > floor + 1e-3 || b.y > floor + 1e-3 {
+                    push_quad(
+                        &mut walls,
+                        a.to_array(),
+                        b.to_array(),
+                        (b + Vec3::new(0.0, drop_b, 0.0)).to_array(),
+                        (a + Vec3::new(0.0, drop_a, 0.0)).to_array(),
+                        (r0 * sign).to_array(),
+                    );
+                }
             }
         }
     }
@@ -804,6 +986,204 @@ mod tests {
         assert!(!shape.surface.is_empty());
     }
 
+    /// A jump has a gap, and the road on either side of it actually meets the
+    /// ports a neighbour anchors on.
+    ///
+    /// The old piece was a lip and nothing more: its centreline stopped at half
+    /// its length while its exit port quantised two cells further on, so the
+    /// piece that followed was anchored in mid air past the end of the road.
+    /// Nothing in the game used it, so nothing caught it.
+    #[test]
+    fn a_jump_has_air_in_the_middle_and_road_at_both_ends() {
+        let shape = piece_shape(PieceId::JumpGap, &PieceParams::default(), C);
+        let len = shape
+            .ports
+            .last()
+            .expect("a jump has an exit")
+            .cell
+            .to_owned();
+        // The centreline spans the whole piece, so the exit port is at its end.
+        let end = *shape.center.pos.last().expect("samples");
+        assert_eq!(
+            to_grid(end, C),
+            len,
+            "the exit port must be where the road ends, not past it"
+        );
+        // Both ends are on the ground plane, so a flat road can join either.
+        for (which, port) in [("entry", shape.ports[0]), ("exit", shape.ports[1])] {
+            let world = from_grid(port.cell, C);
+            assert!(
+                world.y.abs() < 1e-3,
+                "the {which} of a jump is {:.1} high, so a flat neighbour \
+                 cannot meet it",
+                world.y
+            );
+        }
+        // And the middle really is empty: no triangle spans the flight.
+        let span = |from: [f32; 3], to: [f32; 3]| {
+            (0..shape.surface.indices.len() / 3).any(|t| {
+                let tri = [
+                    shape.surface.positions[shape.surface.indices[t * 3] as usize],
+                    shape.surface.positions[shape.surface.indices[t * 3 + 1] as usize],
+                    shape.surface.positions[shape.surface.indices[t * 3 + 2] as usize],
+                ];
+                tri.iter().any(|v| {
+                    let d = |a: [f32; 3], b: [f32; 3]| {
+                        (a[0] - b[0]).hypot(a[1] - b[1]).hypot(a[2] - b[2])
+                    };
+                    d(*v, from) < 1.0 && d(*v, to) > 1.0
+                })
+            })
+        };
+        assert!(
+            !span(
+                [0.0, 0.0, 0.0],
+                shape.center.pos.last().expect("samples").to_array()
+            ),
+            "no road may be built across the gap"
+        );
+        // The flight is reserved all the same, so a piece cannot be built
+        // straight through where the car flies.
+        assert!(
+            shape.reserve_max[1] > shape.reserve_min[1],
+            "the flight envelope must be reserved: {:?}",
+            (shape.reserve_min, shape.reserve_max)
+        );
+    }
+
+    /// Steepness is the author's to set, and it lands where the grid can carry
+    /// it whatever they choose.
+    ///
+    /// Before this, a ramp's angle was fixed by its length: rise was half a
+    /// cell per cell of run at every length, so a ramp was always the same
+    /// slope and there was no such thing as a gentle one or a kicker.
+    #[test]
+    fn a_slope_steeper_or_genter_than_the_default_is_a_different_slope() {
+        let flat = resolve_slope(PieceId::RampUp, &PieceParams::default());
+        let gentle = PieceParams::default().slope(10);
+        let steep = PieceParams::default().slope(60);
+        assert!(
+            resolve_slope(PieceId::RampUp, &gentle) < flat
+                && resolve_slope(PieceId::RampUp, &steep) > flat,
+            "the default must sit between a gentle and a steep setting"
+        );
+
+        // The geometry has to answer to it, not merely the resolver. A ramp
+        // whose rise was half a cell per cell of run whatever the author asked
+        // for could not be made gentle or made fierce, and the control would
+        // read as working while changing nothing at all.
+        let rise = |deg: u8| {
+            piece_shape(
+                PieceId::RampUp,
+                &PieceParams::default().length(4).slope(deg),
+                C,
+            )
+            .center
+            .pos
+            .last()
+            .expect("samples")
+            .y
+        };
+        assert!(
+            rise(10) < rise(45) && rise(45) < rise(70),
+            "the rise must follow the angle: {}, then {}, then {}",
+            rise(10),
+            rise(45),
+            rise(70)
+        );
+
+        // Whatever is asked for, the rise lands on a half cell, which is the
+        // increment a neighbour's entry port is quantised to. A ramp that ended
+        // between two would leave a step at every join on the track.
+        for deg in [5u8, 12, 27, 40, 60, 75] {
+            let shape = piece_shape(
+                PieceId::RampUp,
+                &PieceParams::default().length(3).slope(deg),
+                C,
+            );
+            let rise = shape.center.pos.last().expect("samples").y;
+            let half = C * 0.5;
+            let cells = rise / half;
+            assert!(
+                (cells - cells.round()).abs() < 1e-3,
+                "a {deg} degree ramp rises {rise}, which is {cells} half cells"
+            );
+            // And the exit port agrees with where the road actually ends.
+            assert_eq!(
+                to_grid(*shape.center.pos.last().unwrap(), C),
+                shape.ports[1].cell
+            );
+        }
+    }
+
+    /// A ramp is a solid thing, not a surface floating in the air.
+    #[test]
+    fn a_slope_has_an_underside_down_to_the_ground() {
+        let ramp = piece_shape(PieceId::RampUp, &PieceParams::default().length(2), C);
+        assert!(
+            !ramp.decor.is_empty(),
+            "a ramp with no decor is a ribbon with nothing under it"
+        );
+        // The skirt hangs from the far end of the ramp to the ground. Kerbs
+        // alone would leave decor at the top end level with the road, which is
+        // a ramp's height above the floor, so this separates a skirt from a
+        // kerb rather than from nothing at all.
+        let far = *ramp.center.pos.last().expect("samples");
+        let hangs = ramp
+            .decor
+            .positions
+            .iter()
+            .any(|p| p[2] > far.z - C * 0.5 && p[1] < 1e-3);
+        assert!(
+            hangs,
+            "the underside must reach the ground at the top of the ramp"
+        );
+        // And a flat piece is left alone: a skirt along level road would be a
+        // wall through the middle of it.
+        let straight = piece_shape(PieceId::Straight, &PieceParams::default(), C);
+        let flat_lowest = straight
+            .decor
+            .positions
+            .iter()
+            .map(|p| p[1])
+            .fold(f32::MAX, f32::min);
+        assert!(
+            flat_lowest > -1e-3,
+            "a straight must not grow a skirt, got {flat_lowest}"
+        );
+    }
+
+    /// A wall ride bends until the road is a wall, and its face turns with it.
+    ///
+    /// The distinction from a steep ramp is the whole reason the piece exists:
+    /// a steep ramp is still a ramp, while this one ends with the car driving
+    /// vertically with the road normal pointing horizontally out of it.
+
+    #[test]
+    fn an_s_curve_leaves_heading_the_way_it_came_in() {
+        let shape = piece_shape(PieceId::SCurve, &PieceParams::default().radius(2), C);
+        let first = *shape.center.pos.first().expect("samples");
+        let last = *shape.center.pos.last().expect("samples");
+        let out = *shape.center.tan.last().expect("samples");
+        assert!(first.distance(Vec3::ZERO) < 1e-4, "enters at the origin");
+        assert!(
+            (out - Vec3::Z).length() < 1e-4,
+            "leaves heading +Z, got {out:?}"
+        );
+        // Two radii across, which is what a right then left pair puts you.
+        let across = last.x;
+        assert!(
+            (across - C * 4.0).abs() < 1e-4,
+            "offset by two radii: {across}"
+        );
+        // No degenerate triangle: the middle of the S is one sample, not two
+        // pushed on top of each other.
+        assert!(
+            shape.surface.indices.len() % 3 == 0,
+            "indices must describe whole triangles"
+        );
+    }
+
     #[test]
     fn surface_triangles_all_have_unit_normals_and_area() {
         for id in PieceId::ALL {
@@ -845,12 +1225,52 @@ mod tests {
         }
     }
 
+    /// The two banked pieces lean opposite ways, and each leans the way its own
+    /// turn does.
+    ///
+    /// The test this replaces asserted that a right bank leaned to +X, which is
+    /// what the code did: the two hands shared one arm and one default, so
+    /// `BankLeft` and `BankRight` were the same piece banked the same way. A
+    /// track built with both banked its left corners and its right corners
+    /// identically, which is why the stunt track had to place `BankRight` twice
+    /// with opposite bank angles to fake a `BankLeft`.
     #[test]
     fn banked_road_tilts_its_normal() {
-        let shape = piece_shape(PieceId::BankRight, &PieceParams::default().bank(20), C);
-        let n = shape.center.nrm[0];
-        assert!(n.x > 0.1, "right bank leans its normal to +X, got {n:?}");
-        assert!(n.dot(Vec3::Y) > 0.9, "and stays mostly up");
+        let left = piece_shape(PieceId::BankLeft, &PieceParams::default().bank(20), C);
+        let right = piece_shape(PieceId::BankRight, &PieceParams::default().bank(20), C);
+        let (nl, nr) = (left.center.nrm[0], right.center.nrm[0]);
+
+        assert!(nl.x > 0.1, "a left bank leans its normal to +X, got {nl:?}");
+        assert!(nr.x < -0.1, "a right bank leans to -X, got {nr:?}");
+        for n in [nl, nr] {
+            assert!(n.dot(Vec3::Y) > 0.9, "and stays mostly up: {n:?}");
+        }
+
+        // Equal magnitudes: the same bank angle means the same lean either side.
+        assert!(
+            (nl.x + nr.x).abs() < 1e-5,
+            "the hands are mirrors: {nl:?} vs {nr:?}"
+        );
+
+        // And the lean lifts the edge the corner throws the car at, which is
+        // the whole purpose of a bank. Read off the plane the normal defines: a
+        // road leaning n has height -n.x/n.y at +X. Facing +Z the right-hand
+        // side of the road is -X, and a left-hand corner throws the car there,
+        // so that is the edge a left bank lifts. A right-hand corner throws it
+        // the other way.
+        //
+        // Getting this backwards is silent in a way no amount of playing catches
+        // quickly: a bank still holds the car on the road, just on the wrong
+        // side of it, and the track still drives.
+        let height_at = |n: Vec3, x: f32| -(n.x / n.y) * x;
+        assert!(
+            height_at(nl, -1.0) > 0.0,
+            "a left bank must lift the right-hand side: {nl:?}"
+        );
+        assert!(
+            height_at(nr, 1.0) > 0.0,
+            "a right bank must lift the left-hand side: {nr:?}"
+        );
     }
 
     #[test]

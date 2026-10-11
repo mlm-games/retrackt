@@ -20,6 +20,13 @@ pub struct PieceParams {
     /// Bank angle in degrees, signed.
     #[serde(default)]
     pub bank_deg: Option<i8>,
+    /// Steepness of a slope, in degrees from the horizontal.
+    ///
+    /// Unset keeps the catalogue's default, which is the angle every slope had
+    /// before the field existed: the piece still lands on the same half-cell the
+    /// grid quantises to, so a document that never set it is unchanged.
+    #[serde(default)]
+    pub slope_deg: Option<u8>,
     /// Position of a checkpoint in the sequence the car must pass, 1-based.
     ///
     /// Checkpoints sharing a number are a set: the car may pass any of them to
@@ -47,6 +54,13 @@ impl PieceParams {
     pub fn bank(self, deg: i8) -> Self {
         Self {
             bank_deg: Some(deg),
+            ..self
+        }
+    }
+
+    pub fn slope(self, deg: u8) -> Self {
+        Self {
+            slope_deg: Some(deg),
             ..self
         }
     }
@@ -101,10 +115,12 @@ pub enum PieceId {
     Boost = 12,
     Finish = 13,
     Wall = 14,
+    /// A right then left chicane in one piece.
+    SCurve = 15,
 }
 
 impl PieceId {
-    pub const ALL: [PieceId; 15] = [
+    pub const ALL: [PieceId; 16] = [
         Self::Start,
         Self::Straight,
         Self::CurveRight90,
@@ -120,6 +136,7 @@ impl PieceId {
         Self::Boost,
         Self::Finish,
         Self::Wall,
+        Self::SCurve,
     ];
 
     pub fn as_u16(self) -> u16 {
@@ -147,14 +164,23 @@ impl PieceId {
             Self::Boost => "Boost",
             Self::Finish => "Finish",
             Self::Wall => "Wall",
+            Self::SCurve => "S Curve",
         }
     }
 
     /// Editor palette grouping.
+    ///
+    /// Named for what the piece is *for* rather than for what it looks like:
+    /// an S-curve is road, and a wall ride is a slope, because that is where a
+    /// player building a circuit goes looking for one.
     pub fn group(self) -> &'static str {
         match self {
             Self::Start | Self::Finish | Self::Checkpoint | Self::Boost => "Control",
-            Self::Straight | Self::CurveRight90 | Self::CurveLeft90 | Self::Curve180 => "Road",
+            Self::Straight
+            | Self::CurveRight90
+            | Self::CurveLeft90
+            | Self::Curve180
+            | Self::SCurve => "Road",
             Self::RampUp | Self::RampDown => "Slopes",
             Self::BankLeft | Self::BankRight => "Banks",
             Self::Loop | Self::JumpGap => "Stunts",
@@ -165,6 +191,31 @@ impl PieceId {
     /// Pieces the car physically drives on. `Wall` is decor only.
     pub fn is_driveable(self) -> bool {
         !matches!(self, Self::Wall)
+    }
+
+    /// Pieces whose shape is a slope: the steepness knob means something to
+    /// them, and they carry a skirt down to the ground so they are not a
+    /// surface floating in the air.
+    pub fn is_slope(self) -> bool {
+        matches!(self, Self::RampUp | Self::RampDown)
+    }
+
+    /// Whether the piece's size is a run of road, rather than the sweep of an
+    /// arc. A curve or a wall ride is sized by its radius; offering a length
+    /// control on one is offering a control that does nothing.
+    pub fn has_length(self) -> bool {
+        !matches!(
+            self,
+            Self::CurveRight90 | Self::CurveLeft90 | Self::Curve180 | Self::Loop | Self::SCurve
+        )
+    }
+
+    /// Whether the piece is sized by a radius, and so offers a radius control.
+    pub fn has_radius(self) -> bool {
+        matches!(
+            self,
+            Self::CurveRight90 | Self::CurveLeft90 | Self::Curve180 | Self::Loop | Self::SCurve
+        )
     }
 
     /// Pieces that are a straight stretch with a special role.
@@ -184,6 +235,9 @@ pub struct PieceDef {
     pub default_length_cells: u8,
     pub default_radius_cells: u8,
     pub default_bank_deg: i8,
+    /// Steepness a slope piece has when the author has not set one. Zero for
+    /// pieces that are not slopes, where the value means nothing.
+    pub default_slope_deg: u8,
     pub is_start: bool,
     pub is_finish: bool,
     pub is_checkpoint: bool,
@@ -196,6 +250,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 2,
         default_radius_cells: 0,
         default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: true,
         is_finish: false,
         is_checkpoint: false,
@@ -206,6 +261,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 1,
         default_radius_cells: 0,
         default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -216,6 +272,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 0,
         default_radius_cells: 1,
         default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -226,6 +283,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 0,
         default_radius_cells: 1,
         default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -236,6 +294,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 0,
         default_radius_cells: 1,
         default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -246,6 +305,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 2,
         default_radius_cells: 0,
         default_bank_deg: 0,
+        default_slope_deg: 27,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -256,6 +316,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 2,
         default_radius_cells: 0,
         default_bank_deg: 0,
+        default_slope_deg: 27,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -266,6 +327,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 1,
         default_radius_cells: 0,
         default_bank_deg: 20,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -276,6 +338,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 1,
         default_radius_cells: 0,
         default_bank_deg: 20,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -286,6 +349,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 0,
         default_radius_cells: 2,
         default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -296,6 +360,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 3,
         default_radius_cells: 0,
         default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -306,6 +371,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 1,
         default_radius_cells: 0,
         default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: true,
@@ -316,6 +382,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 1,
         default_radius_cells: 0,
         default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,
@@ -326,6 +393,7 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 2,
         default_radius_cells: 0,
         default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: true,
         is_checkpoint: false,
@@ -336,6 +404,18 @@ pub const CATALOG: &[PieceDef] = &[
         default_length_cells: 1,
         default_radius_cells: 0,
         default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::SCurve,
+        default_length_cells: 0,
+        default_radius_cells: 2,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
         is_start: false,
         is_finish: false,
         is_checkpoint: false,

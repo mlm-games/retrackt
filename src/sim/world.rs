@@ -836,6 +836,14 @@ mod tests {
                 if inst.id == PieceId::Wall {
                     continue;
                 }
+                if inst.id == PieceId::JumpGap {
+                    // A jump's middle is air, so its centre has nothing under
+                    // it: the lip and the landing are the road, and the gap
+                    // between them is the point. What matters is that the road
+                    // on either side is really there, which is what the format
+                    // crate's own tests hold.
+                    continue;
+                }
                 let c = piece_centre(&doc, inst);
                 assert!(
                     w.ground_at(c + Vec3::new(0.0, 30.0, 0.0), 60.0).is_some(),

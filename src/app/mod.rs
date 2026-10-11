@@ -95,6 +95,8 @@ pub enum ParamKind {
     Bank,
     /// Where a checkpoint sits in the sequence the car must pass.
     Order,
+    /// Steepness of a slope.
+    Slope,
 }
 
 /// Quarter turns about +Y that make a full turn. A piece's `yaw` is a count of
@@ -1635,6 +1637,24 @@ impl App {
                 }
                 ParamKind::Bank => {
                     params.bank_deg = Some((bank as i16 + i16::from(delta)).clamp(-45, 45) as i8);
+                }
+                // Steepness is a slope's whole character, so unlike the others it
+                // is offered on any piece that has one to set. Writing the
+                // current angle rather than the default is what makes the first
+                // nudge visible: the shape builder snaps the rise to a half
+                // cell, so a nudge smaller than the snap would read as nothing
+                // at all.
+                ParamKind::Slope => {
+                    if !existing.id.is_slope() {
+                        if uids.len() == 1 {
+                            self.data.notice =
+                                Some(format!("{} has no slope.", existing.id.label()));
+                        }
+                        continue;
+                    }
+                    let current = retrackt_format::geometry::resolve_slope(existing.id, &params);
+                    let next = (current + f32::from(delta)).clamp(5.0, 75.0);
+                    params.slope_deg = Some(next.round() as u8);
                 }
                 // The checkpoint order is the one parameter with no default to
                 // fall back to: it is the piece's place in the run, which the

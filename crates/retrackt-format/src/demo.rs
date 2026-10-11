@@ -141,11 +141,22 @@ pub fn stunt_track() -> TrackDocument {
     b.step(Boost, PieceParams::default());
     b.step(RampUp, PieceParams::default().length(2));
     b.step(Straight, PieceParams::default());
+    // A bank each way. These are two pieces because they lean opposite ways,
+    // which is the whole difference between them; the same piece twice with
+    // opposite bank angles is what this used to be, back when BankLeft was a
+    // name for BankRight.
     b.step(BankRight, PieceParams::default().bank(25));
-    b.step(BankRight, PieceParams::default().bank(-25));
+    b.step(BankLeft, PieceParams::default().bank(25));
     b.step(Boost, PieceParams::default());
     b.step(RampDown, PieceParams::default().length(2));
     b.step(Checkpoint, PieceParams::default());
+    b.step(Straight, PieceParams::default());
+
+    // A chicane in one piece, and a jump that is a jump rather than a lip that
+    // left the road ending two cells short of its own exit port.
+    b.step(SCurve, PieceParams::default().radius(2));
+    b.step(Straight, PieceParams::default());
+    b.step(JumpGap, PieceParams::default().length(3));
     b.step(Straight, PieceParams::default());
 
     // A loop needs real entry speed, so it gets a long boost run-up.

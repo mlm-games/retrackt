@@ -502,6 +502,7 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
             let select = pusher(actions, UiAct::SelectPiece(uid));
             let toggle = pusher(actions, UiAct::ToggleSelect(uid));
             let (len, rad, bank) = retrackt_format::piece::resolve_params(piece.id, &piece.params);
+            let slope = retrackt_format::geometry::resolve_slope(piece.id, &piece.params);
 
             let nudge = |label: &'static str, kind: ParamKind, delta: i8| {
                 let queue = actions.clone();
@@ -512,8 +513,8 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
 
             // Radius means nothing for a piece the catalogue gives none, so the
             // control is withheld rather than offered and silently discarded.
-            let radius = if rad == 0 {
-                vec![dim_text("rad —")]
+            let radius = if !piece.id.has_radius() {
+                Vec::new()
             } else {
                 vec![
                     dim_text(&format!("rad {rad}")),
@@ -527,18 +528,42 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
             // third. As one row the identity and four controls had to share 440 dp,
             // which is 464 dp of content at the floor — so the row wrapped the same
             // ragged way at every window size instead of responding to any of them.
-            let params = [
-                dim_text(&format!("len {len}")),
-                nudge("L-", ParamKind::Length, -1),
-                nudge("L+", ParamKind::Length, 1),
-            ]
-            .into_iter()
-            .chain(radius)
-            .chain([
-                dim_text(&format!("bank {bank}°")),
-                nudge("B-", ParamKind::Bank, -5),
-                nudge("B+", ParamKind::Bank, 5),
-            ]);
+            let length = if piece.id.has_length() {
+                vec![
+                    dim_text(&format!("len {len}")),
+                    nudge("L-", ParamKind::Length, -1),
+                    nudge("L+", ParamKind::Length, 1),
+                ]
+            } else {
+                Vec::new()
+            };
+            let bank = if piece.id.is_slope() {
+                // A slope leans across the road like a bank, and the same
+                // control carries it.
+                vec![
+                    dim_text(&format!("bank {bank}°")),
+                    nudge("B-", ParamKind::Bank, -5),
+                    nudge("B+", ParamKind::Bank, 5),
+                ]
+            } else {
+                Vec::new()
+            };
+            // Steepness is the one control that has nothing to say about a flat
+            // piece, and everything about a slope.
+            let steepness = if piece.id.is_slope() {
+                vec![
+                    dim_text(&format!("slope {}°", slope.round() as i32)),
+                    nudge("S-", ParamKind::Slope, -5),
+                    nudge("S+", ParamKind::Slope, 5),
+                ]
+            } else {
+                Vec::new()
+            };
+            let params = length
+                .into_iter()
+                .chain(radius)
+                .chain(bank)
+                .chain(steepness);
             // A checkpoint carries one more value, and it is the one that decides
             // the run: the order the gates come in. Shown on the piece that owns it
             // rather than in a panel of its own, because it is a property of that
