@@ -39,7 +39,29 @@ const GRASS_A: u32 = 0x69BD5F;
 const GRASS_B: u32 = 0x5BB052;
 /// Inside the far plane, outside the ground ring: the dome always hides the
 /// world edge while the camera stays within the track.
-const SKY_RADIUS: f32 = 900.0;
+const SKY_RADIUS: f32 = 1900.0;
+
+/// Terrain ring that stands between the track and the sky.
+///
+/// Without it the background is a plain: the ground runs out, the fog takes the
+/// rest, and the horizon is a flat wash of sky. These are the ring's own
+/// proportions, in metres, matching the world's units so a range reads as a
+/// range rather than as a kerb.
+const MOUNTAIN_INNER: f32 = 100.0;
+/// How far out each successive height band sits.
+const MOUNTAIN_STEP: f32 = 100.0;
+/// Height a full-height sample is raised by.
+const MOUNTAIN_SCALE: f32 = 100.0;
+/// Height bands per ring, and the fraction of them ending on the ground. The
+/// track faces a gap in the range: a wall of mountain against the road would
+/// box it in.
+const MOUNTAIN_BANDS: usize = 8;
+const MOUNTAIN_FLAT_ENDS: usize = 2;
+/// Far ground sits a hair under the detailed ground so the two never z-fight.
+const FAR_GROUND_DROP: f32 = 0.05;
+/// Inner radius of the terrain ring must stay inside the renderer's far plane,
+/// or the range is clipped away and the bug it fixes looks like it never ran.
+const MOUNTAIN_MAX_INNER: f32 = 1700.0;
 
 /// sRGB hex to the renderer's linear rgb.
 pub(super) fn lin(hex: u32) -> [f32; 3] {
@@ -177,7 +199,182 @@ fn ground_group(bounds: ([f32; 3], [f32; 3])) -> MeshGroup {
             );
         }
     }
+    // The detailed ground stops a little past the track. Beyond it the frame
+    // below carries the same colour out to the mountain base, so the plain does
+    // not simply stop in the middle distance.
+    frame_to(&mut group, reach_of(bounds));
     group
+}
+
+/// Outermost radius the plain has to cover to meet the terrain ring.
+fn reach_of(bounds: ([f32; 3], [f32; 3])) -> f32 {
+    let (lo, hi) = bounds;
+    let half_x = (hi[0] - lo[0]) * 0.5;
+    let half_z = (hi[2] - lo[2]) * 0.5;
+    let inner = mountain_inner(half_x, half_z);
+    inner + MOUNTAIN_STEP * MOUNTAIN_BANDS as f32
+}
+
+/// A flat frame from the detailed ground's edge out to `reach`.
+///
+/// Stripes and corners rather than one big quad, so nothing overlaps the ground
+/// already drawn: two coplanar quads at the same height would z-fight, and a
+/// quad lowered to avoid it leaves a step the eye finds instantly.
+fn frame_to(group: &mut MeshGroup, reach: f32) {
+    let edge = {
+        let mut far = 0.0f32;
+        for p in &group.positions {
+            far = far.max(p[0].abs()).max(p[2].abs());
+        }
+        far
+    };
+    if reach <= edge {
+        return;
+    }
+    let y = GROUND_Y - FAR_GROUND_DROP;
+    let tint = lin(GRASS_A);
+    // The plane is centered on the origin, so the ground built around a track
+    // that is not is reached by covering the union of both extents.
+    let outer = edge.max(reach);
+    for (x0, x1, z0, z1) in [
+        (-outer, -edge, -outer, outer),
+        (edge, outer, -outer, outer),
+        (-edge, edge, -outer, -edge),
+        (-edge, edge, edge, outer),
+        (-outer, -edge, -outer, -edge),
+        (edge, outer, -outer, -edge),
+        (-outer, -edge, edge, edge),
+        (edge, outer, edge, edge),
+    ] {
+        group.push_quad_lit(
+            [x0, y, z0],
+            [x0, y, z1],
+            [x1, y, z1],
+            [x1, y, z0],
+            tint,
+            [0.0, 1.0, 0.0],
+        );
+    }
+}
+
+/// Inner radius of the terrain ring: far enough to clear the track's own
+/// diagonal, so no mountain rises over the road.
+fn mountain_inner(half_x: f32, half_z: f32) -> f32 {
+    let diagonal = half_x.hypot(half_z);
+    (MOUNTAIN_INNER + diagonal.max(MOUNTAIN_INNER)).min(MOUNTAIN_MAX_INNER)
+}
+
+/// Terrain ring around the track: bands of height sampling out from the plain.
+///
+/// Heights are taken from a fixed generator, so the range is the same range on
+/// every load rather than a different one per run, and the two ends facing the
+/// road are held flat so the track opens onto the plain.
+fn mountain_group(bounds: ([f32; 3], [f32; 3])) -> MeshGroup {
+    let mut group = MeshGroup {
+        depth_test: true,
+        ..MeshGroup::default()
+    };
+    let (lo, hi) = bounds;
+    let inner = mountain_inner((hi[0] - lo[0]) * 0.5, (hi[2] - lo[2]) * 0.5);
+    if inner >= MOUNTAIN_MAX_INNER {
+        return group;
+    }
+    let centre = [(lo[0] + hi[0]) * 0.5, 0.0, (lo[2] + hi[2]) * 0.5];
+    let columns = (inner * 0.1).max(8.0) as usize;
+    let mut heights: Vec<[f32; MOUNTAIN_BANDS]> = Vec::with_capacity(columns);
+    let mut state: u32 = 0x2545_F491;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        (state as f32 / u32::MAX as f32) - 0.5
+    };
+    for _ in 0..columns {
+        let mut row = [0.0f32; MOUNTAIN_BANDS];
+        for (band, slot) in row.iter_mut().enumerate() {
+            // The innermost two bands meet the plain, and the outermost ends
+            // flat: a range that runs to a point at the far side looks like a
+            // spike rather than a ridge.
+            let flat = band < MOUNTAIN_FLAT_ENDS || band == MOUNTAIN_BANDS - 1;
+            let mut v = next();
+            if flat {
+                v = 0.0;
+            }
+            *slot = v;
+        }
+        heights.push(row);
+    }
+
+    let rock_a = lin(0x6F7A63);
+    let rock_b = lin(0x8A9078);
+    let mut column = 0usize;
+    while column < columns {
+        let here = column;
+        let next_col = (column + 1) % columns;
+        let t = TAU * here as f32 / columns as f32;
+        let u = TAU * next_col as f32 / columns as f32;
+        for band in 0..MOUNTAIN_BANDS - 1 {
+            let r0 = inner + MOUNTAIN_STEP * band as f32;
+            let r1 = inner + MOUNTAIN_STEP * (band + 1) as f32;
+            let (h0, h1) = (heights[here][band], heights[here][band + 1]);
+            let (h2, h3) = (heights[next_col][band], heights[next_col][band + 1]);
+            let tint = if (column + band) % 2 == 0 {
+                rock_a
+            } else {
+                rock_b
+            };
+            let at = |angle: f32, radius: f32, height: f32| {
+                [
+                    centre[0] + angle.cos() * radius,
+                    height * MOUNTAIN_SCALE,
+                    centre[2] + angle.sin() * radius,
+                ]
+            };
+            let (a, b, c, d) = (at(t, r0, h0), at(u, r0, h2), at(u, r1, h3), at(t, r1, h1));
+            let normal = face_normal(a, b, c);
+            push_quad(&mut group, a, b, c, d, normal, tint);
+        }
+        column += 1;
+    }
+    group
+}
+
+/// Outward normal of the triangle `a, b, c`.
+fn face_normal(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let n = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    if len < 1e-6 {
+        [0.0, 1.0, 0.0]
+    } else {
+        [n[0] / len, n[1] / len, n[2] / len]
+    }
+}
+
+/// One quad with an explicit normal and colour, as two triangles.
+fn push_quad(
+    group: &mut MeshGroup,
+    a: [f32; 3],
+    b: [f32; 3],
+    c: [f32; 3],
+    d: [f32; 3],
+    normal: [f32; 3],
+    colour: [f32; 3],
+) {
+    let base = group.positions.len() as u32;
+    for p in [a, b, c, d] {
+        group.positions.push(p);
+        group.normals.push(normal);
+        group.colors.push(colour);
+    }
+    group
+        .indices
+        .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
 fn tile_range(lo: f32, hi: f32) -> std::ops::Range<i32> {
@@ -282,6 +479,7 @@ impl App {
         if self.track_mesh.is_none() {
             let (track, bounds) = track::build_group(&self.data.track);
             self.ground_mesh = Some(ground_group(bounds));
+            self.mountain_mesh = Some(mountain_group(bounds));
             self.track_mesh = Some(track);
         }
         let editing = self.data.screen == Screen::Editor;
@@ -303,8 +501,12 @@ impl App {
                 ambient: [0.34, 0.38, 0.47],
                 fog: 1.0,
                 fog_color: horizon,
-                fog_start: 140.0,
-                fog_end: 430.0,
+                // Far enough out that the horizon survives it. Closing it to
+                // the near field dissolved everything past a few hundred metres
+                // into the sky's own colour, so the plain and the mountains
+                // behind it read as an empty background.
+                fog_start: 700.0,
+                fog_end: 3000.0,
                 exposure: 1.0,
             },
             shadow: Some(ShadowDesc {
@@ -327,6 +529,9 @@ impl App {
         // track's bounds to the ground plane's, which never leaves the frustum.
         if let Some(ground) = &self.ground_mesh {
             frame.push(ground.clone());
+        }
+        if let Some(mountains) = &self.mountain_mesh {
+            frame.push(mountains.clone());
         }
         if let Some(track) = &self.track_mesh {
             frame.push(track.clone());
@@ -405,5 +610,86 @@ impl App {
             ));
         }
         groups
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_terrain_ring_stands_clear_of_the_track_and_inside_the_far_plane() {
+        // A mountain built on top of the road would swallow it, and one past the
+        // renderer's far plane would be clipped away, which looks exactly like
+        // the feature never having been added. Both are checked against the real
+        // built-in tracks rather than a fixture, because the ring's size comes
+        // from the track's own extent.
+        for doc in retrackt_format::builtin_tracks() {
+            let (_, bounds) = track::build_group(&doc);
+            let inner = mountain_inner(
+                (bounds.1[0] - bounds.0[0]) * 0.5,
+                (bounds.1[2] - bounds.0[2]) * 0.5,
+            );
+            let group = mountain_group(bounds);
+
+            assert!(!group.is_empty(), "{}: no terrain was generated", doc.name);
+            // Clear of the road: the nearest mountain is beyond the track's own
+            // diagonal, so nothing rises over it.
+            let (lo, hi) = (bounds.0, bounds.1);
+            let (mut mlo, mut mhi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for p in &group.positions {
+                for a in 0..3 {
+                    mlo[a] = mlo[a].min(p[a]);
+                    mhi[a] = mhi[a].max(p[a]);
+                }
+            }
+            let centre = [(lo[0] + hi[0]) * 0.5, 0.0, (lo[2] + hi[2]) * 0.5];
+            // The track's own extent, measured from the centre of its box, must
+            // sit inside the ring's hole, or the road is buried under terrain.
+            let corner = (centre[0] - lo[0]).hypot(centre[2] - lo[2]);
+            assert!(
+                corner < inner,
+                "{}: the track reaches {} from its centre but the ring starts at {}",
+                doc.name,
+                corner,
+                inner
+            );
+            // And the terrain must stop before the renderer's far plane, with
+            // room for the camera to stand at the track's edge looking out.
+            let reach = mhi[0].max(mhi[2]).max(-mlo[0]).max(-mlo[2]);
+            assert!(
+                reach < 1900.0,
+                "{}: terrain reaches {} and would be clipped",
+                doc.name,
+                reach
+            );
+        }
+    }
+
+    #[test]
+    fn the_same_track_always_generates_the_same_range() {
+        // Deterministic: a range that changed per load would make the background
+        // of a saved ghost differ from the run it was recorded against.
+        let doc = retrackt_format::demo_track();
+        let (_, bounds) = track::build_group(&doc);
+        let first = mountain_group(bounds);
+        let second = mountain_group(bounds);
+        assert_eq!(
+            first.positions, second.positions,
+            "the terrain must not depend on when it was built"
+        );
+    }
+
+    #[test]
+    fn every_terrain_face_is_outward_and_unit() {
+        let doc = retrackt_format::demo_track();
+        let (_, bounds) = track::build_group(&doc);
+        let group = mountain_group(bounds);
+        for (i, n) in group.normals.iter().enumerate() {
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            assert!((len - 1.0).abs() < 1e-3, "normal {i} is not unit: {n:?}");
+            assert!(n[1] > 0.0, "normal {i} points into the ground: {n:?}");
+        }
+        assert_eq!(group.normals.len(), group.positions.len());
     }
 }

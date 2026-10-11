@@ -40,6 +40,9 @@ pub struct App {
     cam: camera::ChaseCamera,
     save: crate::save::SaveData,
     ground_mesh: Option<MeshGroup>,
+    /// Terrain ring standing between the plain and the sky. Built from the same
+    /// bounds as the ground, so it is invalidated with it.
+    mountain_mesh: Option<MeshGroup>,
     track_mesh: Option<MeshGroup>,
     sky: scene::SkyDome,
     /// Car pose at the previous frame, blended with the current one by
@@ -154,6 +157,7 @@ impl App {
             cam: camera::ChaseCamera::new(),
             save,
             ground_mesh: None,
+            mountain_mesh: None,
             track_mesh: None,
             sky: scene::SkyDome::new(),
             prev_car: None,
@@ -1126,6 +1130,7 @@ impl App {
         self.sim.world.insert_resource(CarRes(car));
         self.editor_pick = edit::PickBoxes::build(&self.data.track);
         self.track_mesh = None;
+        self.mountain_mesh = None;
         self.ground_mesh = None;
         self.prev_car = None;
         self.prev_ghost = None;
