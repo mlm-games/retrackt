@@ -313,10 +313,28 @@ fn recover_to_checkpoint(
 fn advance_session(
     active: Res<ActiveRes>,
     replay: Res<ReplayRes>,
-    car: Res<CarRes>,
+    mut car: ResMut<CarRes>,
     mut session: ResMut<SessionRes>,
+    world: Res<TrackRes>,
 ) {
     if !active.0 || replay.0 {
+        return;
+    }
+    // Out of the world, which is a fall and not a request. Checked before the
+    // teleport branch below, because the step that noticed the fall already set
+    // `respawned`: handling the flag first would record the teleport and do
+    // nothing about where the car went.
+    //
+    // The car goes back to the last checkpoint it crossed, and to the start line
+    // only before the first one. That is what makes a fall cost the stretch since
+    // the last gate rather than the whole run.
+    if car.0.pos.y <= KILL_Y {
+        let (pos, yaw) = session
+            .0
+            .recovery()
+            .unwrap_or((world.0.spawn, world.0.spawn_yaw));
+        car.0 = crate::sim::car::Car::at_spawn(pos, yaw);
+        session.0.tick_teleported(car.0.pos);
         return;
     }
     if car.0.respawned {
@@ -360,6 +378,10 @@ fn record_replay(
         tape.header.finish_tick = tape.tick_len();
     }
 }
+
+/// Height below which the car has fallen out of the world. Carries the same
+/// value as `CarTuning::kill_y`, asserted in the tests.
+const KILL_Y: f32 = -60.0;
 
 /// One chain, ordered: car, practice recovery, ghost, session, finish flag, tape.
 /// Separate `add_*` calls get no ordering, so order-sensitive systems live in
@@ -724,22 +746,61 @@ mod chain_tests {
         );
     }
 
+    /// A fall costs the stretch since the last gate, not the whole run.
+    ///
+    /// The test this replaces asserted the opposite: a fall in a timed run put
+    /// the car back at the start line and forfeited every gate behind it. That
+    /// is what offshore racing games do not do, and the effect of it here was
+    /// that leaving the track for a moment threw away the whole run rather than
+    /// the last corner.
     #[test]
-    fn a_fall_in_a_timed_run_returns_to_the_start_and_earns_nothing() {
-        let (mut sim, world, _recovery, crossed) = falling_sim(false);
+    fn a_fall_in_a_timed_run_recovers_at_the_last_checkpoint() {
+        let (mut sim, world, recovery, crossed) = falling_sim(false);
         sim.tick();
 
         let car = sim.world.resource::<CarRes>().0;
         assert!(
-            car.pos.distance(world.spawn) < 0.01,
-            "a timed run respawns at the start line {:?}, got {:?}",
-            world.spawn,
+            car.pos.distance(recovery) < 0.01,
+            "a fall must return the car to the last checkpoint {recovery:?}, got {:?}",
+            car.pos
+        );
+        // And the start line is only for before the first gate.
+        assert!(
+            car.pos.distance(world.spawn) > 1.0,
+            "the car should not be back at the spawn: {:?}",
             car.pos
         );
         assert_eq!(
             sim.world.resource::<SessionRes>().0.checkpoint(),
             crossed,
-            "a fall must not hand out the gates between where it fell and the spawn"
+            "a fall must not hand out the gates between where it fell and the gate"
+        );
+    }
+
+    /// Before any gate, the start line is the only place to go.
+    #[test]
+    fn a_fall_before_the_first_checkpoint_returns_to_the_spawn() {
+        let doc = demo_track();
+        let world = TrackWorld::from_doc(&doc);
+        let mut sim = repame_sim::Sim::new(crate::SIM_STEP);
+        register(&mut sim);
+        insert_resources(&mut sim.world);
+        sim.world.insert_resource(TrackRes(world.clone()));
+        sim.world.insert_resource(ActiveRes(true));
+        sim.world.insert_resource(InputRes::new());
+        sim.world.insert_resource(PracticeRes(false));
+        let mut car = Car::at_spawn(world.spawn, world.spawn_yaw);
+        car.pos.y = -10_000.0;
+        sim.world.insert_resource(CarRes(car));
+        sim.world.resource_mut::<SessionRes>().0.start(&world);
+
+        sim.tick();
+        let car = sim.world.resource::<CarRes>().0;
+        assert!(
+            car.pos.distance(world.spawn) < 0.01,
+            "with no gate crossed the spawn is the recovery point {:?}, got {:?}",
+            world.spawn,
+            car.pos
         );
     }
 }

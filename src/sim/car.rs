@@ -416,10 +416,18 @@ pub fn step_car(
         *w = rolling;
     }
 
+    // Falling out of the world is reported, not undone: where the car goes back
+    // to is the session's business, because it depends on the gates already
+    // crossed. A save file's track cannot say, and putting the start line here
+    // meant a fall cost the whole run rather than the last checkpoint.
     if car.pos.y < tune.kill_y {
-        let (spawn, yaw) = (world.spawn, world.spawn_yaw);
-        *car = Car::at_spawn(spawn, yaw);
         car.respawned = true;
+        // Held where it is until something recovers it. The simulation does not
+        // decide where a run restarts, but it must not leave the car sinking and
+        // tumbling through the void either: a replay of a fall has to come out
+        // the same however long the caller takes to notice.
+        car.vel = Vec3::ZERO;
+        car.pos.y = tune.kill_y;
     }
 }
 
@@ -1022,9 +1030,13 @@ mod tests {
             ..VehicleInput::neutral()
         };
         let mut car = fresh(&world);
+        // Held steer on a long straight: the car leaves the road sideways long
+        // before it runs out of length, so this measures the turn while it is
+        // still on the road. Letting it fall means measuring a tumbling car,
+        // which says nothing about the steering.
         drive_car(
             &mut car,
-            600,
+            240,
             &VehicleInput {
                 steer: 0.8,
                 ..input
