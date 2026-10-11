@@ -110,17 +110,16 @@ pub enum PieceId {
     BankLeft = 7,
     BankRight = 8,
     Loop = 9,
-    JumpGap = 10,
+    /// A right then left chicane in one piece.
+    SCurve = 10,
     Checkpoint = 11,
     Boost = 12,
     Finish = 13,
     Wall = 14,
-    /// A right then left chicane in one piece.
-    SCurve = 15,
 }
 
 impl PieceId {
-    pub const ALL: [PieceId; 16] = [
+    pub const ALL: [PieceId; 15] = [
         Self::Start,
         Self::Straight,
         Self::CurveRight90,
@@ -131,12 +130,11 @@ impl PieceId {
         Self::BankLeft,
         Self::BankRight,
         Self::Loop,
-        Self::JumpGap,
+        Self::SCurve,
         Self::Checkpoint,
         Self::Boost,
         Self::Finish,
         Self::Wall,
-        Self::SCurve,
     ];
 
     pub fn as_u16(self) -> u16 {
@@ -159,7 +157,6 @@ impl PieceId {
             Self::BankLeft => "Bank Left",
             Self::BankRight => "Bank Right",
             Self::Loop => "Loop",
-            Self::JumpGap => "Jump",
             Self::Checkpoint => "Checkpoint",
             Self::Boost => "Boost",
             Self::Finish => "Finish",
@@ -183,7 +180,7 @@ impl PieceId {
             | Self::SCurve => "Road",
             Self::RampUp | Self::RampDown => "Slopes",
             Self::BankLeft | Self::BankRight => "Banks",
-            Self::Loop | Self::JumpGap => "Stunts",
+            Self::Loop => "Stunts",
             Self::Wall => "Props",
         }
     }
@@ -356,9 +353,9 @@ pub const CATALOG: &[PieceDef] = &[
         is_boost: false,
     },
     PieceDef {
-        id: PieceId::JumpGap,
-        default_length_cells: 3,
-        default_radius_cells: 0,
+        id: PieceId::SCurve,
+        default_length_cells: 0,
+        default_radius_cells: 2,
         default_bank_deg: 0,
         default_slope_deg: 0,
         is_start: false,
@@ -403,17 +400,6 @@ pub const CATALOG: &[PieceDef] = &[
         id: PieceId::Wall,
         default_length_cells: 1,
         default_radius_cells: 0,
-        default_bank_deg: 0,
-        default_slope_deg: 0,
-        is_start: false,
-        is_finish: false,
-        is_checkpoint: false,
-        is_boost: false,
-    },
-    PieceDef {
-        id: PieceId::SCurve,
-        default_length_cells: 0,
-        default_radius_cells: 2,
         default_bank_deg: 0,
         default_slope_deg: 0,
         is_start: false,

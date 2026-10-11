@@ -8,7 +8,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::demo::occupied_world;
-use crate::geometry::piece_shape;
 use crate::piece::{PieceId, catalog_by_id};
 use crate::track::{MAX_PIECES, PieceUid, TrackDocument};
 
@@ -93,55 +92,54 @@ pub fn validate(doc: &TrackDocument) -> Vec<Diagnostic> {
         )));
     }
     // The chain checks below reason about one continuous road from the Start
-    // the run uses, so a document with no Start or no Finish at all is reported
-    // on its own terms and stops there. Several of either is not: the rules
-    // above pick one of each and the chain is walked from the one picked.
+    // The checks below read the connected stretch of road, so a document with no
+    // Start or no Finish at all is reported on its own terms and stops there.
+    // Several of either is not: the rules above pick one of each and the road is
+    // followed from the one picked.
     if starts.is_empty() || finishes.is_empty() {
         return out;
     }
 
-    let route = doc.route();
-    if route.is_empty() {
-        out.push(Diagnostic::error("The Start piece has no road leaving it."));
-        return out;
-    }
-    let on_route: BTreeSet<PieceUid> = route.iter().copied().collect();
-    let last = *route.last().expect("route is non-empty");
-    let last_id = doc
-        .piece(last)
-        .expect("a route uid names a piece in the document")
-        .id;
-    let reaches_finish = catalog_by_id(last_id).is_finish;
-    if !reaches_finish {
-        out.push(Diagnostic::error(format!(
-            "The route dead-ends on {} before reaching the Finish.",
-            last_id.label()
-        )));
+    // Whether the car can reach a Finish is not decidable from the document,
+    // and that is the honest position rather than a gap in the checking. Pieces
+    // are placed independently, so there is no single road to walk: the car may
+    // fly a gap, take a branch that rejoins further on, or drive a line the
+    // editor cannot see the shape of. Every version of this check that tried to
+    // answer it by walking ports reported a jump as an unreachable Finish, which
+    // is the opposite of what a jump is.
+    //
+    // What is decidable is that the gates are standing somewhere sensible, and
+    // that nothing is obviously dropped in the wrong place. Both are warnings:
+    // a track being built is full of pieces that are not joined up yet.
+    let gates: Vec<_> = doc
+        .pieces
+        .iter()
+        .filter(|p| catalog_by_id(p.id).is_checkpoint)
+        .collect();
+    for inst in &gates {
+        if !doc.meets_any(inst.uid) {
+            out.push(Diagnostic::warning(format!(
+                "{} meets no other piece: the car can only reach it by driving \
+                 over the same cells twice.",
+                inst.id.label()
+            )));
+        }
     }
 
-    if reaches_finish {
-        // Only meaningful once the chain is intact: after a break, every
-        // remaining gate reads as unreachable and the list would be noise.
-        for inst in &doc.pieces {
-            let def = catalog_by_id(inst.id);
-            if !on_route.contains(&inst.uid) {
-                if def.is_finish {
-                    // A second Finish is how a circuit offers an alternative
-                    // line. The chain can only be walked one way, so the other
-                    // line is always off it, and calling that an error would
-                    // refuse every track with more than one way home.
-                    out.push(Diagnostic::warning(format!(
-                        "{} is off the route: it only counts if the road reaches it.",
-                        inst.id.label()
-                    )));
-                } else if def.is_checkpoint {
-                    out.push(Diagnostic::error(format!(
-                        "{} is not on the route, so the car can never reach it.",
-                        inst.id.label()
-                    )));
-                }
-            }
-        }
+    // Pieces built beside the run to try a line later are the normal state of a
+    // track being edited, so this is a warning and names the count rather than
+    // the pieces.
+    let unjoined = doc.unjoined();
+    match unjoined.len() {
+        0 => {}
+        1 => out.push(Diagnostic::warning(
+            "1 piece is standing free. It still races, but the car only reaches \
+             it by leaving the road and coming back.",
+        )),
+        n => out.push(Diagnostic::warning(format!(
+            "{n} pieces are standing free. They still race, but the car only \
+             reaches them by leaving the road and coming back.",
+        ))),
     }
 
     // Two pieces in one cell still build, and the sim resolves the overlap, but
@@ -178,19 +176,7 @@ pub fn validate(doc: &TrackDocument) -> Vec<Diagnostic> {
         out.push(Diagnostic::warning(format!("{message}.")));
     }
 
-    for inst in &doc.pieces {
-        let connects = !piece_shape(inst.id, &inst.params, doc.cell_size)
-            .ports
-            .is_empty();
-        if connects && !on_route.contains(&inst.uid) {
-            out.push(Diagnostic::warning(format!(
-                "{} is off the route: the car never reaches it.",
-                inst.id.label()
-            )));
-        }
-    }
-
-    if reaches_finish && !doc.pieces.iter().any(|p| catalog_by_id(p.id).is_checkpoint) {
+    if !doc.pieces.iter().any(|p| catalog_by_id(p.id).is_checkpoint) {
         out.push(Diagnostic::warning(
             "No checkpoints: the run is one unbroken line to the Finish.",
         ));
@@ -317,8 +303,8 @@ mod tests {
         assert_eq!(doc.active_start().map(|p| p.uid), Some(last_placed.uid));
         // The route begins where the car is put, or the run would be timed
         // against gates on a line it never drove.
-        assert_eq!(doc.route().first(), Some(&last_placed.uid));
-        let route = doc.route();
+        assert_eq!(doc.chain().first(), Some(&last_placed.uid));
+        let route = doc.chain();
         assert!(
             route.len() >= 3,
             "the second line is a whole line: {route:?}"
@@ -360,21 +346,17 @@ mod tests {
         );
     }
 
+    /// A Finish standing on its own is reported as free-standing, not refused.
+    ///
+    /// The test this replaces required a chain that stopped before the Finish to
+    /// be an error naming where it stopped. That was the chain model talking: it
+    /// assumed the road from the Start is the road the car drives, so a Finish
+    /// the walk could not reach was a Finish the car could not reach. With pieces
+    /// placed independently that inference is unsound, and the very same shape
+    /// is what a jump looks like from the join walk, so the Finish is legal and
+    /// what it gets is a warning.
     #[test]
-    fn a_chain_that_stops_short_of_the_finish_is_an_error() {
-        let mut b = ChainBuilder::new("Half a track");
-        b.step(PieceId::Start, PieceParams::default());
-        b.step(PieceId::Straight, PieceParams::default());
-        let doc = b.build();
-        let found = errors(&doc);
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].contains("No Finish piece"), "{found:?}");
-    }
-
-    #[test]
-    fn a_chain_that_stops_before_the_finish_names_where_it_stopped() {
-        // Built by hand: the chain runs out before the finish is attached, which
-        // a port-following builder cannot express.
+    fn a_finish_standing_apart_from_the_road_is_reported_not_refused() {
         let mut doc = TrackDocument::empty();
         doc.pieces = vec![
             PieceInstance::new(PieceId::Start, [0, 0, 0]).with_uid(PieceUid(1)),
@@ -382,32 +364,60 @@ mod tests {
             PieceInstance::new(PieceId::Finish, [40, 0, 40]).with_uid(PieceUid(3)),
         ];
         doc.normalize_uids();
-        let found = errors(&doc);
-        assert_eq!(found.len(), 1, "{found:?}");
+
         assert!(
-            found[0].contains("dead-ends") && found[0].contains("Straight"),
-            "{found:?}"
+            errors(&doc).is_empty(),
+            "a track with a Start and a Finish is raceable whatever joins them: {:?}",
+            errors(&doc)
         );
-        // The unreachable Finish is *not* also reported: once the chain is known
-        // to be broken, every gate past the break reads as unreachable, and
-        // listing them would bury the one fact worth acting on.
         assert!(
-            !found.iter().any(|m| m.contains("not on the route")),
-            "a broken chain must report the break, not its consequences: {found:?}"
+            warnings(&doc).iter().any(|m| m.contains("standing free")),
+            "but the free-standing piece is reported: {:?}",
+            warnings(&doc)
         );
     }
 
+    /// The one thing free placement cannot make true is a run with no gates at
+    /// all: there is nothing to pass, so nothing is timed.
     #[test]
-    fn a_gate_off_the_route_is_refused() {
+    fn a_track_with_no_finish_says_so() {
+        let mut doc = TrackDocument::empty();
+        doc.pieces = vec![
+            PieceInstance::new(PieceId::Start, [0, 0, 0]).with_uid(PieceUid(1)),
+            PieceInstance::new(PieceId::Straight, [0, 0, 2]).with_uid(PieceUid(2)),
+        ];
+        doc.normalize_uids();
+        let found = errors(&doc);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("No Finish piece"), "{found:?}");
+    }
+
+    /// A gate the car cannot reach is a warning, never a refusal.
+    ///
+    /// The test this replaces parked a checkpoint at [200, 0, 200] and required
+    /// an error, on the reasoning that a gate off the chain is a gate the car
+    /// can never pass. That reasoning assumed the chain is the road, and a gate
+    /// standing free is now simply a gate the author has not built a road to
+    /// yet. It is worth saying out loud; it is not worth refusing the track over.
+    #[test]
+    fn a_gate_the_car_cannot_reach_warns_without_refusing() {
         let mut doc = demo_track();
-        // A second finish, parked where no road reaches it.
         let uid = doc.next_piece_uid();
         doc.pieces
             .push(PieceInstance::new(PieceId::Checkpoint, [200, 0, 200]).with_uid(uid));
         doc.normalize_uids();
+
         assert!(
-            errors(&doc).iter().any(|m| m.contains("not on the route")),
-            "an unreachable gate must be reported, not ignored"
+            errors(&doc).is_empty(),
+            "the track still races: {:?}",
+            errors(&doc)
+        );
+        assert!(
+            warnings(&doc)
+                .iter()
+                .any(|m| m.contains("meets no other piece")),
+            "but the stranded gate is reported: {:?}",
+            warnings(&doc)
         );
     }
 
@@ -459,14 +469,14 @@ mod tests {
     }
 
     #[test]
-    fn a_dead_end_branch_is_a_warning_not_an_error() {
+    fn a_detached_branch_is_a_warning_not_an_error() {
         let mut doc = demo_track();
         let uid = doc.next_piece_uid();
         doc.pieces.push(long_straight(uid, [0, 0, 60]));
         doc.normalize_uids();
         assert!(errors(&doc).is_empty(), "{:?}", errors(&doc));
         assert!(
-            warnings(&doc).iter().any(|m| m.contains("off the route")),
+            warnings(&doc).iter().any(|m| m.contains("standing free")),
             "{:?}",
             warnings(&doc)
         );

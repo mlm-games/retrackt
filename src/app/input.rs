@@ -160,6 +160,11 @@ pub struct EditorCommand {
     pub place: bool,
     pub delete: bool,
     pub rotate: bool,
+    /// Turn the armed piece before it is placed. Edge-latched like the rest of
+    /// the one-shot commands: held down, it would spin the piece once per frame.
+    pub turn_armed: bool,
+    /// Put connector snapping on or off.
+    pub toggle_snap: bool,
     pub duplicate: bool,
     pub copy: bool,
     pub paste: bool,
@@ -257,6 +262,14 @@ impl EditorKeys {
                 || held(PhysicalKey::Backspace)
                 || held(PhysicalKey::KeyX),
             rotate: held(PhysicalKey::KeyR) || held(PhysicalKey::Space),
+            // A piece being built rather than one already placed: T turns it,
+            // because R and Space rotate the selection and every other key
+            // near the hand belongs to the camera.
+            turn_armed: held(PhysicalKey::KeyT),
+            // V, not G: G already selects the piece under the pointer, and one
+            // key doing both would make snapping toggle every time the player
+            // picked something out of the track.
+            toggle_snap: held(PhysicalKey::KeyV) && !ctrl,
             duplicate: ctrl && held(PhysicalKey::KeyD),
             copy: ctrl && held(PhysicalKey::KeyC),
             paste: ctrl && held(PhysicalKey::KeyV),
@@ -275,6 +288,8 @@ impl EditorKeys {
             place: now.place && !self.down.place,
             delete: now.delete && !self.down.delete,
             rotate: now.rotate && !self.down.rotate,
+            turn_armed: now.turn_armed && !self.down.turn_armed,
+            toggle_snap: now.toggle_snap && !self.down.toggle_snap,
             duplicate: now.duplicate && !self.down.duplicate,
             copy: now.copy && !self.down.copy,
             paste: now.paste && !self.down.paste,
@@ -726,6 +741,12 @@ mod tests {
         sched
     }
 
+    /// One press of `keys`, read from a fresh input so nothing is latched.
+    fn poll_first(keys: &[PhysicalKey]) -> EditorCommand {
+        let mut input = InputState::new();
+        input.poll_editor(&sched_with(keys)).pressed
+    }
+
     /// Hold `keys` for `frames` polls and collect every height step produced.
     fn steps_while_held(keys: &[PhysicalKey], frames: u32) -> Vec<i16> {
         let sched = sched_with(keys);
@@ -932,6 +953,60 @@ mod tests {
                 "{key:?} must rotate the selection"
             );
         }
+    }
+
+    /// Turning the armed piece is a different command from turning the
+    /// selection, and the two do not collide: holding R would otherwise spin a
+    /// piece that has not been placed yet while also turning one that has.
+    #[test]
+    fn the_armed_piece_is_turned_by_its_own_commands() {
+        assert!(
+            poll_first(&[PhysicalKey::KeyT]).turn_armed,
+            "T turns the armed piece"
+        );
+        assert!(
+            poll_first(&[PhysicalKey::KeyR]).rotate,
+            "and R still turns the selection"
+        );
+        assert!(
+            !poll_first(&[PhysicalKey::KeyT]).rotate,
+            "T must not also rotate the selection"
+        );
+        assert!(
+            !poll_first(&[PhysicalKey::KeyR]).turn_armed,
+            "and R must not also turn the armed piece"
+        );
+    }
+
+    /// Snapping is toggled on V, not G: G already picks the piece under the
+    /// pointer, and a key that did both would toggle snapping whenever the
+    /// player reached into the track to select something.
+    #[test]
+    fn snapshotting_is_toggled_by_v() {
+        assert!(
+            poll_first(&[PhysicalKey::KeyV]).toggle_snap,
+            "V toggles snapping"
+        );
+        assert!(
+            poll_first(&[PhysicalKey::KeyG]).select_hovered,
+            "and G is still the hover pick"
+        );
+        assert!(
+            !poll_first(&[PhysicalKey::KeyV]).turn_armed,
+            "and it is not the armed turn"
+        );
+    }
+
+    /// Edge-latched: held, a turn command fires once, not once per frame.
+    #[test]
+    fn turn_commands_fire_once_per_press() {
+        let mut input = InputState::new();
+        let sched = sched_with(&[PhysicalKey::KeyT]);
+        assert!(input.poll_editor(&sched).pressed.turn_armed);
+        assert!(
+            !input.poll_editor(&sched).pressed.turn_armed,
+            "held, it must not repeat"
+        );
     }
 
     #[test]

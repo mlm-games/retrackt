@@ -109,12 +109,6 @@ pub struct Centerline {
     /// Cumulative arc length; `arc[0] == 0`.
     pub arc: Vec<f32>,
     pub half_width: f32,
-    /// One flag per span, true where the road is not there.
-    ///
-    /// A jump is the only piece that uses this: its middle is air, and the span
-    /// across it must not be built, or the car drives over a hole that is not
-    /// there. Parallel to the spans, so `gap[i]` covers `pos[i]` to `pos[i+1]`.
-    pub gap: Vec<bool>,
     /// Height the road's sides hang down to, or `None` for a piece that sits on
     /// the ground.
     ///
@@ -122,20 +116,12 @@ pub struct Centerline {
     /// reads as a floating ribbon: the skirt turns it into a solid ramp, and
     /// gives the far side of a climb a wall to drop behind.
     pub floor: Option<f32>,
-    /// Pieces with a gap (jumps) or no rail (walls) set this so the guide
-    /// leaves the car to ordinary grounding instead of constraining it.
+    /// Pieces with no rail set this so the guide leaves the car to ordinary
+    /// grounding instead of constraining it.
     pub skip: bool,
 }
 
 impl Centerline {
-    /// Mark the spans in `[from, to)` of the sample index as airborne.
-    pub fn gap_spans(&mut self, from: usize, to: usize) {
-        self.gap = vec![false; self.pos.len().saturating_sub(1)];
-        for span in from..to.min(self.gap.len()) {
-            self.gap[span] = true;
-        }
-    }
-
     pub fn length(&self) -> f32 {
         self.arc.last().copied().unwrap_or(0.0)
     }
@@ -402,69 +388,6 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
             });
         }
 
-        PieceId::JumpGap => {
-            // A jump is three things: a lip to launch off, air, and a landing to
-            // arrive on. One centreline, so the ports are the ends of the whole
-            // flight, with the air's spans marked airborne so no road is built or
-            // collided across them.
-            //
-            // The old piece was a lip and nothing else: its centreline stopped at
-            // half its length while its exit port quantised two cells further on,
-            // so a successor was anchored in mid air past the end of the road.
-            // Both the lip's rise and the landing's fall are snapped to half
-            // cells, for the reason a ramp's is: the piece that follows has to
-            // meet the landing exactly.
-            let lip = snap_half_cells(cell * 0.5, cell);
-            let span = l / 4.0;
-            // Lip: the first quarter, climbing.
-            push_segment(&mut c, 3, |u| {
-                let z = u * span;
-                let y = u * lip;
-                let tangent = Vec3::new(0.0, lip, span).normalize();
-                (
-                    Vec3::new(0.0, y, z),
-                    tangent,
-                    Vec3::new(0.0, span, -lip).normalize(),
-                )
-            });
-            let air_from = c.pos.len().saturating_sub(1);
-            // Air: the middle half, a parabola over the gap. The car is off the
-            // road here, so its shape only has to be honest about the height it
-            // reserves, which is what keeps a piece placed overhead from being
-            // built straight through the flight.
-            let apex = lip;
-            push_segment(&mut c, 4, |u| {
-                let z = span + u * span * 2.0;
-                let y = lip + apex * 4.0 * u * (1.0 - u);
-                let dy = apex * 4.0 * (1.0 - 2.0 * u);
-                let tangent = Vec3::new(0.0, dy, span * 2.0).normalize_or_zero();
-                // Perpendicular to the flight, as a frame has to be. No surface
-                // is built from these samples, so the direction is arbitrary;
-                // the orthogonality is not, because every consumer that reads
-                // a frame divides by it.
-                let nrm = Vec3::new(0.0, -tangent.z, tangent.y).normalize_or_zero();
-                (Vec3::new(0.0, y, z), tangent, nrm)
-            });
-            let air_to = c.pos.len().saturating_sub(1);
-            // Landing: the last quarter, descending back to the height the exit
-            // port will be read at, which is the height the lip left from.
-            push_segment(&mut c, 3, |u| {
-                let z = span * 3.0 + u * span;
-                let y = lip - u * lip;
-                let tangent = Vec3::new(0.0, -lip, span).normalize();
-                (
-                    Vec3::new(0.0, y, z),
-                    tangent,
-                    Vec3::new(0.0, span, lip).normalize(),
-                )
-            });
-            c.gap_spans(air_from, air_to + 1);
-            // No rail through a jump: the car has to leave the road, which is
-            // the entire point of having one.
-            c.skip = true;
-            c.floor = Some(0.0);
-        }
-
         PieceId::Wall => {
             // Not drivable: a thin upright barrier, half a cell tall.
             c.half_width = cell * 0.06;
@@ -516,9 +439,6 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
             RawMesh::default(),
             ribbon(&center, center.half_width, KERB_HEIGHT * 3.0).1,
         ),
-        // A jump's lip and landing are drivable; the flight between them is not
-        // built at all, so there are no kerbs either.
-        PieceId::JumpGap => (ribbon(&center, half, 0.0).0, RawMesh::default()),
         _ => {
             let (a, b) = ribbon(&center, half, KERB_HEIGHT);
             (a, b)
@@ -573,12 +493,6 @@ fn ribbon(c: &Centerline, half: f32, kerb: f32) -> (RawMesh, RawMesh) {
         return (flat, walls);
     }
     for i in 0..c.pos.len() - 1 {
-        // A span the road is not on is not built. Bridging it would put a
-        // drivable surface across a jump's gap, which is the one thing a jump
-        // must not have.
-        if c.gap.get(i).copied().unwrap_or(false) {
-            continue;
-        }
         let (p0, p1) = (c.pos[i], c.pos[i + 1]);
         let (t0, t1) = (c.tan[i], c.tan[i + 1]);
         let (n0, n1) = (c.nrm[i], c.nrm[i + 1]);
@@ -979,76 +893,58 @@ mod tests {
         assert!(!shape.has_guide);
     }
 
-    #[test]
-    fn jump_gap_has_no_guide_so_the_car_detaches() {
-        let shape = piece_shape(PieceId::JumpGap, &PieceParams::default(), C);
-        assert!(!shape.has_guide, "a jump must not be a rail");
-        assert!(!shape.surface.is_empty());
-    }
-
-    /// A jump has a gap, and the road on either side of it actually meets the
-    /// ports a neighbour anchors on.
+    /// A jump is road, then nothing, then road: the gap is the absence of
+    /// surface rather than a piece that draws one.
     ///
-    /// The old piece was a lip and nothing more: its centreline stopped at half
-    /// its length while its exit port quantised two cells further on, so the
-    /// piece that followed was anchored in mid air past the end of the road.
-    /// Nothing in the game used it, so nothing caught it.
+    /// The test this replaces drove a dedicated `JumpGap` piece, which had to
+    /// build a lip, an airborne middle and a landing in one centreline while
+    /// marking the air so no quad was drawn across it. With pieces placed
+    /// independently none of that is needed: leave the cells empty and there is
+    /// no surface there to collide with, which is what puts the car in the air.
+    /// What has to hold is that the two sides still meet at the heights a
+    /// neighbour's ports are read at.
     #[test]
-    fn a_jump_has_air_in_the_middle_and_road_at_both_ends() {
-        let shape = piece_shape(PieceId::JumpGap, &PieceParams::default(), C);
-        let len = shape
-            .ports
-            .last()
-            .expect("a jump has an exit")
-            .cell
-            .to_owned();
-        // The centreline spans the whole piece, so the exit port is at its end.
-        let end = *shape.center.pos.last().expect("samples");
+    fn a_gap_between_two_pieces_leaves_nothing_under_the_car() {
+        let mut b = crate::demo::ChainBuilder::new("gap");
+        b.step(PieceId::RampUp, PieceParams::default().length(2).slope(45));
+        b.step(PieceId::Straight, PieceParams::default());
+        let before_gap = b.cursor();
+        b.gap(3);
+        let after_gap = b.cursor();
+        let doc = b.build();
+
         assert_eq!(
-            to_grid(end, C),
-            len,
-            "the exit port must be where the road ends, not past it"
+            after_gap[2] - before_gap[2],
+            3,
+            "the gap must actually be three cells of nothing"
         );
-        // Both ends are on the ground plane, so a flat road can join either.
-        for (which, port) in [("entry", shape.ports[0]), ("exit", shape.ports[1])] {
-            let world = from_grid(port.cell, C);
-            assert!(
-                world.y.abs() < 1e-3,
-                "the {which} of a jump is {:.1} high, so a flat neighbour \
-                 cannot meet it",
-                world.y
-            );
-        }
-        // And the middle really is empty: no triangle spans the flight.
-        let span = |from: [f32; 3], to: [f32; 3]| {
-            (0..shape.surface.indices.len() / 3).any(|t| {
-                let tri = [
-                    shape.surface.positions[shape.surface.indices[t * 3] as usize],
-                    shape.surface.positions[shape.surface.indices[t * 3 + 1] as usize],
-                    shape.surface.positions[shape.surface.indices[t * 3 + 2] as usize],
-                ];
-                tri.iter().any(|v| {
-                    let d = |a: [f32; 3], b: [f32; 3]| {
-                        (a[0] - b[0]).hypot(a[1] - b[1]).hypot(a[2] - b[2])
-                    };
-                    d(*v, from) < 1.0 && d(*v, to) > 1.0
+
+        // Neither side of the gap is joined to the other, which is the whole
+        // point: they are two pieces with space between, not one piece with a
+        // hole.
+        assert!(
+            doc.chain().len() < doc.pieces.len() + 1,
+            "the gap breaks the connected run, as a jump must"
+        );
+
+        // And the cells in between hold no road, so nothing is there to drive
+        // on. A ray straight down through the middle of the gap must find
+        // nothing from the road it is testing.
+        for step in 1..3 {
+            let cell = [before_gap[0], before_gap[1], before_gap[2] + step];
+            let occupied = doc.pieces.iter().any(|inst| {
+                let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
+                shape.reserve_cells().any(|c| {
+                    let w = crate::piece::rotate_local_xz(c, inst.yaw);
+                    [
+                        inst.cell[0] + w[0],
+                        inst.cell[1] + w[1],
+                        inst.cell[2] + w[2],
+                    ] == cell
                 })
-            })
-        };
-        assert!(
-            !span(
-                [0.0, 0.0, 0.0],
-                shape.center.pos.last().expect("samples").to_array()
-            ),
-            "no road may be built across the gap"
-        );
-        // The flight is reserved all the same, so a piece cannot be built
-        // straight through where the car flies.
-        assert!(
-            shape.reserve_max[1] > shape.reserve_min[1],
-            "the flight envelope must be reserved: {:?}",
-            (shape.reserve_min, shape.reserve_max)
-        );
+            });
+            assert!(!occupied, "no piece may occupy {cell:?} inside the gap");
+        }
     }
 
     /// Steepness is the author's to set, and it lands where the grid can carry

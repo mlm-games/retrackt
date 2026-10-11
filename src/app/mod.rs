@@ -474,8 +474,24 @@ impl App {
 
             UiAct::ArmPiece(id) => {
                 self.data.editor.armed = id;
-                self.data.editor.snapped =
-                    placement_at(&self.data.track, id, self.data.editor.cursor, SNAP_REACH).snapped;
+                // A newly armed piece has no heading of its own yet, so it starts
+                // square and is turned with RotateArmed.
+                self.data.editor.armed_yaw = 0;
+                self.set_cursor(self.data.editor.cursor);
+            }
+            UiAct::RotateArmed(steps) => {
+                let yaw = self.data.editor.armed_yaw as i16 + i16::from(steps);
+                self.data.editor.armed_yaw = yaw.rem_euclid(4) as u8;
+                self.set_cursor(self.data.editor.cursor);
+            }
+            UiAct::ToggleSnap => {
+                self.data.editor.snap = !self.data.editor.snap;
+                self.set_cursor(self.data.editor.cursor);
+                self.data.notice = Some(if self.data.editor.snap {
+                    "Snapping on.".to_string()
+                } else {
+                    "Snapping off: pieces land exactly where the cursor is.".into()
+                });
             }
             UiAct::PlaceArmed => self.place_armed(),
             UiAct::MoveCursor(delta) => {
@@ -504,7 +520,7 @@ impl App {
             }
             UiAct::SelectNone => self.data.editor.selection.clear(),
             UiAct::SelectRoute => {
-                self.data.editor.selection = self.data.track.route();
+                self.data.editor.selection = self.data.track.chain();
             }
             UiAct::DeleteSelection => self.delete_selection(),
             UiAct::CopySelection => self.copy_selection(),
@@ -1185,6 +1201,10 @@ impl App {
             pressed.place.then_some(UiAct::PlaceArmed),
             pressed.delete.then_some(UiAct::DeleteSelection),
             pressed.rotate.then_some(UiAct::RotateSelection(1)),
+            // The armed piece, not the selection: one turns a piece that is
+            // already in the track, the other turns the one about to be placed.
+            pressed.turn_armed.then_some(UiAct::RotateArmed(1)),
+            pressed.toggle_snap.then_some(UiAct::ToggleSnap),
             pressed.duplicate.then_some(UiAct::DuplicateSelection),
             pressed.copy.then_some(UiAct::CopySelection),
             pressed.paste.then_some(UiAct::PasteAtCursor),
@@ -1205,8 +1225,15 @@ impl App {
     /// Move the editor cursor and refresh what it would drop.
     fn set_cursor(&mut self, cell: [i16; 3]) {
         self.data.editor.cursor = cell;
-        self.data.editor.snapped =
-            placement_at(&self.data.track, self.data.editor.armed, cell, SNAP_REACH).snapped;
+        self.data.editor.snapped = placement_at(
+            &self.data.track,
+            self.data.editor.armed,
+            cell,
+            SNAP_REACH,
+            self.data.editor.armed_yaw,
+            self.data.editor.snap,
+        )
+        .snapped;
     }
 
     /// Drop the armed piece at the cursor. Selected afterwards, so the parameter
@@ -1220,7 +1247,14 @@ impl App {
             ));
             return;
         }
-        let place = placement_at(&self.data.track, id, self.data.editor.cursor, SNAP_REACH);
+        let place = placement_at(
+            &self.data.track,
+            id,
+            self.data.editor.cursor,
+            SNAP_REACH,
+            self.data.editor.armed_yaw,
+            self.data.editor.snap,
+        );
         let uid = self.data.track.next_piece_uid();
         let piece = PieceInstance::new(id, place.anchor)
             .with_uid(uid)

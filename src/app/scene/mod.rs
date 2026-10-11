@@ -365,6 +365,8 @@ impl App {
             editor.armed,
             editor.cursor,
             crate::app::SNAP_REACH,
+            editor.armed_yaw,
+            editor.snap,
         );
         let mut groups = vec![
             track::preview_group(

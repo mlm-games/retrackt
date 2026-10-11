@@ -37,11 +37,19 @@ fn yaw_for_direction(dir: GridDir) -> u8 {
 
 /// Where `id` would go if dropped at `cell`.
 ///
-/// Snapping searches for an open *exit* port within `reach` cells of the cursor
-/// and mates the new piece's entry against it, so the result is always a
-/// connected join rather than a piece that happens to be nearby. With nothing in
-/// reach the piece is anchored so its entry lands on the cursor itself.
-pub fn placement_at(doc: &TrackDocument, id: PieceId, cell: [i16; 3], reach: i32) -> Placement {
+/// With snapping on, this searches for an open *exit* port within `reach` cells
+/// of the cursor and mates the new piece's entry against it, so building a run
+/// of road is one action per piece. With snapping off, or with nothing in
+/// reach, the piece lands where the cursor is, at `yaw`. That is the other
+/// half of free placement, and the only way to put a piece on an exact cell.
+pub fn placement_at(
+    doc: &TrackDocument,
+    id: PieceId,
+    cell: [i16; 3],
+    reach: i32,
+    yaw: u8,
+    snap: bool,
+) -> Placement {
     let cell_size = doc.cell_size;
     let entry = piece_shape(id, &PieceParams::default(), cell_size)
         .ports
@@ -49,10 +57,10 @@ pub fn placement_at(doc: &TrackDocument, id: PieceId, cell: [i16; 3], reach: i32
         .map(|p| p.cell)
         .unwrap_or([0, 0, 0]);
 
-    let mate = open_exit_near(doc, cell, reach);
+    let mate = snap.then(|| open_exit_near(doc, cell, reach)).flatten();
     let (target, yaw) = match mate {
         Some((point, dir)) => (point, yaw_for_direction(dir)),
-        None => (cell, 0),
+        None => (cell, yaw % 4),
     };
     let offset = rotate_local_xz(entry, yaw);
     Placement {
@@ -86,8 +94,8 @@ fn open_exit_near(doc: &TrackDocument, cell: [i16; 3], reach: i32) -> Option<([i
         if distance > reach {
             continue;
         }
-        // `next_piece` reports `None` for a Finish because the route ends there,
-        // not because its exit is free — treating that as an open port would let
+        // `joins` reports `None` for a Finish because the gate is an end, not
+        // because its exit is free. Treating that as an open port would let
         // every placement near the finish snap onto the end of the track.
         if doc
             .piece(uid)
@@ -95,7 +103,7 @@ fn open_exit_near(doc: &TrackDocument, cell: [i16; 3], reach: i32) -> Option<([i
         {
             continue;
         }
-        if doc.next_piece(uid).is_some() {
+        if doc.joins(uid).is_some() {
             // Something already leaves from here.
             continue;
         }
@@ -119,18 +127,19 @@ pub fn exit_cell(doc: &TrackDocument, inst: &PieceInstance) -> [i16; 3] {
     ]
 }
 
-/// The piece the editor should start from: the last one on the connected chain,
-/// so a fresh cursor sits where the next piece would have gone anyway.
+/// The piece the editor should start from: the last one on the connected
+/// stretch of road, so a fresh cursor sits where the next piece would have gone
+/// anyway.
 ///
 /// Falls back to the highest uid when nothing connects, which is the piece most
 /// recently placed and therefore the one the player was last working on.
 pub fn cursor_home(doc: &TrackDocument) -> [i16; 3] {
-    let last_on_route = doc
-        .route()
+    let last_connected = doc
+        .chain()
         .last()
         .and_then(|uid| doc.piece(*uid))
         .filter(|p| !piece_shape(p.id, &p.params, doc.cell_size).ports.is_empty());
-    let piece = last_on_route.or_else(|| {
+    let piece = last_connected.or_else(|| {
         doc.pieces
             .iter()
             .filter(|p| !piece_shape(p.id, &p.params, doc.cell_size).ports.is_empty())
@@ -171,7 +180,7 @@ mod tests {
         ];
         doc.normalize_uids();
         assert_eq!(
-            doc.next_piece(PieceUid(1)),
+            doc.joins(PieceUid(1)),
             Some(PieceUid(2)),
             "fixture must actually be connected"
         );
@@ -190,7 +199,7 @@ mod tests {
     fn a_cursor_near_an_open_exit_snaps_the_piece_onto_it() {
         let doc = straight_doc();
         // The open exit is at z=2; a cursor one cell past it still snaps.
-        let p = placement_at(&doc, PieceId::Straight, [0, 0, 3], 1);
+        let p = placement_at(&doc, PieceId::Straight, [0, 0, 3], 1, 0, true);
         assert!(p.snapped, "an exit within reach must be snapped to");
         assert_eq!(p.yaw, 0, "the chain runs along +Z");
         assert_eq!(p.anchor, [0, 0, 2], "entry lands on the open exit");
@@ -220,7 +229,7 @@ mod tests {
             "it leaves along +X"
         );
 
-        let placed = placement_at(&doc, PieceId::Straight, open, 0);
+        let placed = placement_at(&doc, PieceId::Straight, open, 0, 0, true);
         assert!(placed.snapped, "placement: {placed:?}");
         assert_eq!(placed.yaw, 1, "must continue along +X, not +Z");
     }
@@ -228,7 +237,7 @@ mod tests {
     #[test]
     fn nothing_in_reach_places_the_entry_on_the_cursor() {
         let doc = straight_doc();
-        let p = placement_at(&doc, PieceId::Straight, [40, 0, 40], 1);
+        let p = placement_at(&doc, PieceId::Straight, [40, 0, 40], 1, 0, true);
         assert!(!p.snapped, "a cursor far from the road must not snap");
         assert_eq!(p.anchor, [40, 0, 40]);
         assert_eq!(p.yaw, 0);
@@ -252,7 +261,7 @@ mod tests {
                 .find(|p| p.id == PieceId::CurveRight90)
                 .expect("the curve is there");
             let open = exit_cell(&doc, curve);
-            let p = placement_at(&doc, id, open, 0);
+            let p = placement_at(&doc, id, open, 0, 0, true);
             let shape = piece_shape(id, &PieceParams::default(), doc.cell_size);
             let entry = rotate_local_xz(shape.ports[0].cell, p.yaw);
             assert_eq!(
@@ -272,7 +281,7 @@ mod tests {
         let doc = straight_doc();
         // z=1 is where the second piece starts: the first exit is met, and the
         // only open exit is at z=2, which is out of reach.
-        let p = placement_at(&doc, PieceId::Straight, [0, 0, 1], 0);
+        let p = placement_at(&doc, PieceId::Straight, [0, 0, 1], 0, 0, true);
         assert!(!p.snapped, "must not double up on a connected port");
     }
 
@@ -286,7 +295,7 @@ mod tests {
             PieceInstance::new(PieceId::Straight, [0, 0, 2]).with_uid(PieceUid(3)),
         ];
         doc.normalize_uids();
-        let p = placement_at(&doc, PieceId::Straight, [0, 0, 4], 2);
+        let p = placement_at(&doc, PieceId::Straight, [0, 0, 4], 2, 0, true);
         assert!(p.snapped, "placement: {p:?}");
         assert_eq!(
             p.anchor,
@@ -303,11 +312,11 @@ mod tests {
         let doc = b.build();
 
         let home = cursor_home(&doc);
-        let last = *doc.route().last().expect("a route");
+        let last = *doc.chain().last().expect("a route");
         assert_eq!(home, exit_cell(&doc, doc.piece(last).unwrap()));
         // And placing there snaps, so the two paths agree.
         assert!(
-            placement_at(&doc, PieceId::Checkpoint, home, 1).snapped,
+            placement_at(&doc, PieceId::Checkpoint, home, 1, 0, true).snapped,
             "the home cell must be a snapping position"
         );
     }
@@ -339,9 +348,80 @@ mod tests {
     #[test]
     fn a_piece_with_no_ports_lands_on_the_cursor_itself() {
         let doc = straight_doc();
-        let p = placement_at(&doc, PieceId::Wall, [7, 0, 7], 4);
+        let p = placement_at(&doc, PieceId::Wall, [7, 0, 7], 4, 0, true);
         assert_eq!(p.anchor, [7, 0, 7], "a prop has no entry to align");
         assert!(!p.snapped);
+    }
+
+    /// Snapping off is what makes free placement free: the cursor is the anchor,
+    /// not a reach for a nearby connector.
+    #[test]
+    fn snapping_off_places_the_piece_exactly_on_the_cursor() {
+        let mut b = ChainBuilder::new("open");
+        b.step(PieceId::Start, PieceParams::default().length(2));
+        b.step(PieceId::Straight, PieceParams::default().length(2));
+        let doc = b.build();
+
+        // With snapping on, the tail of the road is the snap target.
+        let snapped = placement_at(&doc, PieceId::Straight, [0, 0, 4], 1, 0, true);
+        assert!(snapped.snapped, "there is an open exit to join");
+        assert_eq!(snapped.anchor, [0, 0, 4]);
+
+        // With it off, the same cursor and the same world give somewhere else.
+        let free = placement_at(&doc, PieceId::Straight, [0, 0, 4], 1, 2, false);
+        assert!(!free.snapped, "snapping off must not snap");
+        assert_eq!(free.anchor, [0, 0, 4], "the cursor is the anchor");
+        assert_eq!(free.yaw, 2, "and the armed heading is the one used");
+
+        // A piece whose entry port is offset from its anchor is still anchored on
+        // the cursor, so the piece lands where the pointer is rather than beside it.
+        let ramp = placement_at(&doc, PieceId::RampUp, [0, 0, 9], 1, 0, false);
+        assert!(!ramp.snapped);
+        assert_eq!(ramp.anchor, [0, 0, 9]);
+    }
+
+    #[test]
+    fn an_armed_heading_is_used_when_nothing_is_joined_to() {
+        let mut b = ChainBuilder::new("open");
+        b.step(PieceId::Start, PieceParams::default().length(2));
+        let doc = b.build();
+
+        // Far from anything, with snapping off: the heading is the armed one.
+        assert_eq!(
+            placement_at(&doc, PieceId::Straight, [20, 0, 20], 1, 0, false).yaw,
+            0
+        );
+        assert_eq!(
+            placement_at(&doc, PieceId::Straight, [20, 0, 20], 1, 1, false).yaw,
+            1
+        );
+        assert_eq!(
+            placement_at(&doc, PieceId::Straight, [20, 0, 20], 1, 3, false).yaw,
+            3
+        );
+        // And it wraps rather than panicking.
+        assert_eq!(
+            placement_at(&doc, PieceId::Straight, [20, 0, 20], 1, 5, false).yaw,
+            1
+        );
+    }
+
+    /// A join decides the heading, because a piece head-on against its neighbour
+    /// cannot also be facing somewhere else. That is the one thing that overrides
+    /// the armed heading, and it only happens while snapping is on.
+    #[test]
+    fn a_snapped_join_overrides_the_armed_heading() {
+        let doc = turning_doc();
+        let curve = doc
+            .pieces
+            .iter()
+            .find(|p| p.id == PieceId::CurveRight90)
+            .expect("the curve is there");
+        let open = exit_cell(&doc, curve);
+
+        let placed = placement_at(&doc, PieceId::Straight, open, 0, 3, true);
+        assert!(placed.snapped, "it found the join");
+        assert_eq!(placed.yaw, 1, "the join's heading wins over the armed one");
     }
 
     #[test]
@@ -360,7 +440,7 @@ mod tests {
         // for and a placement must report that it is not snapping. Claiming a snap
         // it did not get would put the piece somewhere the player did not choose.
         let doc = retrackt_format::demo_track();
-        let placement = placement_at(&doc, PieceId::Checkpoint, cursor_home(&doc), 1);
+        let placement = placement_at(&doc, PieceId::Checkpoint, cursor_home(&doc), 1, 0, true);
         assert!(
             !placement.snapped,
             "a closed circuit has no open exit, so nothing may snap"
@@ -380,7 +460,7 @@ mod tests {
             .expect("the demo circuit has a finish");
         doc.pieces.remove(finish);
 
-        let placement = placement_at(&doc, PieceId::Checkpoint, cursor_home(&doc), 1);
+        let placement = placement_at(&doc, PieceId::Checkpoint, cursor_home(&doc), 1, 0, true);
         assert!(
             placement.snapped,
             "the tail of an open route is somewhere to build"
@@ -398,9 +478,9 @@ mod tests {
             .find(|p| catalog_by_id(p.id).is_finish)
             .expect("the demo circuit has a finish");
         let at_finish = exit_cell(&doc, finish);
-        assert_eq!(doc.next_piece(finish.uid), None, "the route ends there");
+        assert_eq!(doc.joins(finish.uid), None, "the route ends there");
 
-        let p = placement_at(&doc, PieceId::Straight, at_finish, 0);
+        let p = placement_at(&doc, PieceId::Straight, at_finish, 0, 0, true);
         assert!(
             !p.snapped || p.anchor != at_finish,
             "a piece must not be dropped onto the Finish gate"

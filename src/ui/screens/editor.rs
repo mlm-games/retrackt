@@ -655,6 +655,12 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
 
     children.push(ctrl_row(vec![
         ctrl_on("Place", pusher(actions, UiAct::PlaceArmed)),
+        ctrl("Turn CW", pusher(actions, UiAct::RotateArmed(1))),
+        ctrl("Turn CCW", pusher(actions, UiAct::RotateArmed(-1))),
+        ctrl(
+            if editor.snap { "Snap: On" } else { "Snap: Off" },
+            pusher(actions, UiAct::ToggleSnap),
+        ),
         history_btn("Undo", editor.can_undo, actions, UiAct::Undo),
         history_btn("Redo", editor.can_redo, actions, UiAct::Redo),
         ctrl("Select All", pusher(actions, UiAct::SelectAll)),

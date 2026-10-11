@@ -240,36 +240,44 @@ impl TrackDocument {
 
     /// Every checkpoint, in the order the car has to pass them.
     ///
-    /// The order is a piece's own `checkpoint_order` when it has one, and its
-    /// place on the road when it does not. That fallback is what keeps every
-    /// existing track on the sequence it already had: the field was added later,
-    /// and a document that never sets it must not be re-ordered by its arrival.
+    /// The order is a piece's own `checkpoint_order`, and a piece that sets none
+    /// keeps the position it was placed at. Placement order is the fallback
+    /// because the road cannot supply one any more: pieces are placed
+    /// independently, so there is no single line the checkpoints sit along and
+    /// "where it is on the track" has no answer. Uid is that placement order,
+    /// and it survives a save, so an unnumbered gate stays where its author left
+    /// it.
     ///
-    /// A tie on the number is broken in favour of the piece that set it, and
-    /// then by the road. Otherwise handing a gate the number it already sits at
-    /// would change nothing, and "make this the first gate" would be a control
-    /// that does nothing at all. Within one number the road order breaks the
-    /// tie, so a set of checkpoints sharing a number is ordered by where they
-    /// sit rather than by how the file lists them.
+    /// A tie on the number is broken in favour of the piece that set it.
+    /// Otherwise handing a gate the number it already sits at would change
+    /// nothing, and "make this the first gate" would be a control that does
+    /// nothing at all. Within one number, placement order breaks the tie, so a
+    /// set of checkpoints sharing a number is still ordered predictably.
     pub fn checkpoint_sequence(&self) -> Vec<&PieceInstance> {
-        let checkpoints: Vec<(usize, &PieceInstance)> = self
+        let checkpoints: Vec<&PieceInstance> = self
             .race_order()
             .iter()
             .filter_map(|uid| self.piece(*uid))
             .filter(|p| crate::piece::catalog_by_id(p.id).is_checkpoint)
-            .enumerate()
-            .map(|(nth, p)| (nth, p))
             .collect();
         let mut keyed: Vec<((u32, u8, usize), &PieceInstance)> = checkpoints
             .iter()
+            .enumerate()
             .map(|(nth, p)| {
-                // Explicit first, then the road's own numbering for everything
-                // that never set one.
+                // Explicit first, then the position it was placed at for
+                // everything that never set one. The numbering starts above the
+                // explicit range so an unnumbered gate cannot jump ahead of a
+                // numbered one.
                 let (order, set) = match p.params.checkpoint_order {
                     Some(order) => (u32::from(order), 0),
-                    None => (*nth as u32 + 1, 1),
+                    None => (
+                        u32::from(u8::MAX)
+                            .saturating_add(1)
+                            .saturating_add(nth as u32),
+                        1,
+                    ),
                 };
-                ((order, set, *nth), *p)
+                ((order, set, nth), *p)
             })
             .collect();
         keyed.sort_by_key(|(key, _)| *key);
@@ -290,38 +298,20 @@ impl TrackDocument {
 
     /// Every piece, in the order a car meets them.
     ///
-    /// The connected chain from [`Self::route`] first, then whatever the chain
-    /// does not reach, ordered by uid. Route order is a property of the geometry
-    /// rather than of the file: the piece array is an unordered set whose order
-    /// only ever reflected the order pieces happened to be created in, and every
-    /// consumer that read it as race order inherited that.
+    /// Uid, which is placement order: `normalize_uids` hands each piece the
+    /// next free number above everything already present, so a number says when
+    /// a piece was dropped in and nothing else. That is the whole order there
+    /// is, and it is a property of the document rather than of the file, so a
+    /// shuffled or reordered array is still the same track.
     ///
-    /// Pieces outside the chain are still returned, because a track being built
-    /// has plenty of them and dropping them would make this a partial answer.
-    /// Their relative order carries no meaning, so uid keeps it stable across a
-    /// save and load.
+    /// Deduplicated because this feeds the collision build, and a document
+    /// carrying a repeated uid would otherwise name one piece twice. Every load
+    /// path runs `normalize_uids` first, but the world is built from whatever
+    /// document it is handed.
     pub fn race_order(&self) -> Vec<PieceUid> {
-        let route = self.route();
-        let mut on_route: BTreeSet<PieceUid> = BTreeSet::new();
-        let mut ordered = Vec::with_capacity(self.pieces.len());
-        // Filtered rather than pushed: a document with a repeated uid would
-        // otherwise name the same piece twice, and this feeds the collision
-        // build. `normalize_uids` clears that on every load path, but the world
-        // is built from whatever document it is handed.
-        for uid in route {
-            if on_route.insert(uid) {
-                ordered.push(uid);
-            }
-        }
-        let mut rest: Vec<_> = self
-            .pieces
-            .iter()
-            .map(|p| p.uid)
-            .filter(|uid| !on_route.contains(uid))
-            .collect();
-        rest.sort_unstable();
-        rest.dedup();
-        ordered.extend(rest);
+        let mut ordered: Vec<PieceUid> = self.pieces.iter().map(|p| p.uid).collect();
+        ordered.sort_unstable();
+        ordered.dedup();
         ordered
     }
 
@@ -364,9 +354,15 @@ impl TrackDocument {
         out
     }
 
-    /// The piece that follows `uid` along the track: `uid`'s exit must be met
-    /// head-on by an *entry*, index-matched so exits never satisfy exits; loops self-match.
-    pub fn next_piece(&self, uid: PieceUid) -> Option<PieceUid> {
+    /// The piece whose entry meets `uid`'s exit head-on, if one does.
+    ///
+    /// A *suggestion*, not a fact about the track. Pieces are placed
+    /// independently, so two of them meeting is something the author arranged
+    /// rather than something the format requires, and a track may have any
+    /// number of such pairs, none of them, or a chain that doubles back. The
+    /// editor uses this to offer a join and the validator uses it to report one,
+    /// but neither treats it as the road the car drives.
+    pub fn joins(&self, uid: PieceUid) -> Option<PieceUid> {
         let ports = self.all_ports();
         let exits: Vec<WorldPort> = ports
             .iter()
@@ -379,9 +375,9 @@ impl TrackDocument {
                 port.point == exit.point && port.outward == exit.outward.opposite()
             };
             // Uid order, not the order `all_ports` happened to walk the piece
-            // array in: race order is derived from this chain, so a tie-break
-            // that read array order would let shuffling the file change which
-            // gates a car meets while its fingerprint stayed identical.
+            // array in: a tie-break reading array order would let shuffling the
+            // file change which neighbour is offered while the fingerprint
+            // stayed identical.
             let mut candidates: Vec<PieceUid> = ports
                 .iter()
                 .filter(|(_, port, i)| *i == 0 && mates(port))
@@ -391,13 +387,11 @@ impl TrackDocument {
             candidates.sort_unstable();
             candidates.dedup();
 
-            // A loop's own entry sits on its exit, so it is a candidate for
-            // continuing itself. It never is: a piece cannot follow itself.
             if let Some(inst) = self.piece(uid)
                 && crate::piece::catalog_by_id(inst.id).is_finish
             {
-                // A finish ends the route even if something is attached
-                // beyond it.
+                // A finish is a gate, not a road: nothing continues beyond it,
+                // so offering a join there would invite building past the line.
                 return None;
             }
 
@@ -462,31 +456,109 @@ impl TrackDocument {
             .unwrap_or(crate::piece::GridDir::PosZ)
     }
 
-    /// Ordered chain of piece UIDs from the Start piece, following exits to
-    /// entries. Stops at the first dead end.
+    /// Whether the road stops because there is nothing there, rather than
+    /// because a piece is missing.
     ///
-    /// The Start it begins at is the one the run uses ([`Self::active_start`]).
-    /// A document with two starts and a chain from each would otherwise be
-    /// walked from one and spawned in another, so the car would start beside
-    /// the gates it is being timed against.
-    pub fn route(&self) -> Vec<PieceUid> {
-        // Lowest uid among the active start only: `active_start` is already one
-        // piece, so there is nothing left to choose. A shuffled file is the same
-        // track, so which Start the chain begins at cannot depend on where it
-        // happens to sit in the file.
+    /// The two are the same to the join walk and very different to the player. A
+    /// piece ending in open air, with road resuming further along the same line,
+    /// is a jump: the author left room to fly across and the track is complete.
+    /// A piece ending against another piece that does not meet its port is a
+    /// mistake, and so is one ending in air with nothing beyond it at all.
+    pub fn chain_stops_at_air(&self, uid: PieceUid) -> bool {
+        /// How far ahead a landing may plausibly be, in cells.
+        const REACH: i32 = 6;
+        let Some(inst) = self.piece(uid) else {
+            return false;
+        };
+        let shape = crate::geometry::piece_shape(inst.id, &inst.params, self.cell_size);
+        let Some(exit) = shape.ports.last() else {
+            return false;
+        };
+        let exit_cell = {
+            let w = rotate_local_xz(exit.cell, inst.yaw);
+            [
+                inst.cell[0] + w[0],
+                inst.cell[1] + w[1],
+                inst.cell[2] + w[2],
+            ]
+        };
+        let ahead = crate::piece::rotate_local_dir(exit.outward, inst.yaw);
+        let cell_at = |step: i32| -> Option<[i16; 3]> {
+            let step = i16::try_from(step).ok()?;
+            match ahead {
+                crate::piece::GridDir::PosZ => {
+                    Some([exit_cell[0], exit_cell[1], exit_cell[2] + step])
+                }
+                crate::piece::GridDir::NegZ => {
+                    Some([exit_cell[0], exit_cell[1], exit_cell[2] - step])
+                }
+                crate::piece::GridDir::PosX => {
+                    Some([exit_cell[0] + step, exit_cell[1], exit_cell[2]])
+                }
+                crate::piece::GridDir::NegX => {
+                    Some([exit_cell[0] - step, exit_cell[1], exit_cell[2]])
+                }
+                // A gap is measured along the road, and a vertical exit has none.
+                _ => None,
+            }
+        };
+        let occupied = |probe: [i16; 3]| {
+            self.pieces.iter().any(|other| {
+                if other.uid == uid {
+                    return false;
+                }
+                let other_shape =
+                    crate::geometry::piece_shape(other.id, &other.params, self.cell_size);
+                if other_shape.ports.is_empty() {
+                    return false;
+                }
+                other_shape.reserve_cells().any(|c| {
+                    let w = rotate_local_xz(c, other.yaw);
+                    [
+                        other.cell[0] + w[0],
+                        other.cell[1] + w[1],
+                        other.cell[2] + w[2],
+                    ] == probe
+                })
+            })
+        };
+
+        // Road has to be missing at the very next cell for this to be a gap. A
+        // piece butted up against this one that failed to mate is a different
+        // fault, and reporting it as a jump would hide it.
+        let Some(first) = cell_at(1) else {
+            return false;
+        };
+        if occupied(first) {
+            return false;
+        }
+        // And something has to be there to land on, within reach. Otherwise the
+        // road simply stops, which is an unfinished track rather than a jump.
+        (2..=REACH).any(|step| cell_at(step).is_some_and(&occupied))
+    }
+
+    /// The run of pieces joined end to end from the Start the run uses,
+    /// following exits to entries and stopping at the first break.
+    ///
+    /// This is the connected stretch of road, which is what the editor snaps
+    /// along and what the validator reports on. It is deliberately not the
+    /// track: pieces placed apart still race, and a gap the car flies across is
+    /// road the walk cannot cross. A track with no joins at all returns just the
+    /// Start, which is a truthful answer rather than a failure.
+    pub fn chain(&self) -> Vec<PieceUid> {
         let Some(start) = self.active_start() else {
             return Vec::new();
         };
         let mut out = vec![start.uid];
         // Set alongside the list: the loop below asks "have I been here" once per
-        // step, and scanning the whole chain each time made route building
-        // quadratic on the long tracks it exists to order.
+        // step, and scanning the whole chain each time made this quadratic on
+        // the long tracks it exists to order.
         let mut seen: BTreeSet<PieceUid> = BTreeSet::new();
         seen.insert(start.uid);
         let mut cur = start.uid;
         let mut guard = 0;
-        while let Some(next) = self.next_piece(cur) {
-            // Already visited: the route has closed, so it ends here.
+        while let Some(next) = self.joins(cur) {
+            // Already visited: the run has closed, so it ends here.
             if !seen.insert(next) {
                 break;
             }
@@ -498,6 +570,69 @@ impl TrackDocument {
             }
         }
         out
+    }
+
+    /// Pieces whose ports meet no other piece at all.
+    ///
+    /// A free-standing piece is legal now, so this is a warning's subject
+    /// rather than a defect. It is what separates "the author built a second
+    /// line to try later" from "the author dropped a piece in the wrong place",
+    /// which is the only reason to mention it. Props are excluded: a wall joins
+    /// nothing by nature, and reporting every one of them would bury the piece
+    /// that matters.
+    pub fn unjoined(&self) -> Vec<PieceUid> {
+        self.pieces
+            .iter()
+            .filter(|inst| {
+                let shape = crate::geometry::piece_shape(inst.id, &inst.params, self.cell_size);
+                !shape.ports.is_empty() && !self.meets_any(inst.uid)
+            })
+            .map(|inst| inst.uid)
+            .collect()
+    }
+
+    /// Whether `uid` has any road meeting either of its ports.
+    ///
+    /// Cell adjacency rather than a mating exit and entry: two pieces sharing a
+    /// cell drive into each other whichever way they face, so that is what makes
+    /// a piece reachable. A gap one cell wide is not adjacency, which is the
+    /// point: the car crosses it in the air, not on the road.
+    pub fn meets_any(&self, uid: PieceUid) -> bool {
+        let Some(inst) = self.piece(uid) else {
+            return false;
+        };
+        let shape = crate::geometry::piece_shape(inst.id, &inst.params, self.cell_size);
+        if shape.ports.is_empty() {
+            return false;
+        }
+        let own: BTreeSet<[i16; 3]> = shape
+            .reserve_cells()
+            .map(|c| {
+                let w = rotate_local_xz(c, inst.yaw);
+                [
+                    inst.cell[0] + w[0],
+                    inst.cell[1] + w[1],
+                    inst.cell[2] + w[2],
+                ]
+            })
+            .collect();
+        self.pieces.iter().any(|other| {
+            if other.uid == uid {
+                return false;
+            }
+            let other_shape = crate::geometry::piece_shape(other.id, &other.params, self.cell_size);
+            if other_shape.ports.is_empty() {
+                return false;
+            }
+            other_shape.reserve_cells().any(|c| {
+                let w = rotate_local_xz(c, other.yaw);
+                own.contains(&[
+                    other.cell[0] + w[0],
+                    other.cell[1] + w[1],
+                    other.cell[2] + w[2],
+                ])
+            })
+        })
     }
 }
 
@@ -512,7 +647,7 @@ mod tests {
     #[test]
     fn demo_track_chains_from_start_to_finish() {
         let doc = crate::demo::demo_track();
-        let route = doc.route();
+        let route = doc.chain();
         assert!(route.len() >= 8, "route too short: {:?}", route);
         let first = doc.piece(route[0]).unwrap();
         assert!(crate::piece::catalog_by_id(first.id).is_start);
@@ -529,9 +664,9 @@ mod tests {
                 .any(|p| crate::piece::catalog_by_id(p.id).is_checkpoint),
             "demo track needs at least one checkpoint"
         );
-        for pair in doc.route().windows(2) {
+        for pair in doc.chain().windows(2) {
             assert_eq!(
-                doc.next_piece(pair[0]),
+                doc.joins(pair[0]),
                 Some(pair[1]),
                 "route claims {:?} follows {:?}",
                 pair[1],
@@ -549,8 +684,8 @@ mod tests {
             PieceInstance::new(PieceId::Straight, [0, 0, 0]).with_uid(PieceUid(1)),
             PieceInstance::new(PieceId::Straight, [0, 0, 1]).with_uid(PieceUid(2)),
         ];
-        assert_eq!(doc.next_piece(PieceUid(1)), Some(PieceUid(2)));
-        assert_eq!(doc.next_piece(PieceUid(2)), None, "tail is a dead end");
+        assert_eq!(doc.joins(PieceUid(1)), Some(PieceUid(2)));
+        assert_eq!(doc.joins(PieceUid(2)), None, "tail is a dead end");
     }
 
     #[test]
@@ -687,10 +822,11 @@ mod tests {
     }
 
     #[test]
-    fn checkpoints_sharing_an_order_are_passed_in_road_order() {
+    fn checkpoints_sharing_an_order_keep_their_placement_order() {
         let mut doc = gated_doc();
         // Two gates on the same number: either may be the one passed, so the
-        // tie is the road's own order rather than the file's.
+        // tie is the order they were placed in rather than the order the file
+        // happens to list them.
         let road = road_order(&doc);
         for uid in [road[0], road[2]] {
             let slot = doc.pieces.iter_mut().find(|p| p.uid == uid).unwrap();
@@ -699,9 +835,35 @@ mod tests {
 
         assert_eq!(
             sequence(&doc),
-            vec![road[1], road[0], road[2]],
-            "the gate that kept its own number is first, then the pair in road order"
+            vec![road[0], road[2], road[1]],
+            "the pair sharing a number leads, in placement order, and the \
+             unnumbered gate follows"
         );
+    }
+
+    /// A gate with no number of its own sits after every gate that has one.
+    ///
+    /// It used to keep its place on the road instead, which is what the test this
+    /// replaces checked: an unnumbered gate took the number its position on the
+    /// road gave it, and an explicit number had to fight with that. The road
+    /// cannot supply a number any more, since pieces are placed independently,
+    /// so the only order left is the order they were placed in. Ranking those
+    /// below every explicit number is what keeps "put this gate first" meaning
+    /// first, rather than first among the gates that did not say.
+    #[test]
+    fn an_unnumbered_gate_follows_every_numbered_one() {
+        let mut doc = gated_doc();
+        let road = road_order(&doc);
+        // Number the last gate 1, so it must lead.
+        let slot = doc.pieces.iter_mut().find(|p| p.uid == road[2]).unwrap();
+        slot.params = slot.params.order(1);
+
+        assert_eq!(
+            sequence(&doc).first(),
+            Some(&road[2]),
+            "an explicit order wins over every unnumbered gate"
+        );
+        assert_eq!(sequence(&doc).len(), 3, "no gate is dropped either way");
     }
 
     #[test]
@@ -794,24 +956,29 @@ mod tests {
     #[test]
     fn race_order_follows_the_road_not_the_file() {
         let doc = crate::demo::demo_track();
-        let route = doc.route();
+        let route = doc.chain();
         // Every piece the chain reaches comes first, in chain order.
         let order = doc.race_order();
         assert_eq!(&order[..route.len()], route.as_slice());
         assert_eq!(order.len(), doc.pieces.len(), "no piece may be dropped");
     }
 
+    /// Race order is the order the pieces were placed in, even when that
+    /// disagrees with the road.
+    ///
+    /// The test this replaces required the opposite: it renumbered a built-in
+    /// circuit so its uids ran against the chain, and insisted race order came
+    /// back along the road anyway. That was correct while race order was a walk
+    /// from the Start, and it is the assumption free placement removes. Two
+    /// documents whose pieces are numbered differently are two runs, and saying
+    /// so is the honest answer rather than a way of quietly preferring one.
     #[test]
-    fn race_order_differs_from_uid_order_when_the_file_says_otherwise() {
-        // The built-in circuits are built by chaining, so their uids happen to
-        // run in race order and cannot show the difference. Hand them uids that
-        // do not: this is what an edited or hand-written document looks like, and
-        // it is the case the decoupling exists for.
+    fn race_order_follows_placement_even_against_the_road() {
         let mut doc = crate::demo::demo_track();
-        let route = doc.route();
-        let reversed: Vec<u32> = route.iter().rev().map(|u| u.0).collect();
+        let chain = doc.chain();
+        let reversed: Vec<u32> = chain.iter().rev().map(|u| u.0).collect();
         for piece in &mut doc.pieces {
-            let rank = route.iter().position(|u| *u == piece.uid);
+            let rank = chain.iter().position(|u| *u == piece.uid);
             let Some(rank) = rank.and_then(|r| reversed.get(r)).copied() else {
                 continue;
             };
@@ -819,14 +986,20 @@ mod tests {
         }
         doc.normalize_uids();
 
-        // Compared against ascending uid, not against array order: the array is
-        // still in chain order, so array order would coincide with race order
-        // and prove nothing.
-        let mut ascending: Vec<u32> = doc.pieces.iter().map(|p| p.uid.0).collect();
-        ascending.sort_unstable();
+        // Compared against the chain, which the numbering deliberately contradicts.
+        // Recomputed after renumbering: the walk above named pieces by their old
+        // uids, and comparing against those would compare two different labels.
         let order: Vec<u32> = doc.race_order().iter().map(|u| u.0).collect();
-        assert_ne!(order, ascending, "race order must not read the uids");
+        let road: Vec<u32> = doc.chain().iter().map(|u| u.0).collect();
+        assert_ne!(
+            order, road,
+            "the fixture must number the pieces against the road, or it proves nothing"
+        );
         assert_eq!(order.len(), doc.pieces.len(), "no piece may be dropped");
+        // And ascending, because placement order is the uid order.
+        let mut ascending = order.clone();
+        ascending.sort_unstable();
+        assert_eq!(order, ascending, "race order is placement order");
     }
 
     #[test]
@@ -844,7 +1017,7 @@ mod tests {
             "a detached piece is still a piece"
         );
         assert!(
-            !doc.route().contains(&orphan.uid),
+            !doc.chain().contains(&orphan.uid),
             "and it is still not part of the chain"
         );
     }
@@ -861,7 +1034,7 @@ mod tests {
             shuffled.race_order(),
             "piece array order must not reach race order"
         );
-        assert_eq!(doc.route(), shuffled.route());
+        assert_eq!(doc.chain(), shuffled.chain());
         assert_eq!(
             crate::fingerprint::gameplay_fingerprint(&doc),
             crate::fingerprint::gameplay_fingerprint(&shuffled)
@@ -886,7 +1059,7 @@ mod tests {
             PieceInstance::new(PieceId::Straight, [0, 0, 3]).with_uid(PieceUid(4)),
         ];
         doc.normalize_uids();
-        let forward = doc.route();
+        let forward = doc.chain();
         assert!(
             forward.len() >= 3,
             "the fixture must actually present a contested join: {forward:?}"
@@ -894,7 +1067,7 @@ mod tests {
         doc.pieces.reverse();
         assert_eq!(
             forward,
-            doc.route(),
+            doc.chain(),
             "the chain may not depend on file order"
         );
     }

@@ -61,6 +61,10 @@ pub enum UiAct {
     ArmPiece(retrackt_format::PieceId),
     /// Drop the armed piece at the cursor, snapped to a connector if one is near.
     PlaceArmed,
+    /// Turn the armed piece a quarter turn before it is placed.
+    RotateArmed(i8),
+    /// Turn connector snapping on or off for the next placement.
+    ToggleSnap,
     /// Move the cursor by one grid cell.
     MoveCursor([i16; 3]),
     /// Put the cursor at an absolute cell, from a click in the viewport.
@@ -261,6 +265,19 @@ pub struct EditorData {
     pub clipboard: Vec<retrackt_format::PieceInstance>,
     /// Whether the next placement would lock onto a connector port.
     pub snapped: bool,
+    /// Heading the armed piece would be placed at, in quarter turns.
+    ///
+    /// The piece's own, set before it is placed rather than after. Chaining
+    /// inferred the heading from whatever it was joining, so it never needed
+    /// one; placing a piece on its own does, and there is nothing else to infer
+    /// it from.
+    pub armed_yaw: u8,
+    /// Whether a placement locks onto a nearby connector port.
+    ///
+    /// On by default because it is what building a run of road wants. Off when
+    /// the cursor is being pointed at an exact cell, which is the other half of
+    /// what free placement is for.
+    pub snap: bool,
     pub can_undo: bool,
     pub can_redo: bool,
     /// Problems with the track, recomputed when it changes.
@@ -285,6 +302,8 @@ impl Default for EditorData {
             selection: Vec::new(),
             clipboard: Vec::new(),
             snapped: false,
+            armed_yaw: 0,
+            snap: true,
             can_undo: false,
             can_redo: false,
             diagnostics: Vec::new(),

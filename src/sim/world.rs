@@ -707,22 +707,18 @@ mod tests {
     }
 
     #[test]
-    fn gates_follow_the_road_when_the_uids_do_not() {
-        // The built-in circuits chain in creation order, so their uids already run
-        // in race order and cannot show a difference. Reverse them: the gate
-        // sequence must still come out in road order.
-        let mut doc = builtin_tracks().remove(0);
-        let route = doc.route();
-        let reversed: Vec<u32> = route.iter().rev().map(|u| u.0).collect();
-        for piece in &mut doc.pieces {
-            let rank = route.iter().position(|u| *u == piece.uid);
-            let Some(rank) = rank.and_then(|r| reversed.get(r)).copied() else {
-                continue;
-            };
-            piece.uid = retrackt_format::PieceUid(rank);
-        }
-        doc.normalize_uids();
-
+    fn gate_order_follows_the_document_not_the_road() {
+        // The test this replaces reversed the uids and required the gate
+        // sequence to come back in road order regardless, because race order was
+        // a walk from the Start through whatever ports met. Pieces are placed
+        // independently now, so there is no road to walk: the order is the
+        // order the document states, and this holds that down.
+        //
+        // Two documents with the same pieces in different order are two
+        // different runs, and saying so is the honest answer. What must stay
+        // true is that gate *numbering* still matches the sequence, or the
+        // checkpoint counter would be comparing the wrong gates.
+        let doc = builtin_tracks().remove(0);
         let world = TrackWorld::from_doc(&doc);
         let order = doc.race_order();
         let rank = |uid: PieceUid| {
@@ -732,22 +728,76 @@ mod tests {
                 .expect("a gate piece is always in race order")
         };
 
-        // Same number of gates as the untouched document...
         assert_eq!(
             world.checkpoints.len(),
             TrackWorld::from_doc(&retrackt_format::demo_track())
                 .checkpoints
                 .len()
         );
-        // ...and ascending in road order...
         for pair in world.checkpoints.windows(2) {
-            assert!(rank(pair[0].piece) < rank(pair[1].piece));
+            assert!(
+                rank(pair[0].piece) < rank(pair[1].piece),
+                "gates must come out in the order the document lists them"
+            );
         }
-        // ...which is not ascending uid, or none of this would test anything.
-        let uids: Vec<u32> = world.checkpoints.iter().map(|g| g.piece.0).collect();
-        let mut sorted = uids.clone();
-        sorted.sort_unstable();
-        assert_ne!(uids, sorted, "the fixture must not be uid-sorted");
+        for (i, gate) in world.checkpoints.iter().enumerate() {
+            assert_eq!(gate.index, i, "gate index must be its position in the run");
+        }
+
+        // And an explicit order overrides it, which is how an author moves a
+        // gate without moving the piece.
+        let mut moved = doc.clone();
+        let last = moved.checkpoint_sequence().len().saturating_sub(1);
+        if let Some(p) = moved.checkpoint_sequence().last() {
+            let uid = p.uid;
+            for piece in moved.pieces.iter_mut() {
+                if piece.uid == uid {
+                    piece.params.checkpoint_order = Some(1);
+                }
+            }
+        }
+        let reordered = TrackWorld::from_doc(&moved);
+        assert_eq!(
+            reordered.checkpoints.first().map(|g| g.piece),
+            Some(moved.checkpoint_sequence()[0].uid),
+            "an explicit order must decide the sequence"
+        );
+        assert!(last >= 1, "the fixture needs more than one gate");
+    }
+
+    #[test]
+    fn a_gate_the_car_cannot_reach_is_reported_rather_than_refused() {
+        // A checkpoint placed in mid air still builds and still gets a gate: the
+        // document does not know what the car will do, and refusing the track
+        // would refuse free placement. What the validator offers is a warning.
+        let mut doc = retrackt_format::demo_track();
+        let uid = doc.next_piece_uid();
+        doc.pieces.push(
+            retrackt_format::PieceInstance::new(PieceId::Checkpoint, [900, 0, 900]).with_uid(uid),
+        );
+        doc.normalize_uids();
+
+        let world = TrackWorld::from_doc(&doc);
+        assert_eq!(
+            world.checkpoints.len(),
+            4,
+            "a gate is built wherever it is placed"
+        );
+        let diagnostics = retrackt_format::validate::validate(&doc);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("meets no other")),
+            "but it is reported: {:?}",
+            diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.severity == retrackt_format::validate::Severity::Error),
+            "and it is a warning, not a refusal: {:?}",
+            diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -834,14 +884,6 @@ mod tests {
                     continue;
                 }
                 if inst.id == PieceId::Wall {
-                    continue;
-                }
-                if inst.id == PieceId::JumpGap {
-                    // A jump's middle is air, so its centre has nothing under
-                    // it: the lip and the landing are the road, and the gap
-                    // between them is the point. What matters is that the road
-                    // on either side is really there, which is what the format
-                    // crate's own tests hold.
                     continue;
                 }
                 let c = piece_centre(&doc, inst);
