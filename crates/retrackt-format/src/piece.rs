@@ -154,10 +154,13 @@ pub enum PieceId {
     Pillar = 15,
     /// A trackside sign board on a post. Decor only, like a wall.
     Sign = 16,
+    /// One solid cube of scenery, for walls, platforms and steps. Stacks
+    /// cleanly: each block owns exactly its anchor cell.
+    Block = 17,
 }
 
 impl PieceId {
-    pub const ALL: [PieceId; 17] = [
+    pub const ALL: [PieceId; 18] = [
         Self::Start,
         Self::Straight,
         Self::CurveRight90,
@@ -175,6 +178,7 @@ impl PieceId {
         Self::Wall,
         Self::Pillar,
         Self::Sign,
+        Self::Block,
     ];
 
     pub fn as_u16(self) -> u16 {
@@ -203,6 +207,7 @@ impl PieceId {
             Self::Wall => "Wall",
             Self::Pillar => "Pillar",
             Self::Sign => "Sign",
+            Self::Block => "Block",
             Self::SCurve => "S Curve",
         }
     }
@@ -223,15 +228,15 @@ impl PieceId {
             Self::RampUp | Self::RampDown => "Slopes",
             Self::BankLeft | Self::BankRight => "Banks",
             Self::Loop => "Stunts",
-            Self::Wall | Self::Pillar | Self::Sign => "Props",
+            Self::Wall | Self::Pillar | Self::Sign | Self::Block => "Props",
         }
     }
 
     /// Pieces that are dressing, not road: no drivable surface, no ports, no
-    /// place in the chain. A wall is the original; a pillar holds a road up
-    /// and a sign stands beside one, and neither is ever driven on.
+    /// place in the chain. A wall is the original; a pillar holds a road up,
+    /// a sign stands beside one, a block builds with, and none is ever driven on.
     pub fn is_scenery(self) -> bool {
-        matches!(self, Self::Wall | Self::Pillar | Self::Sign)
+        matches!(self, Self::Wall | Self::Pillar | Self::Sign | Self::Block)
     }
 
     /// Pieces the car physically drives on. Scenery is decor only.
@@ -258,6 +263,7 @@ impl PieceId {
                 | Self::Loop
                 | Self::SCurve
                 | Self::Sign
+                | Self::Block
         )
     }
 
@@ -474,6 +480,17 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::Sign,
+        default_length_cells: 1,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::Block,
         default_length_cells: 1,
         default_radius_cells: 0,
         default_bank_deg: 0,

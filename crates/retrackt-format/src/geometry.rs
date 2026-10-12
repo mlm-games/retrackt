@@ -430,6 +430,17 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
             });
             c.skip = true;
         }
+
+        PieceId::Block => {
+            // Not drivable: one solid cube on its anchor cell. The centre stub
+            // stays inside the cell so the block owns exactly the cell it is
+            // placed on, which is what lets blocks stack without sharing.
+            c.half_width = cell * 0.5;
+            push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
+                (Vec3::new(0.0, u * cell * 0.5, 0.0), Vec3::Y, Vec3::Z)
+            });
+            c.skip = true;
+        }
     }
 
     c
@@ -480,6 +491,8 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
         ),
         // A sign is a post with a board on top, facing local +Z.
         PieceId::Sign => (RawMesh::default(), sign_mesh(cell)),
+        // A block is one solid cube on its anchor cell.
+        PieceId::Block => (RawMesh::default(), block_mesh(cell)),
         _ => {
             let (a, b) = ribbon(&center, half, KERB_HEIGHT);
             (a, b)
@@ -808,6 +821,18 @@ fn pillar_mesh(cell: f32, tall: u8) -> RawMesh {
     let mut m = RawMesh::default();
     let w = cell * 0.15;
     push_box(&mut m, [-w, 0.0, -w], [w, f32::from(tall) * cell, w]);
+    for quad in m.colors.chunks_mut(4) {
+        quad.fill([0.0; 3]);
+    }
+    m
+}
+
+/// A block's decor: one solid cube on its anchor cell, tagged dark like the
+/// pillar so it renders pale rather than warning red.
+fn block_mesh(cell: f32) -> RawMesh {
+    let mut m = RawMesh::default();
+    let h = cell * 0.5;
+    push_box(&mut m, [-h, 0.0, -h], [h, cell, h]);
     for quad in m.colors.chunks_mut(4) {
         quad.fill([0.0; 3]);
     }
@@ -1153,7 +1178,7 @@ mod tests {
         // A pillar holds a road up and a sign stands beside one: neither is
         // driven on, neither joins the chain, and both still render and
         // collide through their decor.
-        for id in [PieceId::Pillar, PieceId::Sign] {
+        for id in [PieceId::Pillar, PieceId::Sign, PieceId::Block] {
             let shape = piece_shape(id, &PieceParams::default(), C);
             assert!(shape.surface.is_empty(), "{id:?} has no drive surface");
             assert!(!shape.decor.is_empty(), "{id:?} still renders");

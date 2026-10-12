@@ -798,6 +798,7 @@ mod tests {
         b.step(PieceId::Finish, retrackt_format::PieceParams::default());
         b.step(PieceId::Pillar, retrackt_format::PieceParams::default());
         b.step(PieceId::Sign, retrackt_format::PieceParams::default());
+        b.step(PieceId::Block, retrackt_format::PieceParams::default());
         let doc = b.build();
 
         let diagnostics = retrackt_format::validate(&doc);
@@ -810,7 +811,7 @@ mod tests {
         );
 
         let w = TrackWorld::from_doc(&doc);
-        for id in [PieceId::Pillar, PieceId::Sign] {
+        for id in [PieceId::Pillar, PieceId::Sign, PieceId::Block] {
             let uid = doc.pieces.iter().find(|p| p.id == id).unwrap().uid;
             let owned: Vec<_> = w.triangles.iter().filter(|t| t.owner == uid).collect();
             assert!(!owned.is_empty(), "{id:?}: no collision triangles");
@@ -822,6 +823,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn blocks_stack_without_sharing_cells() {
+        // One cube per anchor cell: a block directly atop another owns a
+        // different cell, so a wall of blocks validates clean.
+        let mut doc = TrackDocument::empty();
+        for y in [0, 1, 2] {
+            let uid = doc.next_piece_uid();
+            doc.pieces
+                .push(PieceInstance::new(PieceId::Block, [30, y, 30]).with_uid(uid));
+        }
+        let diagnostics = retrackt_format::validate(&doc);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.message.contains("share cells")),
+            "stacked blocks own distinct cells: {:?}",
+            diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+        let w = TrackWorld::from_doc(&doc);
+        let owned = w
+            .triangles
+            .iter()
+            .filter(|t| t.owner != PieceUid(0))
+            .count();
+        assert_eq!(owned, 3 * 12, "three cubes, twelve tris each");
     }
 
     #[test]
