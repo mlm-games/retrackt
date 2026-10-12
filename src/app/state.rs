@@ -65,6 +65,12 @@ pub enum UiAct {
     RotateArmed(i8),
     /// Turn connector snapping on or off for the next placement.
     ToggleSnap,
+    /// Step the paint of one piece by `step` places, wrapping round the palette.
+    CycleColor(retrackt_format::PieceUid, i8),
+    /// Step the paint of every selected piece by `step` places, wrapping.
+    CycleSelectionColor(i8),
+    /// Paint every selected piece one flat colour.
+    SetSelectionColor(u8),
     /// Move the cursor by one grid cell.
     MoveCursor([i16; 3]),
     /// Put the cursor at an absolute cell, from a click in the viewport.

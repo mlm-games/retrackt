@@ -15,6 +15,10 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
     // fingerprint of an identical track.
     pieces.sort_by_key(|p| p.uid);
 
+    // Bumped again because a piece gained a paint: two tracks differing only in
+    // one section's colour are two different runs to look at, and a ghost of one
+    // replayed on the other looks like it is driving through scenery that is not
+    // there.
     // Bumped because the world was resized. A cell is 5 m rather than 4, a road
     // is 2.6 cells wide rather than one, and every piece defaults to four cells
     // of length. `cell_size` is already hashed, but the road width and the piece
@@ -23,7 +27,7 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
     // run, so the domain moves and every record written before it loses its
     // match, which is the price of not mislabelling them.
     let mut h = blake3::Hasher::new();
-    h.update(b"retrackt-track-v4");
+    h.update(b"retrackt-track-v5");
     h.update(&doc.format.to_le_bytes());
     h.update(&doc.cell_size.to_bits().to_le_bytes());
 
@@ -53,6 +57,7 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
         h.update(&[p.params.bank_deg.unwrap_or(0) as u8]);
         h.update(&[p.params.checkpoint_order.unwrap_or(0)]);
         h.update(&[p.params.slope_deg.unwrap_or(0)]);
+        h.update(&[p.params.color.unwrap_or(0)]);
     }
 
     finish(&h.finalize())

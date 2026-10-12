@@ -497,6 +497,15 @@ impl App {
                     "Snapping off: pieces land exactly where the cursor is.".into()
                 });
             }
+            UiAct::CycleColor(uid, step) => self.cycle_color(&[uid], step),
+            UiAct::CycleSelectionColor(step) => {
+                let uids = self.data.editor.selection.clone();
+                self.cycle_color(&uids, step);
+            }
+            UiAct::SetSelectionColor(index) => {
+                let uids = self.data.editor.selection.clone();
+                self.set_color(&uids, index);
+            }
             UiAct::PlaceArmed => self.place_armed(),
             UiAct::MoveCursor(delta) => {
                 let cell = placement::step_cell(self.data.editor.cursor, delta);
@@ -1271,6 +1280,87 @@ impl App {
         // Following the cursor keeps a run of placements going without a click
         // per piece, which is what chaining onto the last exit used to do.
         self.set_cursor(placement::exit_cell(&self.data.track, &piece));
+        self.track_changed();
+    }
+
+    /// Step a piece's paint, wrapping round the palette.
+    ///
+    /// Nothing at all when the selection is empty: recolouring the whole track
+    /// because a colour button was pressed with nothing selected is not what the
+    /// button was for.
+    fn cycle_color(&mut self, uids: &[retrackt_format::PieceUid], step: i8) {
+        if uids.is_empty() {
+            self.data.notice = Some("Select a piece to recolour.".into());
+            return;
+        }
+        let before: Vec<retrackt_format::PieceInstance> = uids
+            .iter()
+            .filter_map(|uid| self.data.track.piece(*uid).copied())
+            .collect();
+        if before.is_empty() {
+            return;
+        }
+        let count = retrackt_format::PIECE_COLORS.len() as i16;
+        for piece in self.data.track.pieces.iter_mut() {
+            if !uids.contains(&piece.uid) {
+                continue;
+            }
+            let next = piece.params.color.unwrap_or(0) as i16 + i16::from(step);
+            piece.params.color = Some(next.rem_euclid(count) as u8);
+        }
+        let after: Vec<retrackt_format::PieceInstance> = uids
+            .iter()
+            .filter_map(|uid| self.data.track.piece(*uid).copied())
+            .collect();
+        let edits: Vec<Edit> = before
+            .into_iter()
+            .zip(after)
+            .map(|(before, after)| Edit::Changed {
+                uid: after.uid,
+                before,
+                after,
+            })
+            .collect();
+        for edit in edits {
+            self.history.push(edit);
+        }
+        self.track_changed();
+    }
+
+    /// Paint pieces one flat colour, from a swatch.
+    ///
+    /// A swatch sets rather than steps: tapping the red square paints the
+    /// selection red, whatever it was before. Same empty-selection guard as the
+    /// cycle, for the same reason.
+    fn set_color(&mut self, uids: &[retrackt_format::PieceUid], index: u8) {
+        if uids.is_empty() {
+            self.data.notice = Some("Select a piece to recolour.".into());
+            return;
+        }
+        let clamped = index.min(retrackt_format::PIECE_COLORS.len() as u8 - 1);
+        let before: Vec<retrackt_format::PieceInstance> = uids
+            .iter()
+            .filter_map(|uid| self.data.track.piece(*uid).copied())
+            .collect();
+        if before.is_empty() {
+            return;
+        }
+        for piece in self.data.track.pieces.iter_mut() {
+            if uids.contains(&piece.uid) {
+                piece.params.color = Some(clamped);
+            }
+        }
+        let after: Vec<retrackt_format::PieceInstance> = uids
+            .iter()
+            .filter_map(|uid| self.data.track.piece(*uid).copied())
+            .collect();
+        for (before, after) in before.into_iter().zip(after) {
+            self.history.push(Edit::Changed {
+                uid: after.uid,
+                before,
+                after,
+            });
+        }
         self.track_changed();
     }
 

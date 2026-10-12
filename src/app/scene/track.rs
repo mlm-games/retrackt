@@ -26,7 +26,15 @@ pub(super) fn build_group(doc: &TrackDocument) -> (MeshGroup, ([f32; 3], [f32; 3
     for inst in &doc.pieces {
         let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
         let xform = inst.world_matrix(doc.cell_size);
-        merge(&mut merged, &shape.surface.transformed(xform, road));
+        // The piece's own paint, over the default road colour. A section of track
+        // laid in a different colour is how a set piece reads as a set piece
+        // rather than as more of the same circuit.
+        let tint = if inst.params.color.is_some() {
+            lin(retrackt_format::resolve_color(&inst.params))
+        } else {
+            road
+        };
+        merge(&mut merged, &shape.surface.transformed(xform, tint));
 
         let mut decor = shape.decor.transformed(xform, [1.0; 3]);
         kerb_palette(&mut decor);

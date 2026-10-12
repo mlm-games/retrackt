@@ -7,7 +7,7 @@ use std::rc::Rc;
 use repose_core::{
     AlignItems, Dp, Modifier, PaddingValues, TextFieldLineLimits, View, remember_with_key,
 };
-use repose_material::material3::{ButtonConfig, ButtonDefaults};
+use repose_material::material3::{Button, ButtonConfig, ButtonDefaults};
 use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{
     BasicTextField, Box, Center, Column, FlowRow, FlowRowConfig, Row, Text, TextFieldConfig,
@@ -188,8 +188,13 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
         heading("Track Editor"),
     ]));
 
+    // The paint of the selection, where the rest of the track's contents are:
+    // colour is a property of a piece already laid, not of the one being placed,
+    // so it belongs with the piece list rather than with the palette.
+    let color_panel = color_panel(data, actions);
     let track_column = Column(Modifier::new().gap(dims::SPACE_SECTION)).child([
         track,
+        color_panel,
         diagnostics_panel(editor),
         share_panel(editor, actions),
         side_buttons,
@@ -302,6 +307,83 @@ fn editor_dock(data: &AppData, actions: &ActionQueue) -> View {
             tool_tile("Rotate", actions, UiAct::RotateSelection(1)),
         ]),
     )
+}
+
+/// The paint of the selection.
+///
+/// A track is one colour by default, which is right for a circuit and wrong for a
+/// set piece: a red section, an ice bridge and a desert run are the fastest way
+/// to tell where on a track you are.
+fn color_panel(data: &AppData, actions: &ActionQueue) -> View {
+    let editor = &data.editor;
+    // Read back off the track, not off the editor: the paint lives on the piece,
+    // so the swatch that is lit is the one the selection is actually wearing.
+    let current = editor
+        .selection
+        .first()
+        .and_then(|uid| data.track.piece(*uid).and_then(|piece| piece.params.color));
+    let mut swatches: Vec<View> = Vec::new();
+    for (index, _hex) in retrackt_format::PIECE_COLORS.iter().enumerate() {
+        let selected = current == Some(index as u8);
+        swatches.push(swatch(index as u8, selected, actions));
+    }
+    list_panel_w(
+        "Paint",
+        dims::panel_w(),
+        vec![
+            Column(Modifier::new().gap(dims::SPACE_ROW)).child([
+                FlowRow(
+                    Modifier::new().gap(theme::dp(4.0)).fill_max_width(),
+                    FlowRowConfig {
+                        balanced: true,
+                        ..FlowRowConfig::default()
+                    },
+                )
+                .child(swatches),
+                if editor.selection.is_empty() {
+                    Text("Select a piece to recolour it.")
+                        .size(theme::sp(12.0))
+                        .color(theme::text_dim())
+                        .single_line()
+                } else {
+                    ctrl(
+                        "Cycle Selection",
+                        pusher(actions, UiAct::CycleSelectionColor(1)),
+                    )
+                },
+            ]),
+        ],
+    )
+}
+
+/// One paint swatch. Tapping it paints the selection rather than arming a colour
+/// for the next placement: a palette that armed instead of applied would need a
+/// second gesture before any of it took effect.
+fn swatch(index: u8, selected: bool, actions: &ActionQueue) -> View {
+    Box(Modifier::new()
+        .width(theme::dp(30.0))
+        .height(theme::dp(30.0))
+        .background(theme::rgb(retrackt_format::PIECE_COLORS[index as usize]))
+        .border(
+            theme::dp(2.0),
+            if selected {
+                theme::accent()
+            } else {
+                theme::text_dim().with_alpha_f32(0.4)
+            },
+            theme::dp(15.0),
+        )
+        .input_blocker())
+    .child(Button(
+        Modifier::new().fill_max_size(),
+        pusher(actions, UiAct::SetSelectionColor(index)),
+        ButtonConfig {
+            container_color: Some(repose_core::Color::TRANSPARENT),
+            content_color: Some(repose_core::Color::TRANSPARENT),
+            ..ButtonConfig::default()
+        },
+        || Box(Modifier::new().fill_max_size()),
+    ))
 }
 
 /// One square tool in the dock: a keyboard shortcut made reachable by touch.

@@ -18,7 +18,10 @@ pub use code::{CodeError, export_code, import_code};
 pub use demo::{ChainBuilder, builtin_tracks, demo_track, stunt_track};
 pub use fingerprint::gameplay_fingerprint;
 pub use geometry::{Centerline, RawMesh, piece_shape};
-pub use piece::{PieceDef, PieceId, PieceParams, catalog, catalog_by_id, rotate_local_xz};
+pub use piece::{
+    PIECE_COLORS, PieceDef, PieceId, PieceParams, catalog, catalog_by_id, resolve_color,
+    rotate_local_xz,
+};
 pub use replay::{PackedInput, ReplayError, ReplayTape, decode_replay, encode_replay};
 pub use track::{FORMAT_VERSION, MAX_PIECES, PieceInstance, PieceUid, TrackDocument, TrackError};
 pub use validate::{Diagnostic, Severity, is_unraceable, validate};

@@ -27,6 +27,13 @@ pub struct PieceParams {
     /// grid quantises to, so a document that never set it is unchanged.
     #[serde(default)]
     pub slope_deg: Option<u8>,
+    /// Paint for this piece, by index into [`PIECE_COLORS`].
+    ///
+    /// A track is one colour by default, which is right for a circuit and wrong
+    /// for a set piece: a red section, an ice bridge and a desert run are the
+    /// fastest way to tell where on a track you are. Unset keeps the default.
+    #[serde(default)]
+    pub color: Option<u8>,
     /// Position of a checkpoint in the sequence the car must pass, 1-based.
     ///
     /// Checkpoints sharing a number are a set: the car may pass any of them to
@@ -65,12 +72,39 @@ impl PieceParams {
         }
     }
 
+    pub fn color(self, index: u8) -> Self {
+        Self {
+            color: Some(index),
+            ..self
+        }
+    }
+
     pub fn order(self, nth: u8) -> Self {
         Self {
             checkpoint_order: Some(nth),
             ..self
         }
     }
+}
+
+/// Paints a piece can be laid in, by index.
+///
+/// Twelve, matching the reference: the default summer, two named environments
+/// that recolour a whole track, and nine flat colours for marking one section
+/// of it. A piece with no paint of its own takes the first.
+pub const PIECE_COLORS: [u32; 12] = [
+    0x4C6B8A, // default summer road
+    0x5077B2, // winter
+    0x997240, // desert
+    0x131313, 0x501B1B, 0x7F4D2B, 0x93862D, 0x2A5E30, 0x236363, 0x20244B, 0x592759, 0x302318,
+];
+
+/// Paint of a piece, resolved: the piece's own, or the default.
+pub fn resolve_color(params: &PieceParams) -> u32 {
+    params
+        .color
+        .and_then(|index| PIECE_COLORS.get(index as usize).copied())
+        .unwrap_or(PIECE_COLORS[0])
 }
 
 /// Axis-aligned grid direction. A connector port faces one of these.
@@ -540,6 +574,62 @@ mod tests {
         assert_eq!(
             resolve_params(PieceId::BankRight, &PieceParams::default()).2,
             20
+        );
+    }
+}
+#[cfg(test)]
+mod colour_tests {
+    use super::*;
+
+    #[test]
+    fn a_piece_can_be_painted_and_the_paint_survives_a_round_trip() {
+        let painted = PieceParams::default().color(5);
+        assert_eq!(painted.color, Some(5));
+        assert_eq!(
+            PieceParams::default().color,
+            None,
+            "an unpainted piece has no paint of its own"
+        );
+        assert_eq!(resolve_color(&painted), PIECE_COLORS[5]);
+        assert_eq!(
+            resolve_color(&PieceParams::default()),
+            PIECE_COLORS[0],
+            "an unpainted piece takes the default"
+        );
+
+        let mut doc = crate::demo_track();
+        let uid = doc.pieces[1].uid;
+        for piece in doc.pieces.iter_mut() {
+            if piece.uid == uid {
+                piece.params.color = Some(7);
+            }
+        }
+        let back = crate::TrackDocument::from_ron(&doc.to_ron().unwrap()).unwrap();
+        assert_eq!(
+            back.pieces
+                .iter()
+                .find(|p| p.uid == uid)
+                .map(|p| p.params.color),
+            Some(Some(7)),
+            "the paint must survive the document's own codec"
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_paint_falls_back_rather_than_panicking() {
+        let odd = PieceParams::default().color(200);
+        assert_eq!(resolve_color(&odd), PIECE_COLORS[0]);
+    }
+
+    #[test]
+    fn repainting_a_piece_changes_the_gameplay_fingerprint() {
+        let a = crate::demo_track();
+        let mut b = a.clone();
+        b.pieces[1].params.color = Some(3);
+        assert_ne!(
+            crate::gameplay_fingerprint(&a),
+            crate::gameplay_fingerprint(&b),
+            "a repaint is visible in a ghost, so it must version the run"
         );
     }
 }

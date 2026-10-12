@@ -35,6 +35,17 @@ pub fn text_dim() -> Color {
     Color::from_rgb(150, 158, 170)
 }
 
+/// A colour from an sRGB hex, for palettes that are not theme colours: the
+/// piece paints, which are a set of fixed swatches rather than part of the
+/// chrome.
+pub fn rgb(hex: u32) -> Color {
+    Color::from_rgb(
+        ((hex >> 16) & 0xff) as u8,
+        ((hex >> 8) & 0xff) as u8,
+        (hex & 0xff) as u8,
+    )
+}
+
 pub fn danger() -> Color {
     Color::from_rgb(224, 72, 72)
 }
