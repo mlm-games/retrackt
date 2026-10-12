@@ -34,6 +34,12 @@ pub struct PieceParams {
     /// fastest way to tell where on a track you are. Unset keeps the default.
     #[serde(default)]
     pub color: Option<u8>,
+    /// Whether this piece is laid in the wide carriageway.
+    ///
+    /// A plain bool rather than an option: no piece defaults to wide, so unset
+    /// and false are the same document and there is nothing for an option to say.
+    #[serde(default)]
+    pub wide: bool,
     /// Position of a checkpoint in the sequence the car must pass, 1-based.
     ///
     /// Checkpoints sharing a number are a set: the car may pass any of them to
@@ -77,6 +83,10 @@ impl PieceParams {
             color: Some(index),
             ..self
         }
+    }
+
+    pub fn wide(self) -> Self {
+        Self { wide: true, ..self }
     }
 
     pub fn order(self, nth: u8) -> Self {

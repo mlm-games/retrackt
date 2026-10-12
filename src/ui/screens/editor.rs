@@ -641,11 +641,27 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
             } else {
                 Vec::new()
             };
+            // Width is a toggle, not a knob: a road is one carriageway or the
+            // other, and a slider between them would offer widths the game
+            // has no reason to draw.
+            let width = if piece.id.is_driveable() {
+                let queue = actions.clone();
+                vec![
+                    dim_text(if piece.params.wide { "wide" } else { "narrow" }),
+                    ctrl(
+                        if piece.params.wide { "Narrow" } else { "Wide" },
+                        move || push(&queue, UiAct::ToggleWide(uid)),
+                    ),
+                ]
+            } else {
+                Vec::new()
+            };
             let params = length
                 .into_iter()
                 .chain(radius)
                 .chain(bank)
-                .chain(steepness);
+                .chain(steepness)
+                .chain(width);
             // A checkpoint carries one more value, and it is the one that decides
             // the run: the order the gates come in. Shown on the piece that owns it
             // rather than in a panel of its own, because it is a property of that

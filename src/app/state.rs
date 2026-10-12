@@ -71,6 +71,8 @@ pub enum UiAct {
     CycleSelectionColor(i8),
     /// Paint every selected piece one flat colour.
     SetSelectionColor(u8),
+    /// Flip one piece between the normal and the wide carriageway.
+    ToggleWide(retrackt_format::PieceUid),
     /// Move the cursor by one grid cell.
     MoveCursor([i16; 3]),
     /// Put the cursor at an absolute cell, from a click in the viewport.

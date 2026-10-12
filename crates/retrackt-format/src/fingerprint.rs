@@ -15,6 +15,9 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
     // fingerprint of an identical track.
     pieces.sort_by_key(|p| p.uid);
 
+    // Bumped again because a piece can go wide: the width moves the kerbs,
+    // and a replay of a narrow run replayed on the wide road is a car driving
+    // through kerbs that are not there.
     // Bumped again because a piece gained a paint: two tracks differing only in
     // one section's colour are two different runs to look at, and a ghost of one
     // replayed on the other looks like it is driving through scenery that is not
@@ -27,7 +30,7 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
     // run, so the domain moves and every record written before it loses its
     // match, which is the price of not mislabelling them.
     let mut h = blake3::Hasher::new();
-    h.update(b"retrackt-track-v5");
+    h.update(b"retrackt-track-v6");
     h.update(&doc.format.to_le_bytes());
     h.update(&doc.cell_size.to_bits().to_le_bytes());
 
@@ -58,6 +61,7 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
         h.update(&[p.params.checkpoint_order.unwrap_or(0)]);
         h.update(&[p.params.slope_deg.unwrap_or(0)]);
         h.update(&[p.params.color.unwrap_or(0)]);
+        h.update(&[u8::from(p.params.wide)]);
     }
 
     finish(&h.finalize())
@@ -120,6 +124,28 @@ mod tests {
         let mut b = demo();
         b.pieces[2].cell[2] += 1;
         assert_ne!(gameplay_fingerprint(&a), gameplay_fingerprint(&b));
+    }
+
+    #[test]
+    fn widening_a_piece_changes_the_fingerprint_and_survives_a_round_trip() {
+        // Width moves the kerbs, so the wide road is a different run and the
+        // flag must both hash and save.
+        let mut b = demo();
+        b.pieces[1].params.wide = true;
+        assert_ne!(
+            gameplay_fingerprint(&demo()),
+            gameplay_fingerprint(&b),
+            "the width must enter the hash"
+        );
+        let back = TrackDocument::from_ron(&b.to_ron().unwrap()).unwrap();
+        assert!(
+            back.pieces[1].params.wide,
+            "the wide flag must survive the document's own codec"
+        );
+        assert!(
+            !back.pieces[0].params.wide,
+            "an unset flag must stay false through a save"
+        );
     }
 
     #[test]

@@ -506,6 +506,7 @@ impl App {
                 let uids = self.data.editor.selection.clone();
                 self.set_color(&uids, index);
             }
+            UiAct::ToggleWide(uid) => self.toggle_wide(uid),
             UiAct::PlaceArmed => self.place_armed(),
             UiAct::MoveCursor(delta) => {
                 let cell = placement::step_cell(self.data.editor.cursor, delta);
@@ -1361,6 +1362,23 @@ impl App {
                 after,
             });
         }
+        self.track_changed();
+    }
+
+    /// Flip one piece between the normal and the wide carriageway.
+    ///
+    /// One piece, not the selection: width is read off the piece's own row,
+    /// next to its length, so the button acts on that piece and no other.
+    fn toggle_wide(&mut self, uid: retrackt_format::PieceUid) {
+        let Some(before) = self.data.track.piece(uid).copied() else {
+            return;
+        };
+        let Some(piece) = self.data.track.pieces.iter_mut().find(|p| p.uid == uid) else {
+            return;
+        };
+        piece.params.wide = !piece.params.wide;
+        let after = *piece;
+        self.history.push(Edit::Changed { uid, before, after });
         self.track_changed();
     }
 

@@ -33,6 +33,12 @@ pub use validate::{Diagnostic, Severity, is_unraceable, validate};
 /// puts the car's wheels within its own body length of both kerbs and makes
 /// every piece read as a corridor rather than as a road.
 pub const ROAD_HALF_CELLS: f32 = 1.315;
+/// Half the wide road width, in cells.
+///
+/// The reference runs two carriageways: 13.133 m and 16.567 m, a ratio of
+/// 1.2614. Scaled to our normal half width that is 1.66 cells, a 16.6 m road
+/// for start straights and anywhere else a race needs room to breathe.
+pub const WIDE_ROAD_HALF_CELLS: f32 = 1.66;
 /// Kerb height in metres, drawn either side of the drivable surface.
 pub const KERB_HEIGHT: f32 = 0.5;
 /// Cell edge length in metres.

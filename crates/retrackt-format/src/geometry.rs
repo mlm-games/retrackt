@@ -9,7 +9,7 @@ use glam::{Quat, Vec3};
 use std::f32::consts::TAU;
 
 use crate::piece::{GridDir, PieceId, PieceParams, catalog_by_id, resolve_params};
-use crate::{KERB_HEIGHT, ROAD_HALF_CELLS};
+use crate::{KERB_HEIGHT, ROAD_HALF_CELLS, WIDE_ROAD_HALF_CELLS};
 
 /// Height of one grid step on the vertical axis, in cells.
 ///
@@ -263,7 +263,13 @@ pub fn resolve_slope(id: PieceId, params: &PieceParams) -> f32 {
 pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerline {
     let (len_cells, rad_cells, bank_deg) = resolve_params(id, params);
     let slope = resolve_slope(id, params);
-    let half = ROAD_HALF_CELLS * cell;
+    // The wide carriageway, where the author asked for one. Scenery sets its
+    // own widths below, so the flag means nothing to a pillar or a sign.
+    let half = (if params.wide {
+        WIDE_ROAD_HALF_CELLS
+    } else {
+        ROAD_HALF_CELLS
+    }) * cell;
     let hw = half;
 
     let mut c = Centerline {
@@ -482,7 +488,7 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
         // thin half-width, so reuse that.
         PieceId::Wall => (
             RawMesh::default(),
-            ribbon(&center, center.half_width, KERB_HEIGHT * 3.0).1,
+            ribbon(&center, center.half_width, cell, KERB_HEIGHT * 3.0).1,
         ),
         // A pillar is a solid column standing on its anchor cell.
         PieceId::Pillar => (
@@ -494,7 +500,7 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
         // A block is one solid cube on its anchor cell.
         PieceId::Block => (RawMesh::default(), block_mesh(cell)),
         _ => {
-            let (a, b) = ribbon(&center, half, KERB_HEIGHT);
+            let (a, b) = ribbon(&center, half, cell, KERB_HEIGHT);
             (a, b)
         }
     };
@@ -547,7 +553,7 @@ fn occupied_cells(center: &Centerline, cell: f32, ports: &[Port]) -> Vec<[i16; 3
 }
 
 /// Extrude the centre curve into a flat ribbon plus raised kerb walls.
-fn ribbon(c: &Centerline, half: f32, kerb: f32) -> (RawMesh, RawMesh) {
+fn ribbon(c: &Centerline, half: f32, cell: f32, kerb: f32) -> (RawMesh, RawMesh) {
     let mut flat = RawMesh::default();
     let mut walls = RawMesh::default();
     if c.pos.len() < 2 || half <= 0.0 {
@@ -566,7 +572,7 @@ fn ribbon(c: &Centerline, half: f32, kerb: f32) -> (RawMesh, RawMesh) {
         // along the span, with each strip carrying its own normal taken from the
         // slope it actually has. Without it the road reads as a flat sheet and
         // its edges as the crease where the sheet stops.
-        crowned_run(&mut flat, l0, rr0, l1, rr1, n0, n1);
+        crowned_run(&mut flat, l0, rr0, l1, rr1, n0, n1, half / cell);
 
         if kerb > 0.0 {
             for ((side0, side1), sign) in [((l0, l1), -1.0), ((rr0, rr1), 1.0)] {
@@ -631,7 +637,16 @@ fn ribbon(c: &Centerline, half: f32, kerb: f32) -> (RawMesh, RawMesh) {
 /// normal its own slope gives it. One flat quad puts every vertex on one normal,
 /// which is why a road built that way reads as a flat sheet with a crease at
 /// each edge.
-fn crowned_run(out: &mut RawMesh, l0: Vec3, r0: Vec3, l1: Vec3, r1: Vec3, n0: Vec3, n1: Vec3) {
+fn crowned_run(
+    out: &mut RawMesh,
+    l0: Vec3,
+    r0: Vec3,
+    l1: Vec3,
+    r1: Vec3,
+    n0: Vec3,
+    n1: Vec3,
+    half_cells: f32,
+) {
     /// Strips across the width. Enough for the crown to read as a curve rather
     /// than as a tent, few enough to stay cheap: every strip is a quad of road.
     const STRIPS: usize = 5;
@@ -643,10 +658,10 @@ fn crowned_run(out: &mut RawMesh, l0: Vec3, r0: Vec3, l1: Vec3, r1: Vec3, n0: Ve
         );
         let (pa, pb) = (l0.lerp(r0, a), l0.lerp(r0, b));
         let (qa, qb) = (l1.lerp(r1, a), l1.lerp(r1, b));
-        let ca = n0 * crown_height(a) + pa;
-        let cb = n0 * crown_height(b) + pb;
-        let da = n1 * crown_height(a) + qa;
-        let db = n1 * crown_height(b) + qb;
+        let ca = n0 * crown_height(a, half_cells) + pa;
+        let cb = n0 * crown_height(b, half_cells) + pb;
+        let da = n1 * crown_height(a, half_cells) + qa;
+        let db = n1 * crown_height(b, half_cells) + qb;
         // The strip's own normal: from the slope across the width, not the flat
         // surface normal it replaces.
         let along = (db - ca).normalize_or_zero();
@@ -665,13 +680,13 @@ fn crowned_run(out: &mut RawMesh, l0: Vec3, r0: Vec3, l1: Vec3, r1: Vec3, n0: Ve
 }
 
 /// How far above its edge a point this far across the road sits.
-fn crown_height(across: f32) -> f32 {
+fn crown_height(across: f32, half_cells: f32) -> f32 {
     /// Height of the crown at the centre, as a fraction of the road width.
     const CROWN: f32 = 0.02;
     // A parabola peaking at the middle and zero at both edges, so the crown
     // meets the edges level and there is no step where the road stops.
     let t = across * 2.0 - 1.0;
-    CROWN * ROAD_HALF_CELLS * 2.0 * (1.0 - t * t)
+    CROWN * half_cells * 2.0 * (1.0 - t * t)
 }
 
 /// Kerb stripe period along the arc. The wall mesh bakes the stripe parity
@@ -1221,6 +1236,67 @@ mod tests {
         assert!(hi[0] - lo[0] < C, "board wider than its cell");
         assert!(hi[2] - lo[2] < hi[0] - lo[0], "board deeper than wide");
         assert!(hi[1] - lo[1] > C * 0.5, "sign shorter than a car is long");
+    }
+
+    #[test]
+    fn a_wide_piece_is_the_reference_ratio_wider() {
+        // The reference runs two carriageways at a ratio of 1.2614. Ours
+        // matches it, so a wide straight sits beside a normal one the way
+        // the reference's two roads sit beside each other.
+        use crate::{ROAD_HALF_CELLS, WIDE_ROAD_HALF_CELLS};
+        let normal = piece_shape(PieceId::Straight, &PieceParams::default(), C);
+        let wide = piece_shape(PieceId::Straight, &PieceParams::default().wide(), C);
+        assert!(
+            (wide.center.half_width / normal.center.half_width
+                - WIDE_ROAD_HALF_CELLS / ROAD_HALF_CELLS)
+                .abs()
+                < 1e-6
+        );
+        let width = |shape: &PieceShape| {
+            let (lo, hi) = shape.surface.bounds().unwrap();
+            hi[0] - lo[0]
+        };
+        // The kerb lips stand clear of both edges, so the drawn ratio lands
+        // a touch under the centreline one. Either side of the reference.
+        let ratio = width(&wide) / width(&normal);
+        assert!(
+            (1.24..1.29).contains(&ratio),
+            "drawn wide ratio {ratio}, not the reference 1.26"
+        );
+        // Ports do not move: a wide road joins a normal one on the centre.
+        assert_eq!(wide.ports, normal.ports);
+    }
+
+    #[test]
+    fn the_crown_grows_with_the_carriageway() {
+        use crate::{ROAD_HALF_CELLS, WIDE_ROAD_HALF_CELLS};
+        let peak = |half| crown_height(0.5, half);
+        assert!(
+            (peak(WIDE_ROAD_HALF_CELLS) / peak(ROAD_HALF_CELLS)
+                - WIDE_ROAD_HALF_CELLS / ROAD_HALF_CELLS)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn scenery_ignores_the_wide_flag() {
+        // A wide pillar is nonsense: the flag is for roads, and scenery sets
+        // its own widths. Asking anyway must change nothing.
+        for id in [
+            PieceId::Wall,
+            PieceId::Pillar,
+            PieceId::Sign,
+            PieceId::Block,
+        ] {
+            let plain = piece_shape(id, &PieceParams::default(), C);
+            let flagged = piece_shape(id, &PieceParams::default().wide(), C);
+            assert_eq!(
+                plain.decor.bounds(),
+                flagged.decor.bounds(),
+                "{id:?}: the wide flag must not reshape scenery"
+            );
+        }
     }
 
     /// A jump is road, then nothing, then road: the gap is the absence of
