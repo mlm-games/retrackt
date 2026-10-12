@@ -39,6 +39,8 @@ fn cell_color(id: PieceId) -> Color {
         0xE8EAED
     } else if id == PieceId::Block {
         0x6E7681
+    } else if id == PieceId::Slab {
+        0x7A828C
     } else {
         0x9BA1A9
     };
@@ -228,6 +230,7 @@ mod tests {
             PieceId::Pillar,
             PieceId::Sign,
             PieceId::Block,
+            PieceId::Slab,
         ] {
             assert_ne!(cell_color(id), road, "{id:?} must be told apart from road");
         }

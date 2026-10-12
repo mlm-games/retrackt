@@ -822,6 +822,43 @@ mod tests {
     }
 
     #[test]
+    fn the_car_climbs_a_wall_and_sticks_to_its_face() {
+        use retrackt_format::demo::ChainBuilder;
+
+        // Runway, quarter pipe, then twenty metres of flat wall. Ballistic
+        // flight cannot fake the assertions: leaving the surface means
+        // airborne, and only contact with the wall face carries its normal.
+        let mut b = ChainBuilder::new("Test Wall");
+        b.step(PieceId::Start, PieceParams::default().length(2));
+        for _ in 0..10 {
+            b.step(PieceId::Straight, PieceParams::default().length(2));
+        }
+        b.step(PieceId::Climb, PieceParams::default());
+        b.step(PieceId::WallRoad, PieceParams::default().length(4));
+        let doc = b.build();
+        let world = TrackWorld::from_doc(&doc);
+
+        let mut car = fresh(&world);
+        let input = VehicleInput {
+            throttle: 1.0,
+            ..VehicleInput::neutral()
+        };
+        let mut max_y = car.pos.y;
+        let mut stuck = false;
+        for _ in 0..1200 {
+            step_car(&mut car, &input, &world, &CarTuning::default(), DT);
+            max_y = max_y.max(car.pos.y);
+            // Past the quarter pipe (ten metres up) is flat wall: grounded
+            // there with the wall's normal means stuck to it, not flying.
+            if car.grounded && car.pos.y > 12.0 && car.up().dot(Vec3::NEG_Z) > 0.9 {
+                stuck = true;
+            }
+        }
+        assert!(max_y > 15.0, "never climbed the wall, peaked at {max_y}");
+        assert!(stuck, "rode up ballistically but never stuck to the face");
+    }
+
+    #[test]
     fn the_car_accelerates_forward_and_stays_upright_on_flat_road() {
         let world = flat_track();
         let mut car = fresh(&world);

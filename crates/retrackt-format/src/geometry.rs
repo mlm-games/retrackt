@@ -414,6 +414,76 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
             });
         }
 
+        PieceId::Climb => {
+            // Quarter pipe from flat road to vertical wall: leaves the anchor
+            // heading +Z on +Y and arrives at the top heading +Y on -Z, so a
+            // wall road anchored on the exit port continues the same face.
+            push_segment(&mut c, ARC_SEGMENTS_PER_QUARTER, |u| {
+                let ph = u * std::f32::consts::FRAC_PI_2;
+                (
+                    Vec3::new(0.0, r - r * ph.cos(), r * ph.sin()),
+                    Vec3::new(0.0, ph.sin(), ph.cos()),
+                    Vec3::new(0.0, ph.cos(), -ph.sin()),
+                )
+            });
+        }
+
+        PieceId::WallRoad => {
+            // Sustained vertical wall on the -Z face, continuing a climb's top
+            // frame. Length is height.
+            push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
+                (Vec3::new(0.0, u * l, 0.0), Vec3::Y, Vec3::NEG_Z)
+            });
+        }
+
+        PieceId::Crest => {
+            // Quarter pipe from vertical wall back to flat road: enters at the
+            // anchor heading +Y on -Z, the frame a wall road leaves behind,
+            // and exits heading +Z on +Y like any flat road.
+            push_segment(&mut c, ARC_SEGMENTS_PER_QUARTER, |u| {
+                let ph = u * std::f32::consts::FRAC_PI_2;
+                (
+                    Vec3::new(0.0, r * ph.sin(), r - r * ph.cos()),
+                    Vec3::new(0.0, ph.cos(), ph.sin()),
+                    Vec3::new(0.0, ph.sin(), -ph.cos()),
+                )
+            });
+        }
+
+        PieceId::HalfLoop => {
+            // Half a loop, flat road to ceiling: exits upside down heading -Z
+            // at twice the radius up, where a ceiling road carries on.
+            push_segment(&mut c, LOOP_SEGMENTS / 2, |u| {
+                let ph = u * std::f32::consts::PI;
+                (
+                    Vec3::new(0.0, r - r * ph.cos(), r * ph.sin()),
+                    Vec3::new(0.0, ph.sin(), ph.cos()),
+                    Vec3::new(0.0, ph.cos(), -ph.sin()),
+                )
+            });
+        }
+
+        PieceId::CeilingRoad => {
+            // Sustained ceiling on the -Y face. Length is run.
+            push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
+                (Vec3::new(0.0, 0.0, u * l), Vec3::Z, Vec3::NEG_Y)
+            });
+        }
+
+        PieceId::LoopDrop => {
+            // The second half of the loop, ceiling back to flat: enters at the
+            // anchor heading -Z on -Y, the frame a ceiling road leaves behind,
+            // and exits heading +Z on +Y two radii down.
+            push_segment(&mut c, LOOP_SEGMENTS / 2, |u| {
+                let ph = std::f32::consts::PI + u * std::f32::consts::PI;
+                (
+                    Vec3::new(0.0, r - r * ph.cos() - 2.0 * r, r * ph.sin()),
+                    Vec3::new(0.0, ph.sin(), ph.cos()),
+                    Vec3::new(0.0, ph.cos(), -ph.sin()),
+                )
+            });
+        }
+
         PieceId::Wall => {
             // Not drivable: a thin upright barrier, half a cell tall.
             c.half_width = cell * 0.06;
@@ -453,6 +523,17 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
             c.half_width = cell * 0.5;
             push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
                 (Vec3::new(0.0, u * cell * 0.5, 0.0), Vec3::Y, Vec3::Z)
+            });
+            c.skip = true;
+        }
+
+        PieceId::Slab => {
+            // Not drivable: a plate two cells square, jutting +X/+Z from its
+            // anchor so four plates tile without overlap. The stub is only a
+            // location: the reservation below names the plate's own cells.
+            c.half_width = cell;
+            push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
+                (Vec3::new(0.0, u * cell * 0.2, 0.0), Vec3::Y, Vec3::Z)
             });
             c.skip = true;
         }
@@ -522,6 +603,8 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
         PieceId::Sign => (RawMesh::default(), sign_mesh(cell)),
         // A block is one solid cube on its anchor cell.
         PieceId::Block => (RawMesh::default(), block_mesh(cell)),
+        // A slab is one flat plate, two cells square from its anchor.
+        PieceId::Slab => (RawMesh::default(), slab_mesh(cell)),
         // A junction paves its through road in three spans so the kerb breaks
         // at the mouths, plus one lifted ribbon per side road out to its joint
         // plane. A kerb wall across a side road is a barrier the side road
@@ -562,6 +645,14 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
     };
 
     let (mut reserve_min, mut reserve_max) = reserve_box(&center, cell);
+    if id == PieceId::Slab {
+        // The plate's own footprint, not its location stub's: the mesh spans
+        // two cells square from the anchor, and the reservation must say so
+        // or the thumbnail, the preview box and the overlap check all read
+        // one cell where the car meets four.
+        reserve_min = [0, 0, 0];
+        reserve_max = [1, 1, 1];
+    }
     for arm in &branches {
         let (lo, hi) = reserve_box(arm, cell);
         for k in 0..3 {
@@ -598,6 +689,11 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
         if let Some(top) = occupied.iter().map(|c| c[1]).max() {
             occupied.retain(|c| c[1] != top);
         }
+    }
+    if id == PieceId::Slab {
+        // The plate's own cells, for the same reason as its reservation: the
+        // stub owns one cell and the car drives on four.
+        occupied = vec![[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]];
     }
 
     PieceShape {
@@ -1038,6 +1134,21 @@ fn pillar_mesh(cell: f32, tall: u8) -> RawMesh {
     m
 }
 
+/// A slab's decor: one flat plate two cells square, jutting +X/+Z from the
+/// anchor cell so neighbours tile it exactly. Tagged dark, rendering pale.
+fn slab_mesh(cell: f32) -> RawMesh {
+    let mut m = RawMesh::default();
+    push_box(
+        &mut m,
+        [0.0, 0.0, 0.0],
+        [2.0 * cell, 0.2 * cell, 2.0 * cell],
+    );
+    for quad in m.colors.chunks_mut(4) {
+        quad.fill([0.0; 3]);
+    }
+    m
+}
+
 /// A block's decor: one solid cube on its anchor cell, tagged dark like the
 /// pillar so it renders pale rather than warning red.
 fn block_mesh(cell: f32) -> RawMesh {
@@ -1121,8 +1232,16 @@ pub fn from_grid(c: [i16; 3], cell: f32) -> Vec3 {
 }
 
 fn quantise_dir(t: Vec3) -> GridDir {
-    let [x, _, z] = [t.x, t.y, t.z];
-    if x.abs() > z.abs() {
+    let [x, y, z] = [t.x, t.y, t.z];
+    if y.abs() > x.abs() && y.abs() > z.abs() {
+        // Vertical faces stay vertical: a wall road's ports face up and down,
+        // and flattening them onto the horizon would mate walls to flat road.
+        if y > 0.0 {
+            GridDir::PosY
+        } else {
+            GridDir::NegY
+        }
+    } else if x.abs() > z.abs() {
         if x > 0.0 {
             GridDir::PosX
         } else {
@@ -1389,7 +1508,12 @@ mod tests {
         // A pillar holds a road up and a sign stands beside one: neither is
         // driven on, neither joins the chain, and both still render and
         // collide through their decor.
-        for id in [PieceId::Pillar, PieceId::Sign, PieceId::Block] {
+        for id in [
+            PieceId::Pillar,
+            PieceId::Sign,
+            PieceId::Block,
+            PieceId::Slab,
+        ] {
             let shape = piece_shape(id, &PieceParams::default(), C);
             assert!(shape.surface.is_empty(), "{id:?} has no drive surface");
             assert!(!shape.decor.is_empty(), "{id:?} still renders");
@@ -1581,6 +1705,85 @@ mod tests {
                 !shape.occupied.contains(&port.cell),
                 "port {port:?} counted as body"
             );
+        }
+    }
+
+    #[test]
+    fn wall_pieces_face_the_way_their_ports_claim() {
+        // Entry and exit cells and facings, at the 5 m cell with default
+        // sizes: a climb of radius 2 rises 10 m over 10 m, and Y steps are
+        // quarter cells.
+        let ports = |id: PieceId| piece_shape(id, &PieceParams::default(), C).ports;
+        assert_eq!(ports(PieceId::Climb).len(), 2);
+        let climb = ports(PieceId::Climb);
+        assert_eq!(climb[0].cell, [0, 0, 0]);
+        assert_eq!(climb[0].outward, crate::piece::GridDir::NegZ);
+        assert_eq!(climb[1].cell, [0, 8, 2]);
+        assert_eq!(climb[1].outward, crate::piece::GridDir::PosY);
+        let wall = ports(PieceId::WallRoad);
+        assert_eq!(wall[0].outward, crate::piece::GridDir::NegY);
+        assert_eq!(wall[1].outward, crate::piece::GridDir::PosY);
+        let crest = ports(PieceId::Crest);
+        assert_eq!(crest[0].outward, crate::piece::GridDir::NegY);
+        assert_eq!(crest[1].cell, [0, 8, 2]);
+        assert_eq!(crest[1].outward, crate::piece::GridDir::PosZ);
+        let half = ports(PieceId::HalfLoop);
+        assert_eq!(half[1].cell, [0, 16, 0]);
+        assert_eq!(half[1].outward, crate::piece::GridDir::NegZ);
+        let drop = ports(PieceId::LoopDrop);
+        assert_eq!(drop[0].outward, crate::piece::GridDir::PosZ);
+        assert_eq!(drop[1].cell, [0, -16, 0]);
+        assert_eq!(drop[1].outward, crate::piece::GridDir::PosZ);
+    }
+
+    #[test]
+    fn chained_wall_frames_meet_without_a_kink() {
+        // The exit tangent and normal of one piece must equal the entry frame
+        // of the next: positions meet by port anchoring, but a kink in frame
+        // where they meet reads as a seam and drives as a pothole.
+        let frame = |id: PieceId, at: f32| {
+            let c = piece_centerline(id, &PieceParams::default(), C);
+            c.sample(at).unwrap()
+        };
+        let climb = piece_centerline(PieceId::Climb, &PieceParams::default(), C);
+        let wall = piece_centerline(PieceId::WallRoad, &PieceParams::default(), C);
+        let (_, climb_tan, climb_nrm, _) = frame(PieceId::Climb, climb.length());
+        let (_, wall_tan, wall_nrm, _) = frame(PieceId::WallRoad, 0.0);
+        assert!(climb_tan.dot(wall_tan) > 1.0 - 1e-6);
+        assert!(climb_nrm.dot(wall_nrm) > 1.0 - 1e-6);
+        let (_, wall_top_tan, wall_top_nrm, _) = frame(PieceId::WallRoad, wall.length());
+        let (_, crest_tan, crest_nrm, _) = frame(PieceId::Crest, 0.0);
+        assert!(wall_top_tan.dot(crest_tan) > 1.0 - 1e-6);
+        assert!(wall_top_nrm.dot(crest_nrm) > 1.0 - 1e-6);
+        // Ceiling pair likewise: half loop exit meets ceiling entry. The
+        // ceiling road is travelled -Z, so it chains yaw-two: rotate its
+        // entry frame half a turn about Y before comparing.
+        let half = piece_centerline(PieceId::HalfLoop, &PieceParams::default(), C);
+        let (_, half_tan, half_nrm, _) = frame(PieceId::HalfLoop, half.length());
+        let (_, ceil_tan, ceil_nrm, _) = frame(PieceId::CeilingRoad, 0.0);
+        let ceil_tan_w = Vec3::new(-ceil_tan.x, ceil_tan.y, -ceil_tan.z);
+        assert!(half_tan.dot(ceil_tan_w) > 1.0 - 1e-6);
+        assert!(half_nrm.dot(ceil_nrm) > 1.0 - 1e-6);
+    }
+
+    #[test]
+    fn wall_surfaces_are_paved_with_unit_normals() {
+        for id in [
+            PieceId::Climb,
+            PieceId::WallRoad,
+            PieceId::Crest,
+            PieceId::HalfLoop,
+            PieceId::CeilingRoad,
+            PieceId::LoopDrop,
+        ] {
+            let shape = piece_shape(id, &PieceParams::default(), C);
+            assert!(!shape.surface.is_empty(), "{id:?}: no surface");
+            assert!(shape.has_guide, "{id:?}: guide must follow walls too");
+            for (a, b, c, n) in shape.surface.triangles() {
+                let (a, b, c, n) = (Vec3::from(a), Vec3::from(b), Vec3::from(c), Vec3::from(n));
+                assert!((b - a).cross(c - a).length() > 1e-6, "{id:?}: degenerate");
+                assert!((n.length() - 1.0).abs() < 1e-3, "{id:?}: normal not unit");
+            }
         }
     }
 

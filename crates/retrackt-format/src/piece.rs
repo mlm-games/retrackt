@@ -175,10 +175,25 @@ pub enum PieceId {
     YJunction = 20,
     /// A merging lane joining from the right of travel. Fixed size.
     YJunctionFlip = 21,
+    /// One flat plate of scenery, two cells square: bridge decks, floors and
+    /// roofs without stacking a dozen blocks.
+    Slab = 22,
+    /// A quarter-pipe bend from flat road to vertical wall. Fixed pitch.
+    Climb = 23,
+    /// A sustained vertical wall road. Length is height.
+    WallRoad = 24,
+    /// A quarter-pipe crest from vertical wall back to flat road. Fixed pitch.
+    Crest = 25,
+    /// A half loop from flat road to ceiling. Fixed pitch.
+    HalfLoop = 26,
+    /// A sustained ceiling road. Length is run.
+    CeilingRoad = 27,
+    /// A half loop from ceiling back to flat road. Fixed pitch.
+    LoopDrop = 28,
 }
 
 impl PieceId {
-    pub const ALL: [PieceId; 22] = [
+    pub const ALL: [PieceId; 29] = [
         Self::Start,
         Self::Straight,
         Self::CurveRight90,
@@ -201,6 +216,13 @@ impl PieceId {
         Self::Crossroads,
         Self::YJunction,
         Self::YJunctionFlip,
+        Self::Slab,
+        Self::Climb,
+        Self::WallRoad,
+        Self::Crest,
+        Self::HalfLoop,
+        Self::CeilingRoad,
+        Self::LoopDrop,
     ];
 
     pub fn as_u16(self) -> u16 {
@@ -234,6 +256,13 @@ impl PieceId {
             Self::Crossroads => "Crossroads",
             Self::YJunction => "Y Junction",
             Self::YJunctionFlip => "Y Junction Flip",
+            Self::Slab => "Slab",
+            Self::Climb => "Climb",
+            Self::WallRoad => "Wall Road",
+            Self::Crest => "Crest",
+            Self::HalfLoop => "Half Loop",
+            Self::CeilingRoad => "Ceiling Road",
+            Self::LoopDrop => "Loop Drop",
             Self::SCurve => "S Curve",
         }
     }
@@ -254,10 +283,16 @@ impl PieceId {
             Self::TJunction | Self::Crossroads | Self::YJunction | Self::YJunctionFlip => {
                 "Junctions"
             }
+            Self::Climb
+            | Self::WallRoad
+            | Self::Crest
+            | Self::HalfLoop
+            | Self::CeilingRoad
+            | Self::LoopDrop => "Walls",
             Self::RampUp | Self::RampDown => "Slopes",
             Self::BankLeft | Self::BankRight => "Banks",
             Self::Loop => "Stunts",
-            Self::Wall | Self::Pillar | Self::Sign | Self::Block => "Props",
+            Self::Wall | Self::Pillar | Self::Sign | Self::Block | Self::Slab => "Props",
         }
     }
 
@@ -265,7 +300,10 @@ impl PieceId {
     /// place in the chain. A wall is the original; a pillar holds a road up,
     /// a sign stands beside one, a block builds with, and none is ever driven on.
     pub fn is_scenery(self) -> bool {
-        matches!(self, Self::Wall | Self::Pillar | Self::Sign | Self::Block)
+        matches!(
+            self,
+            Self::Wall | Self::Pillar | Self::Sign | Self::Block | Self::Slab
+        )
     }
 
     /// Pieces where roads meet: a through road plus side arms, with ports for
@@ -306,6 +344,11 @@ impl PieceId {
                 | Self::Crossroads
                 | Self::YJunction
                 | Self::YJunctionFlip
+                | Self::Slab
+                | Self::Climb
+                | Self::Crest
+                | Self::HalfLoop
+                | Self::LoopDrop
         )
     }
 
@@ -313,7 +356,15 @@ impl PieceId {
     pub fn has_radius(self) -> bool {
         matches!(
             self,
-            Self::CurveRight90 | Self::CurveLeft90 | Self::Curve180 | Self::Loop | Self::SCurve
+            Self::CurveRight90
+                | Self::CurveLeft90
+                | Self::Curve180
+                | Self::Loop
+                | Self::SCurve
+                | Self::Climb
+                | Self::Crest
+                | Self::HalfLoop
+                | Self::LoopDrop
         )
     }
 
@@ -579,6 +630,83 @@ pub const CATALOG: &[PieceDef] = &[
         id: PieceId::YJunctionFlip,
         default_length_cells: 4,
         default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::Slab,
+        default_length_cells: 1,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::Climb,
+        default_length_cells: 0,
+        default_radius_cells: 2,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::WallRoad,
+        default_length_cells: 2,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::Crest,
+        default_length_cells: 0,
+        default_radius_cells: 2,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::HalfLoop,
+        default_length_cells: 0,
+        default_radius_cells: 2,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::CeilingRoad,
+        default_length_cells: 4,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::LoopDrop,
+        default_length_cells: 0,
+        default_radius_cells: 2,
         default_bank_deg: 0,
         default_slope_deg: 0,
         is_start: false,

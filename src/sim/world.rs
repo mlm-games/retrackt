@@ -799,6 +799,7 @@ mod tests {
         b.step(PieceId::Pillar, retrackt_format::PieceParams::default());
         b.step(PieceId::Sign, retrackt_format::PieceParams::default());
         b.step(PieceId::Block, retrackt_format::PieceParams::default());
+        b.step(PieceId::Slab, retrackt_format::PieceParams::default());
         let doc = b.build();
 
         let diagnostics = retrackt_format::validate(&doc);
@@ -811,7 +812,12 @@ mod tests {
         );
 
         let w = TrackWorld::from_doc(&doc);
-        for id in [PieceId::Pillar, PieceId::Sign, PieceId::Block] {
+        for id in [
+            PieceId::Pillar,
+            PieceId::Sign,
+            PieceId::Block,
+            PieceId::Slab,
+        ] {
             let uid = doc.pieces.iter().find(|p| p.id == id).unwrap().uid;
             let owned: Vec<_> = w.triangles.iter().filter(|t| t.owner == uid).collect();
             assert!(!owned.is_empty(), "{id:?}: no collision triangles");

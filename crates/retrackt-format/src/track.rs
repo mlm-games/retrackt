@@ -698,6 +698,29 @@ mod tests {
     }
 
     #[test]
+    fn a_wall_chains_from_road_up_and_back_onto_road() {
+        // Climb, wall, crest and flat road join head to tail: the whole wall
+        // ride is one route, so gates continue past it.
+        let mut doc = TrackDocument::empty();
+        let ids = [
+            (PieceId::Climb, [0, 0, 0]),
+            (PieceId::WallRoad, [0, 8, 2]),
+            (PieceId::Crest, [0, 16, 2]),
+            (PieceId::Straight, [0, 24, 4]),
+        ];
+        let mut uids = Vec::new();
+        for (id, cell) in ids {
+            let uid = doc.next_piece_uid();
+            doc.pieces.push(PieceInstance::new(id, cell).with_uid(uid));
+            uids.push(uid);
+        }
+        doc.normalize_uids();
+        for pair in uids.windows(2) {
+            assert_eq!(doc.joins(pair[0]), Some(pair[1]));
+        }
+    }
+
+    #[test]
     fn a_side_road_joins_a_junction_mouth_head_on() {
         // A straight butted onto the east mouth must read as the junction's
         // continuation, the same way one butted onto the exit does.
