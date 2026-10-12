@@ -609,7 +609,7 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
         // thin half-width, so reuse that.
         PieceId::Wall => (
             RawMesh::default(),
-            ribbon(&center, center.half_width, cell, KERB_HEIGHT * 3.0).1,
+            ribbon(&center, center.half_width, cell, KERB_HEIGHT * 3.0, false).1,
         ),
         // A pillar is a solid column standing on its anchor cell.
         PieceId::Pillar => (
@@ -637,18 +637,18 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
                 (mid + half, l, KERB_HEIGHT),
             ] {
                 let span = straight_span(z0, z1, half, STRAIGHT_SEGMENTS);
-                let (flat, walls) = ribbon(&span, half, cell, kerb);
+                let (flat, walls) = ribbon(&span, half, cell, kerb, true);
                 append_mesh(&mut surface, flat);
                 append_mesh(&mut decor, walls);
             }
             for arm in &branches {
-                let (flat, _) = ribbon(arm, half, cell, 0.0);
+                let (flat, _) = ribbon(arm, half, cell, 0.0, true);
                 append_mesh(&mut surface, flat);
             }
             (surface, decor)
         }
         _ => {
-            let (a, b) = ribbon(&center, half, cell, KERB_HEIGHT);
+            let (a, b) = ribbon(&center, half, cell, KERB_HEIGHT, true);
             (a, b)
         }
     };
@@ -744,7 +744,7 @@ fn occupied_cells(center: &Centerline, cell: f32, ports: &[Port]) -> Vec<[i16; 3
 }
 
 /// Extrude the centre curve into a flat ribbon plus raised kerb walls.
-fn ribbon(c: &Centerline, half: f32, cell: f32, kerb: f32) -> (RawMesh, RawMesh) {
+fn ribbon(c: &Centerline, half: f32, cell: f32, kerb: f32, barrier: bool) -> (RawMesh, RawMesh) {
     let mut flat = RawMesh::default();
     let mut walls = RawMesh::default();
     if c.pos.len() < 2 || half <= 0.0 {
@@ -767,12 +767,50 @@ fn ribbon(c: &Centerline, half: f32, cell: f32, kerb: f32) -> (RawMesh, RawMesh)
 
         if kerb > 0.0 {
             for ((side0, side1), sign) in [((l0, l1), -1.0), ((rr0, rr1), 1.0)] {
+                let face = (r0 * sign).to_array();
+                if barrier {
+                    // A rounded track barrier, not a kerb wall: its base sits
+                    // on the road edge column, so the edge is closed without a
+                    // cap, and a skirt drops its outer base past the plain.
+                    stripe_wall(
+                        &mut walls,
+                        (side0, side1),
+                        (n0, n1),
+                        (c.arc[i], c.arc[i + 1]),
+                        kerb,
+                        face,
+                        true,
+                    );
+                    // No skirt where the road itself stands vertical: the drop
+                    // runs along the edge chord there and collapses to nothing.
+                    // Wall roads keep their tall guard walls instead.
+                    let vertical = t0.y.abs() > 0.9 || t1.y.abs() > 0.9;
+                    if !vertical {
+                        let (ob0, ob1) = (
+                            side0 + r0 * sign * BARRIER_PROF[4].0,
+                            side1 + r1 * sign * BARRIER_PROF[4].0,
+                        );
+                        let drop = Vec3::new(0.0, 0.35, 0.0);
+                        let start = walls.colors.len();
+                        push_quad(
+                            &mut walls,
+                            ob0.to_array(),
+                            ob1.to_array(),
+                            (ob1 - drop).to_array(),
+                            (ob0 - drop).to_array(),
+                            face,
+                        );
+                        // Tagged dark, rendering pale concrete like a shoulder,
+                        // not striped like the barrier it hangs off.
+                        walls.colors[start..].fill([0.0; 3]);
+                    }
+                    continue;
+                }
                 // The lip stands clear of the road by the kerb's own height, so
                 // it is something you can see from the side and something the
                 // car meets, rather than a wall of zero thickness drawn on the
                 // edge column itself.
                 let (a, b) = (side0 + r0 * sign * kerb, side1 + r1 * sign * kerb);
-                let face = (r0 * sign).to_array();
                 stripe_wall(
                     &mut walls,
                     (a, b),
@@ -780,17 +818,21 @@ fn ribbon(c: &Centerline, half: f32, cell: f32, kerb: f32) -> (RawMesh, RawMesh)
                     (c.arc[i], c.arc[i + 1]),
                     kerb,
                     face,
+                    false,
                 );
                 // A cap between the road edge and the lip, so the edge is closed
-                // and does not show the inside of the surface.
-                push_quad(
-                    &mut walls,
-                    side0.to_array(),
-                    a.to_array(),
-                    b.to_array(),
-                    side1.to_array(),
-                    (n0 + n1).normalize().to_array(),
-                );
+                // and does not show the inside of the surface. Barriers need
+                // none: their base sits on the edge column itself.
+                if !barrier {
+                    push_quad(
+                        &mut walls,
+                        side0.to_array(),
+                        a.to_array(),
+                        b.to_array(),
+                        side1.to_array(),
+                        (n0 + n1).normalize().to_array(),
+                    );
+                }
             }
         }
         // A skirt hanging from the road's edges down to the piece's floor. A
@@ -894,10 +936,12 @@ fn stripe_wall(
     (arc0, arc1): (f32, f32),
     kerb: f32,
     face: [f32; 3],
+    barrier: bool,
 ) {
     let span = arc1 - arc0;
+    let push = if barrier { push_barrier } else { push_wall };
     if span <= f32::EPSILON {
-        push_wall(
+        push(
             m,
             (a, b),
             (n0, n1),
@@ -913,7 +957,7 @@ fn stripe_wall(
     loop {
         let t1 = (((stripe + 1.0) * KERB_STRIPE - arc0) / span).min(1.0);
         if (t1 - t0) * span > 1e-3 {
-            push_wall(m, (a, b), (n0, n1), (t0, t1), kerb, face, stripe);
+            push(m, (a, b), (n0, n1), (t0, t1), kerb, face, stripe);
         }
         if t1 >= 1.0 {
             break;
@@ -954,6 +998,71 @@ fn push_wall(
     };
     let tail = m.colors.len() - 4;
     m.colors[tail..].fill(mask);
+}
+
+/// Barrier profile as (lateral offset in metres, height as a fraction of the
+/// peak). Measured off the reference Straight: a near-vertical inner face a
+/// car length out from the road edge, rounding over a peak about car-height,
+/// then sloping back down to the road level it started at.
+const BARRIER_PROF: [(f32, f32); 5] = [
+    (0.0, 0.0),
+    (0.11, 0.88),
+    (0.5, 1.0),
+    (0.88, 0.88),
+    (1.0, 0.0),
+];
+
+/// One barrier block: the profile above swept along the chord from `a` to
+/// `b` between `t0` and `t1`, tagged with its stripe parity.
+///
+/// Every segment of the block shares the parity, so the barrier reads as
+/// alternating blocks down the road rather than as contour bands.
+fn push_barrier(
+    m: &mut RawMesh,
+    (a, b): (Vec3, Vec3),
+    (n0, n1): (Vec3, Vec3),
+    (t0, t1): (f32, f32),
+    kerb: f32,
+    face: [f32; 3],
+    stripe: f32,
+) {
+    let out = Vec3::from(face);
+    // Point on the profile at chord position `t`: the road edge pushed
+    // outboard along the face and up along the surface normal.
+    let at = |t: f32, o: f32, h: f32| {
+        let n = n0.lerp(n1, t).normalize_or_zero();
+        a.lerp(b, t) + out * o + n * h * kerb
+    };
+    // Analytic normal of one profile segment: perpendicular to the segment
+    // in the face/up plane, facing the road on the way up and away past the
+    // peak, so the car meets each face it can touch.
+    let seg_n = |t: f32, do_: f32, dh: f32| {
+        let n = n0.lerp(n1, t).normalize_or_zero();
+        (n * do_ - out * dh).normalize_or_zero().to_array()
+    };
+    let start = m.colors.len();
+    for w in BARRIER_PROF.windows(2) {
+        let [(o0, h0), (o1, h1)] = [w[0], w[1]];
+        let (do_, dh) = (o1 - o0, (h1 - h0) * kerb);
+        if do_.abs() < 1e-9 && dh.abs() < 1e-9 {
+            continue;
+        }
+        let n = seg_n((t0 + t1) * 0.5, do_, dh);
+        push_quad(
+            m,
+            at(t0, o0, h0).to_array(),
+            at(t0, o1, h1).to_array(),
+            at(t1, o1, h1).to_array(),
+            at(t1, o0, h0).to_array(),
+            n,
+        );
+    }
+    let mask = if (stripe as i32).rem_euclid(2) == 0 {
+        [1.0; 3]
+    } else {
+        [0.0; 3]
+    };
+    m.colors[start..].fill(mask);
 }
 
 fn push_quad(m: &mut RawMesh, a: [f32; 3], b: [f32; 3], c: [f32; 3], d: [f32; 3], n: [f32; 3]) {
@@ -1854,6 +1963,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn road_edges_are_car_height_barriers() {
+        // Measured off the reference Straight: a steep face most of a metre
+        // tall rounding over a car-height peak a metre outboard of the edge,
+        // not a low kerb. Slow cars meet a wall; only speed carries one over.
+        let shape = piece_shape(PieceId::Straight, &PieceParams::default(), C);
+        let (slo, shi) = shape.surface.bounds().unwrap();
+        let (dlo, dhi) = shape.decor.bounds().unwrap();
+        let peak = dhi[1] - shi[1];
+        assert!(
+            (0.65..0.85).contains(&peak),
+            "barrier peak {peak:.2} m over the surface, want car height"
+        );
+        // Outboard of the road edge columns, which the skirt shares: measure
+        // against the centreline half width, not the surface bounds.
+        let width = dhi[0] - shape.center.half_width;
+        assert!(
+            (0.9..1.2).contains(&width),
+            "barrier {width:.2} m outboard of the edge, want about one metre"
+        );
+        // A steep face the car meets, and a round-over top it mounts: flat
+        // walls alone would only ever block, flat paint alone never would.
+        // Normals face the road on the way up: the collision raycast only
+        // hits the front of a face, so a normal facing away is no wall.
+        let mut steep = false;
+        let mut top = false;
+        for (a, b, c, n) in shape.decor.triangles() {
+            let (a, b, c, n) = (Vec3::from(a), Vec3::from(b), Vec3::from(c), Vec3::from(n));
+            let mid = (a + b + c) / 3.0;
+            // Inboard of the peak only: the outer slope past it faces away by
+            // construction, met by cars coming over the top, not up the face.
+            let inboard = mid.x.abs() - shape.center.half_width < 0.5;
+            if n.y.abs() < 0.3 && (b.y - a.y).abs() + (c.y - a.y).abs() > 0.5 {
+                steep = true;
+                assert!(
+                    !inboard || mid.x * n.x < 0.0,
+                    "steep face normal must face the road, got {n:?} at {mid:?}"
+                );
+            }
+            if n.y > 0.7 {
+                top = true;
+            }
+        }
+        assert!(steep, "no steep face for a slow car to meet");
+        assert!(top, "no round-over top for a fast car to mount");
+        // The edge is closed below: a skirt drops the barrier's outer base
+        // past the plain, so the road does not float over a visible gap.
+        assert!(
+            dlo[1] < -0.3,
+            "no skirt under the edge: lowest decor {:.2}",
+            dlo[1]
+        );
+    }
+
     /// A jump is road, then nothing, then road: the gap is the absence of
     /// surface rather than a piece that draws one.
     ///
@@ -1995,18 +2158,22 @@ mod tests {
             hangs,
             "the underside must reach the ground at the top of the ramp"
         );
-        // And a flat piece is left alone: a skirt along level road would be a
-        // wall through the middle of it.
+        // And a flat piece grows no underside under its middle: a skirt there
+        // would be a wall through the road its neighbours continue. Its edge
+        // barriers still drop a skirt outboard of the road, past the plain, so
+        // the road does not float over a visible gap from the side.
         let straight = piece_shape(PieceId::Straight, &PieceParams::default(), C);
-        let flat_lowest = straight
+        let edge = straight.center.half_width;
+        let under_middle = straight
             .decor
             .positions
             .iter()
+            .filter(|p| p[0].abs() < edge - 0.5)
             .map(|p| p[1])
             .fold(f32::MAX, f32::min);
         assert!(
-            flat_lowest > -1e-3,
-            "a straight must not grow a skirt, got {flat_lowest}"
+            under_middle > -1e-3,
+            "a straight must not grow a skirt under its middle, got {under_middle}"
         );
     }
 

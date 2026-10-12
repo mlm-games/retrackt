@@ -39,8 +39,12 @@ pub const ROAD_HALF_CELLS: f32 = 1.315;
 /// 1.2614. Scaled to our normal half width that is 1.66 cells, a 16.6 m road
 /// for start straights and anywhere else a race needs room to breathe.
 pub const WIDE_ROAD_HALF_CELLS: f32 = 1.66;
-/// Kerb height in metres, drawn either side of the drivable surface.
-pub const KERB_HEIGHT: f32 = 0.5;
+/// Barrier peak height in metres, either side of the drivable surface.
+///
+/// A rounded hump, not a kerb: steep faced and car-height, so a slow car is
+/// stopped by it and only speed carries one over. Measured off the reference
+/// Straight, whose barriers peak 0.73 m over a flat 11.1 m surface.
+pub const KERB_HEIGHT: f32 = 0.73;
 /// Cell edge length in metres.
 ///
 /// The same in all three axes as the game this is modelled against, so a grid

@@ -858,6 +858,58 @@ mod tests {
         assert!(stuck, "rode up ballistically but never stuck to the face");
     }
 
+    /// A car rolling sideways across the road toward the east barrier, placed
+    /// mid-road with no throttle. The barrier meets it, not a spawn.
+    fn rolling_at_edge(speed: f32) -> (Car, TrackWorld) {
+        let world = flat_track();
+        let mut car = Car::at_spawn(Vec3::new(0.0, 1.0, 10.0), std::f32::consts::FRAC_PI_2);
+        car.vel = Vec3::new(speed, 0.0, 0.0);
+        (car, world)
+    }
+
+    #[test]
+    fn a_slow_car_is_stopped_by_the_barrier() {
+        // Six metres a second into a car-height wall: the barrier earns its
+        // name, and the car stays on the road rather than visiting the grass.
+        let (mut car, world) = rolling_at_edge(6.0);
+        let input = VehicleInput::neutral();
+        let mut max_x = car.pos.x;
+        for _ in 0..400 {
+            step_car(&mut car, &input, &world, &CarTuning::default(), DT);
+            max_x = max_x.max(car.pos.x);
+        }
+        // Road edge 6.575, barrier to 7.575: never past the peak.
+        assert!(
+            max_x < 7.0,
+            "slow car crossed the barrier, reached {max_x:.2}"
+        );
+        assert!(
+            car.speed() < 2.0,
+            "slow car should have stopped, still doing {:.2}",
+            car.speed()
+        );
+    }
+
+    #[test]
+    fn a_fast_car_mounts_the_barrier() {
+        // Twenty-eight into the same wall: momentum carries the car up the
+        // round-over. It must get up over the peak or across to the shoulder,
+        // not stop dead as if the barrier were a cliff.
+        let (mut car, world) = rolling_at_edge(28.0);
+        let input = VehicleInput::neutral();
+        let mut max_y = car.pos.y;
+        let mut max_x = car.pos.x;
+        for _ in 0..400 {
+            step_car(&mut car, &input, &world, &CarTuning::default(), DT);
+            max_y = max_y.max(car.pos.y);
+            max_x = max_x.max(car.pos.x);
+        }
+        assert!(
+            max_y > 0.9 || max_x > 7.7,
+            "fast car stopped dead at the barrier: peak y {max_y:.2}, x {max_x:.2}"
+        );
+    }
+
     #[test]
     fn the_car_accelerates_forward_and_stays_upright_on_flat_road() {
         let world = flat_track();
@@ -1618,15 +1670,21 @@ mod ground_tests {
     fn the_plain_sits_below_every_piece_of_road() {
         for doc in retrackt_format::builtin_tracks() {
             let world = TrackWorld::from_doc(&doc);
-            let (mut lowest, mut highest) = (f32::MAX, f32::MIN);
+            // Drivable tops: the plain hangs off their lowest, so it is below
+            // every one of them by construction. Skirts and barriers hang off
+            // the road they edge and may bury their feet, which is what keeps
+            // the edges closed; the bound below keeps that burial shallow.
+            let (mut lowest_top, mut lowest_any) = (f32::MAX, f32::MAX);
             for t in &world.triangles {
                 // The two plain triangles are the only ones with no owner.
                 if t.owner.0 == 0 {
                     continue;
                 }
                 for v in [t.a, t.b, t.c] {
-                    lowest = lowest.min(v.y);
-                    highest = highest.max(v.y);
+                    lowest_any = lowest_any.min(v.y);
+                    if t.normal.y > 0.5 {
+                        lowest_top = lowest_top.min(v.y);
+                    }
                 }
             }
             let plain = world
@@ -1636,8 +1694,18 @@ mod ground_tests {
                 .map(|t| t.a.y);
             if let Some(plain_y) = plain {
                 assert!(
-                    plain_y <= lowest + 1e-3,
-                    "{}: the plain at {plain_y} cuts the road, whose lowest point is {lowest}",
+                    plain_y <= lowest_top + 1e-3,
+                    "{}: the plain at {plain_y} cuts the road, whose lowest top is {lowest_top}",
+                    doc.name
+                );
+                // Skirts bury their feet to close the edges, deeper on a
+                // banked low side where the tilt compounds the drop. Past one
+                // vertical grid step under the plain is not burial but a hole
+                // something fell through.
+                let step = doc.cell_size * retrackt_format::geometry::GRID_Y_CELLS;
+                assert!(
+                    lowest_any >= plain_y - step,
+                    "{}: geometry dangles {lowest_any} under the plain at {plain_y}",
                     doc.name
                 );
             }

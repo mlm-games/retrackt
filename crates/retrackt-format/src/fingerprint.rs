@@ -15,6 +15,9 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
     // fingerprint of an identical track.
     pieces.sort_by_key(|p| p.uid);
 
+    // Bumped again because the road edges grew into barriers: the collision
+    // mesh of every kerbed piece changed shape, so a replay recorded against
+    // the old low kerbs would drive through walls that are now there.
     // Bumped again because a piece can go wide: the width moves the kerbs,
     // and a replay of a narrow run replayed on the wide road is a car driving
     // through kerbs that are not there.
@@ -30,7 +33,7 @@ pub fn gameplay_fingerprint(doc: &TrackDocument) -> TrackFingerprint {
     // run, so the domain moves and every record written before it loses its
     // match, which is the price of not mislabelling them.
     let mut h = blake3::Hasher::new();
-    h.update(b"retrackt-track-v6");
+    h.update(b"retrackt-track-v7");
     h.update(&doc.format.to_le_bytes());
     h.update(&doc.cell_size.to_bits().to_le_bytes());
 

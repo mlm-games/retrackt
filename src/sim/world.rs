@@ -430,6 +430,9 @@ impl TrackWorld {
     pub fn from_doc(doc: &TrackDocument) -> Self {
         let mut triangles: Vec<Triangle> = Vec::new();
         let mut boost_zones: Vec<[f32; 6]> = Vec::new();
+        // Lowest drivable surface, for the plain to hang off. Tracked in the
+        // surface loop below, never the decor one.
+        let mut road_y = f32::INFINITY;
 
         // Race order, from the connected chain: gate sequence is what a run is
         // measured against, and taking it from the piece array made it a
@@ -451,6 +454,11 @@ impl TrackWorld {
                     world.transform_point3(Vec3::from(b)),
                     world.transform_point3(Vec3::from(c)),
                 );
+                // The plain hangs off the lowest drivable surface, not the
+                // lowest triangle: skirts and barriers hang below the road
+                // they edge, and letting them set the height would drop the
+                // plain out from under a flat track.
+                road_y = road_y.min(ta.y.min(tb.y).min(tc.y));
                 let n = world.transform_vector3(Vec3::from(n)).normalize_or_zero();
                 triangles.push(Triangle {
                     a: ta,
@@ -570,16 +578,8 @@ impl TrackWorld {
         // teleport: there is nothing under it to drive on and no way back up. Its
         // height is the road's own lowest point, so the plain never cuts through
         // the track, and it reaches far past the far plane so its edge is never
-        // inside the view.
-        // A little below the road, not level with it. Level with it means the
-        // plain and the road are one surface and the edge of the road is nothing:
-        // a kerb is the only cue that the car has left the road, and a car drives
-        // off it without knowing. The reference's road stands a fifth of a metre
-        // over its ground for the same reason.
-        let road_y = triangles
-            .iter()
-            .flat_map(|t| [t.a.y, t.b.y, t.c.y])
-            .fold(f32::INFINITY, f32::min);
+        // inside the view. A little below the road, not level with it, so the
+        // edge of the road is something: a car drives off it knowing.
         let ground_y = road_y - GROUND_DROP;
         if ground_y.is_finite() {
             let reach = GROUND_REACH.max(doc.cell_size * 64.0);
