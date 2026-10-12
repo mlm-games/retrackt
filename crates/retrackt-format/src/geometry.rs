@@ -484,6 +484,23 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
             });
         }
 
+        PieceId::Wedge | PieceId::WedgeDown => {
+            // One block-scale step: a cell long, a quarter-cell up, a cell
+            // wide. Stairs from blocks, or a narrow path where a road ramp
+            // will not fit. The skirt hangs it to the ground like a ramp's.
+            c.half_width = cell * 0.5;
+            let rise = cell * GRID_Y_CELLS;
+            let up = id == PieceId::Wedge;
+            push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
+                let y = if up { u * rise } else { rise - u * rise };
+                let dy = if up { rise } else { -rise };
+                let t = Vec3::new(0.0, dy, cell).normalize_or_zero();
+                let nrm = Vec3::new(0.0, cell, -dy).normalize_or_zero();
+                (Vec3::new(0.0, y, u * cell), t, nrm)
+            });
+            c.floor = Some(0.0);
+        }
+
         PieceId::Wall => {
             // Not drivable: a thin upright barrier, half a cell tall.
             c.half_width = cell * 0.06;
@@ -1785,6 +1802,56 @@ mod tests {
                 assert!((n.length() - 1.0).abs() < 1e-3, "{id:?}: normal not unit");
             }
         }
+    }
+
+    #[test]
+    fn a_wedge_is_one_cell_long_and_one_step_up() {
+        // Block-scale stairs: a cell of run, a quarter-cell of rise, a cell
+        // wide. Two chained wedges must climb two steps with no overlap
+        // warning between them.
+        let step = C * GRID_Y_CELLS;
+        let up = piece_shape(PieceId::Wedge, &PieceParams::default(), C);
+        assert_eq!(up.ports[0].cell, [0, 0, 0]);
+        assert_eq!(up.ports[1].cell, [0, 1, 1]);
+        assert!((up.center.pos.last().unwrap().y - step).abs() < 1e-3);
+        let (lo, hi) = up.surface.bounds().unwrap();
+        assert!(
+            (hi[0] - lo[0] - C).abs() < 0.01,
+            "wedge must be a cell wide"
+        );
+        let down = piece_shape(PieceId::WedgeDown, &PieceParams::default(), C);
+        assert_eq!(down.ports[0].cell, [0, 1, 0]);
+        assert_eq!(down.ports[1].cell, [0, 0, 1]);
+        // Hung to the ground like a ramp, not floating like a ribbon.
+        let lowest = up
+            .decor
+            .positions
+            .iter()
+            .map(|p| p[1])
+            .fold(f32::MAX, f32::min);
+        assert!(lowest < 1e-3, "wedge skirt must reach the ground");
+    }
+
+    #[test]
+    fn wedges_stack_into_stairs_that_join() {
+        use crate::track::{PieceInstance, PieceUid, TrackDocument};
+        let mut doc = TrackDocument::empty();
+        let a = doc.next_piece_uid();
+        doc.pieces
+            .push(PieceInstance::new(PieceId::Wedge, [0, 0, 0]).with_uid(a));
+        let b = doc.next_piece_uid();
+        doc.pieces
+            .push(PieceInstance::new(PieceId::Wedge, [0, 1, 1]).with_uid(b));
+        doc.normalize_uids();
+        assert_eq!(doc.joins(a), Some(b));
+        let diagnostics = crate::validate(&doc);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.message.contains("share cells")),
+            "stairs own distinct cells: {:?}",
+            diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
     }
 
     /// A jump is road, then nothing, then road: the gap is the absence of

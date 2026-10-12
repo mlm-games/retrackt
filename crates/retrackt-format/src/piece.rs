@@ -190,10 +190,15 @@ pub enum PieceId {
     CeilingRoad = 27,
     /// A half loop from ceiling back to flat road. Fixed pitch.
     LoopDrop = 28,
+    /// One block-scale step up: a cell long, a quarter-cell up. Stairs from
+    /// blocks, or a narrow path where a road ramp will not fit.
+    Wedge = 29,
+    /// One block-scale step down.
+    WedgeDown = 30,
 }
 
 impl PieceId {
-    pub const ALL: [PieceId; 29] = [
+    pub const ALL: [PieceId; 31] = [
         Self::Start,
         Self::Straight,
         Self::CurveRight90,
@@ -223,6 +228,8 @@ impl PieceId {
         Self::HalfLoop,
         Self::CeilingRoad,
         Self::LoopDrop,
+        Self::Wedge,
+        Self::WedgeDown,
     ];
 
     pub fn as_u16(self) -> u16 {
@@ -263,6 +270,8 @@ impl PieceId {
             Self::HalfLoop => "Half Loop",
             Self::CeilingRoad => "Ceiling Road",
             Self::LoopDrop => "Loop Drop",
+            Self::Wedge => "Wedge",
+            Self::WedgeDown => "Wedge Down",
             Self::SCurve => "S Curve",
         }
     }
@@ -289,7 +298,7 @@ impl PieceId {
             | Self::HalfLoop
             | Self::CeilingRoad
             | Self::LoopDrop => "Walls",
-            Self::RampUp | Self::RampDown => "Slopes",
+            Self::RampUp | Self::RampDown | Self::Wedge | Self::WedgeDown => "Slopes",
             Self::BankLeft | Self::BankRight => "Banks",
             Self::Loop => "Stunts",
             Self::Wall | Self::Pillar | Self::Sign | Self::Block | Self::Slab => "Props",
@@ -349,6 +358,8 @@ impl PieceId {
                 | Self::Crest
                 | Self::HalfLoop
                 | Self::LoopDrop
+                | Self::Wedge
+                | Self::WedgeDown
         )
     }
 
@@ -707,6 +718,28 @@ pub const CATALOG: &[PieceDef] = &[
         id: PieceId::LoopDrop,
         default_length_cells: 0,
         default_radius_cells: 2,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::Wedge,
+        default_length_cells: 1,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::WedgeDown,
+        default_length_cells: 1,
+        default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 0,
         is_start: false,
