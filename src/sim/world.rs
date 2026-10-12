@@ -533,12 +533,13 @@ impl TrackWorld {
             // by the instance. Never zero: the transform is a rotation
             // about Y, so the axis keeps its length.
             let facing = world.transform_vector3(Vec3::Z).normalize_or_zero();
-            // The trigger spans the road, not its middle: a gate one cell
-            // wide on a road nearly three across lets a kerb-hugging line
-            // miss it entirely, and on a wide road the miss is a lane wide.
+            // The trigger spans the driving surface edge to edge, like the
+            // reference's 10.5 m gate on its 11.1 m surface: every paved lane
+            // counts, while a line ridden along the barrier tops misses, as it
+            // should, the car being fully off the road.
             let across = world.transform_vector3(Vec3::X).normalize_or_zero();
             let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
-            let span = shape.center.half_width + 1.0;
+            let span = shape.center.half_width;
             let along = doc.cell_size * 0.5;
             Gate {
                 piece: inst.uid,
@@ -979,6 +980,10 @@ mod tests {
             assert!(
                 drive(-(half_road - 0.5)),
                 "wide={wide}: other kerb line must count"
+            );
+            assert!(
+                !drive(half_road + 0.6),
+                "wide={wide}: a barrier-top line is off the road and must miss"
             );
             assert!(
                 !drive(half_road + 3.0),
