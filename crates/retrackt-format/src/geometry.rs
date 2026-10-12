@@ -192,6 +192,11 @@ pub struct PieceShape {
     pub occupied: Vec<[i16; 3]>,
     /// Sampled centre curve in local metres, for the deterministic guide.
     pub center: Centerline,
+    /// Side-road centrelines of a junction, in local metres. Empty for every
+    /// other piece: only a junction paves more than its through road, and the
+    /// guide still follows `center` because a drive through a junction is one
+    /// line, not three.
+    pub branches: Vec<Centerline>,
     /// False for pieces the guide must skip (a jump gap is not a rail).
     pub has_guide: bool,
 }
@@ -284,7 +289,9 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
         | PieceId::Start
         | PieceId::Finish
         | PieceId::Checkpoint
-        | PieceId::Boost => {
+        | PieceId::Boost
+        | PieceId::TJunction
+        | PieceId::Crossroads => {
             push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
                 (Vec3::new(0.0, 0.0, u * l), Vec3::Z, Vec3::Y)
             });
@@ -481,6 +488,20 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
     let half = center.half_width;
     let has_guide = !center.skip && !center.is_empty();
 
+    // A junction's fixed length, guarded: a hand-written length shorter than
+    // the mouth leaves the spans backwards. The editor never offers one; the
+    // file gets the minimum that still fits the junction.
+    let junction_len = if matches!(id, PieceId::TJunction | PieceId::Crossroads) {
+        Some((f32::from(resolve_params(id, params).0) * cell).max(half * 2.0 + cell))
+    } else {
+        None
+    };
+    // Side roads of a junction, built once and shared by the surface, the
+    // ports and the reservation below.
+    let branches = junction_len
+        .map(|l| junction_branches(id, half, cell, l))
+        .unwrap_or_default();
+
     // Ride width of a drivable road: the cell edge. Scenery is decor only:
     // nothing to drive on, just something to see and to hit.
     let (surface, decor) = match id {
@@ -499,6 +520,31 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
         PieceId::Sign => (RawMesh::default(), sign_mesh(cell)),
         // A block is one solid cube on its anchor cell.
         PieceId::Block => (RawMesh::default(), block_mesh(cell)),
+        // A junction paves its through road in three spans so the kerb breaks
+        // at the mouths, plus one lifted ribbon per side road out to its joint
+        // plane. A kerb wall across a side road is a barrier the side road
+        // cannot cross except at speed, which is the opposite of a junction.
+        PieceId::TJunction | PieceId::Crossroads => {
+            let l = junction_len.unwrap_or(4.0 * cell);
+            let mid = l / 2.0;
+            let mut surface = RawMesh::default();
+            let mut decor = RawMesh::default();
+            for (z0, z1, kerb) in [
+                (0.0, mid - half, KERB_HEIGHT),
+                (mid - half, mid + half, 0.0),
+                (mid + half, l, KERB_HEIGHT),
+            ] {
+                let span = straight_span(z0, z1, half, STRAIGHT_SEGMENTS);
+                let (flat, walls) = ribbon(&span, half, cell, kerb);
+                append_mesh(&mut surface, flat);
+                append_mesh(&mut decor, walls);
+            }
+            for arm in &branches {
+                let (flat, _) = ribbon(arm, half, cell, 0.0);
+                append_mesh(&mut surface, flat);
+            }
+            (surface, decor)
+        }
         _ => {
             let (a, b) = ribbon(&center, half, cell, KERB_HEIGHT);
             (a, b)
@@ -507,14 +553,43 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
 
     let ports = if id.is_scenery() {
         Vec::new()
+    } else if matches!(id, PieceId::TJunction | PieceId::Crossroads) {
+        junction_ports(id, half, cell, junction_len.unwrap_or(4.0 * cell))
     } else {
         entry_exit_ports(&center, cell)
     };
 
-    let (reserve_min, reserve_max) = reserve_box(&center, cell);
+    let (mut reserve_min, mut reserve_max) = reserve_box(&center, cell);
+    for arm in &branches {
+        let (lo, hi) = reserve_box(arm, cell);
+        for k in 0..3 {
+            reserve_min[k] = reserve_min[k].min(lo[k]);
+            reserve_max[k] = reserve_max[k].max(hi[k]);
+        }
+    }
     // Centre line only: widening by the half-width would claim the cells just
     // outside the kerb, falsely colliding pieces at their shared join row.
     let mut occupied = occupied_cells(&center, cell, &ports);
+    // Junctions sample densely, so the paved mouths are claimed: a straight's
+    // two-sample centreline owns nothing, which is fine for a road no other
+    // piece can stand on, but a side road butts onto cells the junction paves.
+    if junction_len.is_some() {
+        let l = junction_len.unwrap_or(4.0 * cell);
+        let dense = straight_span(0.0, l, half, 8);
+        occupied = occupied_cells(&dense, cell, &ports);
+        for arm in &branches {
+            for p in &arm.pos {
+                let c = to_grid(*p, cell);
+                if ports.iter().any(|port| port.cell == c) {
+                    continue;
+                }
+                if !occupied.contains(&c) {
+                    occupied.push(c);
+                }
+            }
+        }
+        occupied.sort_unstable();
+    }
     if id == PieceId::Pillar {
         // The top cell is the road's, not the pillar's: the column props it,
         // and counting it flags every supported road as an overlap.
@@ -531,6 +606,7 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
         reserve_max,
         occupied,
         center,
+        branches,
         has_guide,
     }
 }
@@ -772,6 +848,92 @@ fn push_quad(m: &mut RawMesh, a: [f32; 3], b: [f32; 3], c: [f32; 3], d: [f32; 3]
     m.colors.extend_from_slice(&[[1.0; 3]; 4]);
     m.indices
         .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+/// Concatenate meshes, for pieces paved from several ribbons.
+fn append_mesh(out: &mut RawMesh, other: RawMesh) {
+    let base = out.positions.len() as u32;
+    out.positions.extend_from_slice(&other.positions);
+    out.normals.extend_from_slice(&other.normals);
+    out.colors.extend_from_slice(&other.colors);
+    out.indices.extend(other.indices.iter().map(|i| i + base));
+}
+
+/// One straight run of road centreline, for junction spans.
+fn straight_span(z0: f32, z1: f32, half: f32, segments: usize) -> Centerline {
+    let mut c = Centerline {
+        half_width: half,
+        ..Centerline::default()
+    };
+    push_segment(&mut c, segments, |u| {
+        (Vec3::new(0.0, 0.0, z0 + u * (z1 - z0)), Vec3::Z, Vec3::Y)
+    });
+    c
+}
+
+/// Lift of a junction arm over the through road, in metres.
+///
+/// The arm overlaps the through ribbon where they cross, and two coplanar
+/// same-colour surfaces shimmer. A centimetre and a half separates them past
+/// depth precision while staying an order of magnitude below anything the
+/// car's suspension can feel.
+const ARM_LIFT: f32 = 0.015;
+
+/// Side-road centrelines of a junction: one ribbon per junction, spanning its
+/// joint planes. The joint sits one cell past the road edge, so a side road
+/// butts onto the arm end exactly instead of overlapping the through road.
+fn junction_branches(id: PieceId, half: f32, cell: f32, l: f32) -> Vec<Centerline> {
+    let mid = l / 2.0;
+    let reach = (half / cell).floor() as i16 + 1;
+    let end = f32::from(reach) * cell;
+    let start = if id == PieceId::Crossroads {
+        -end
+    } else {
+        // Buried just inside the far kerb: the arm's end edge lands where
+        // through traffic never drives, instead of across the middle of it.
+        -half + 0.5
+    };
+    let mut c = Centerline {
+        half_width: half,
+        ..Centerline::default()
+    };
+    push_segment(&mut c, 8, |u| {
+        (
+            Vec3::new(start + u * (end - start), ARM_LIFT, mid),
+            Vec3::X,
+            Vec3::Y,
+        )
+    });
+    vec![c]
+}
+
+/// Ports of a junction: entry, through exit, then one side exit per arm, so
+/// the chain prefers the through road and only takes an arm when nothing
+/// continues straight on.
+fn junction_ports(id: PieceId, half: f32, cell: f32, l: f32) -> Vec<Port> {
+    let mid = (l / 2.0 / cell).round() as i16;
+    let reach = (half / cell).floor() as i16 + 1;
+    let mut ports = vec![
+        Port {
+            cell: [0, 0, 0],
+            outward: GridDir::NegZ,
+        },
+        Port {
+            cell: [0, 0, (l / cell).round() as i16],
+            outward: GridDir::PosZ,
+        },
+        Port {
+            cell: [reach, 0, mid],
+            outward: GridDir::PosX,
+        },
+    ];
+    if id == PieceId::Crossroads {
+        ports.push(Port {
+            cell: [-reach, 0, mid],
+            outward: GridDir::NegX,
+        });
+    }
+    ports
 }
 
 /// One axis-aligned solid, wound outward. Corners are absolute local metres.
@@ -1295,6 +1457,59 @@ mod tests {
                 plain.decor.bounds(),
                 flagged.decor.bounds(),
                 "{id:?}: the wide flag must not reshape scenery"
+            );
+        }
+    }
+
+    #[test]
+    fn junctions_have_a_through_road_and_side_ports() {
+        // A T is entry, exit and one arm; a cross adds the other arm. Ports
+        // are grid cells, so a side road butts onto whole cells, not fractions.
+        let t = piece_shape(PieceId::TJunction, &PieceParams::default(), C);
+        let x = piece_shape(PieceId::Crossroads, &PieceParams::default(), C);
+        assert_eq!(t.ports.len(), 3, "T: entry, exit, one arm");
+        assert_eq!(x.ports.len(), 4, "cross: entry, exit, two arms");
+        let straight = piece_shape(PieceId::Straight, &PieceParams::default(), C);
+        assert_eq!(&t.ports[..2], &straight.ports[..2]);
+        assert_eq!(&x.ports[..2], &straight.ports[..2]);
+        assert!(t.has_guide && x.has_guide);
+        // Joint planes one cell past the road edge, either side of the middle.
+        assert_eq!(t.ports[2].cell, [2, 0, 2]);
+        assert_eq!(x.ports[2].cell, [2, 0, 2]);
+        assert_eq!(x.ports[3].cell, [-2, 0, 2]);
+    }
+
+    #[test]
+    fn a_junction_paves_every_route_with_no_thin_triangles() {
+        for id in [PieceId::TJunction, PieceId::Crossroads] {
+            let shape = piece_shape(id, &PieceParams::default(), C);
+            assert!(!shape.surface.is_empty());
+            let (lo, hi) = shape.surface.bounds().unwrap();
+            // Through road full length, arms out to both joint planes.
+            assert!(hi[2] - lo[2] >= 4.0 * C - 1.0, "{id:?}: through road short");
+            assert!(hi[0] >= 2.0 * C - 0.01, "{id:?}: east arm short");
+            if id == PieceId::Crossroads {
+                assert!(lo[0] <= -2.0 * C + 0.01, "west arm short");
+            }
+            for (a, b, c, n) in shape.surface.triangles() {
+                let (a, b, c, n) = (Vec3::from(a), Vec3::from(b), Vec3::from(c), Vec3::from(n));
+                assert!((b - a).cross(c - a).length() > 1e-6, "{id:?}: degenerate");
+                assert!((n.length() - 1.0).abs() < 1e-3, "{id:?}: normal not unit");
+            }
+        }
+    }
+
+    #[test]
+    fn a_junction_claims_its_mouths_but_not_its_neighbours() {
+        // The paved arms are occupied, so a block dropped on a side road is
+        // reported; the joint planes are ports, so a road butted onto one is
+        // a neighbour, not an overlap.
+        let shape = piece_shape(PieceId::Crossroads, &PieceParams::default(), C);
+        assert!(shape.occupied.contains(&[1, 0, 2]), "arm body unclaimed");
+        for port in &shape.ports {
+            assert!(
+                !shape.occupied.contains(&port.cell),
+                "port {port:?} counted as body"
             );
         }
     }

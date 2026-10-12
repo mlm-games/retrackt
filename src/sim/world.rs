@@ -826,6 +826,50 @@ mod tests {
     }
 
     #[test]
+    fn a_junction_holds_the_car_on_every_route_through_it() {
+        // Through road and side mouth must both be ground: a junction whose
+        // arm is paint over grass drops the car, and a kerb left across the
+        // mouth reads as ground until the car meets the wall it stands on.
+        let mut doc = TrackDocument::empty();
+        let t = doc.next_piece_uid();
+        doc.pieces
+            .push(PieceInstance::new(retrackt_format::PieceId::Crossroads, [0, 0, 0]).with_uid(t));
+        doc.normalize_uids();
+        let w = TrackWorld::from_doc(&doc);
+        // Down the middle, then out along the east arm to its joint plane.
+        let cell = doc.cell_size;
+        for (x, z) in [(0.0, 2.0), (0.0, 10.0), (5.0, 10.0), (9.0, 10.0)] {
+            let hit = w
+                .ground_at(Vec3::new(x, 30.0, z), 60.0)
+                .unwrap_or_else(|| panic!("no ground at ({x}, {z})"));
+            assert!(
+                hit.normal.dot(Vec3::Y) > 0.99,
+                "ground at ({x}, {z}) is not road-flat: {:?}",
+                hit.normal
+            );
+            assert!(
+                hit.point.y < cell,
+                "ground at ({x}, {z}) floats: {}",
+                hit.point.y
+            );
+        }
+        // No wall across the mouth: every triangle near the arm's centre line
+        // lies flat. A kerb wall standing over the side road would fail this.
+        for tri in &w.triangles {
+            let near_arm = [tri.a, tri.b, tri.c]
+                .iter()
+                .all(|p| (p.z - 10.0).abs() < cell && p.x > 0.0 && p.x < 2.0 * cell);
+            if near_arm {
+                assert!(
+                    tri.normal.dot(Vec3::Y).abs() > 0.9,
+                    "wall across the junction mouth: {:?}",
+                    tri.normal
+                );
+            }
+        }
+    }
+
+    #[test]
     fn blocks_stack_without_sharing_cells() {
         // One cube per anchor cell: a block directly atop another owns a
         // different cell, so a wall of blocks validates clean.

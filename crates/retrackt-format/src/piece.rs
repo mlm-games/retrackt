@@ -167,10 +167,14 @@ pub enum PieceId {
     /// One solid cube of scenery, for walls, platforms and steps. Stacks
     /// cleanly: each block owns exactly its anchor cell.
     Block = 17,
+    /// A three-way junction: straight through, plus one side road. Fixed size.
+    TJunction = 18,
+    /// A four-way junction: straight through, plus both side roads. Fixed size.
+    Crossroads = 19,
 }
 
 impl PieceId {
-    pub const ALL: [PieceId; 18] = [
+    pub const ALL: [PieceId; 20] = [
         Self::Start,
         Self::Straight,
         Self::CurveRight90,
@@ -189,6 +193,8 @@ impl PieceId {
         Self::Pillar,
         Self::Sign,
         Self::Block,
+        Self::TJunction,
+        Self::Crossroads,
     ];
 
     pub fn as_u16(self) -> u16 {
@@ -218,6 +224,8 @@ impl PieceId {
             Self::Pillar => "Pillar",
             Self::Sign => "Sign",
             Self::Block => "Block",
+            Self::TJunction => "T Junction",
+            Self::Crossroads => "Crossroads",
             Self::SCurve => "S Curve",
         }
     }
@@ -235,6 +243,7 @@ impl PieceId {
             | Self::CurveLeft90
             | Self::Curve180
             | Self::SCurve => "Road",
+            Self::TJunction | Self::Crossroads => "Junctions",
             Self::RampUp | Self::RampDown => "Slopes",
             Self::BankLeft | Self::BankRight => "Banks",
             Self::Loop => "Stunts",
@@ -274,6 +283,8 @@ impl PieceId {
                 | Self::SCurve
                 | Self::Sign
                 | Self::Block
+                | Self::TJunction
+                | Self::Crossroads
         )
     }
 
@@ -502,6 +513,28 @@ pub const CATALOG: &[PieceDef] = &[
     PieceDef {
         id: PieceId::Block,
         default_length_cells: 1,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::TJunction,
+        default_length_cells: 4,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::Crossroads,
+        default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 0,

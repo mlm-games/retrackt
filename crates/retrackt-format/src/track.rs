@@ -364,9 +364,12 @@ impl TrackDocument {
     /// but neither treats it as the road the car drives.
     pub fn joins(&self, uid: PieceUid) -> Option<PieceUid> {
         let ports = self.all_ports();
+        // Every port past the entry is an exit: a junction's side arms join
+        // like its through road, with the through road first in port order so
+        // the chain prefers straight on.
         let exits: Vec<WorldPort> = ports
             .iter()
-            .filter(|(u, _, i)| *u == uid && *i == 1)
+            .filter(|(u, _, i)| *u == uid && *i >= 1)
             .map(|(_, p, _)| *p)
             .collect();
 
@@ -673,6 +676,53 @@ mod tests {
                 pair[0]
             );
         }
+    }
+
+    #[test]
+    fn a_side_road_joins_a_junction_mouth_head_on() {
+        // A straight butted onto the east mouth must read as the junction's
+        // continuation, the same way one butted onto the exit does.
+        let mut doc = TrackDocument::empty();
+        let t = doc.next_piece_uid();
+        doc.pieces
+            .push(PieceInstance::new(PieceId::TJunction, [0, 0, 0]).with_uid(t));
+        let side = doc.next_piece_uid();
+        // East mouth is local (2, 0, 2); yaw 1 turns the straight to run +X
+        // away from it, entry facing back down the mouth.
+        doc.pieces.push(
+            PieceInstance::new(PieceId::Straight, [2, 0, 2])
+                .with_uid(side)
+                .with_yaw(1),
+        );
+        doc.normalize_uids();
+        assert_eq!(doc.joins(t), Some(side));
+        assert!(doc.meets_any(side));
+    }
+
+    #[test]
+    fn the_chain_prefers_straight_on_at_a_junction() {
+        // Through exit and side mouth both continued: the route follows the
+        // through road, because a junction that routes every drive onto its
+        // arm would make the main line unnavigable.
+        let mut doc = TrackDocument::empty();
+        let start = doc.next_piece_uid();
+        doc.pieces
+            .push(PieceInstance::new(PieceId::Start, [0, 0, -4]).with_uid(start));
+        let t = doc.next_piece_uid();
+        doc.pieces
+            .push(PieceInstance::new(PieceId::TJunction, [0, 0, 0]).with_uid(t));
+        let ahead = doc.next_piece_uid();
+        doc.pieces
+            .push(PieceInstance::new(PieceId::Straight, [0, 0, 4]).with_uid(ahead));
+        let side = doc.next_piece_uid();
+        doc.pieces.push(
+            PieceInstance::new(PieceId::Straight, [2, 0, 2])
+                .with_uid(side)
+                .with_yaw(1),
+        );
+        doc.normalize_uids();
+        assert_eq!(doc.joins(t), Some(ahead));
+        assert_eq!(doc.chain(), vec![start, t, ahead]);
     }
 
     #[test]

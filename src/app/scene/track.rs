@@ -1,6 +1,6 @@
 use glam::Vec3;
 use repame_view3d::MeshGroup;
-use retrackt_format::geometry::{Centerline, RawMesh, reserve_extent};
+use retrackt_format::geometry::{Centerline, PieceShape, RawMesh, reserve_extent};
 use retrackt_format::piece::catalog_by_id;
 use retrackt_format::{PieceId, PieceInstance, TrackDocument, piece_shape};
 
@@ -41,7 +41,7 @@ pub(super) fn build_group(doc: &TrackDocument) -> (MeshGroup, ([f32; 3], [f32; 3
         merge(&mut merged, &decor);
 
         let mut paint = RawMesh::default();
-        piece_paint(inst.id, doc.cell_size, &shape.center, &mut paint);
+        piece_paint(inst.id, doc.cell_size, &shape, &mut paint);
         if !paint.is_empty() {
             merge(&mut merged, &paint.transformed(xform, [1.0; 3]));
         }
@@ -201,11 +201,16 @@ fn kerb_palette(decor: &mut RawMesh) {
     }
 }
 
-fn piece_paint(id: PieceId, cell: f32, c: &Centerline, out: &mut RawMesh) {
+fn piece_paint(id: PieceId, cell: f32, shape: &PieceShape, out: &mut RawMesh) {
+    let c = &shape.center;
     if c.is_empty() || id.is_scenery() {
         return;
     }
     edge_lines(c, out);
+    // A side road is road: its edges get the same lines as the through road's.
+    for arm in &shape.branches {
+        edge_lines(arm, out);
+    }
     let def = catalog_by_id(id);
     let mid = c.length() * 0.5;
     let (dark, light) = (lin(CHECK_DARK), lin(CHECK_LIGHT));
