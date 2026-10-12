@@ -97,6 +97,28 @@ impl PieceParams {
     }
 }
 
+/// The palette categories, in the order the editor lists them, with no repeats.
+pub fn groups() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for def in CATALOG {
+        if !out.contains(&def.id.group()) {
+            out.push(def.id.group());
+        }
+    }
+    out
+}
+
+/// Position of one category in that list.
+pub fn group_index(group: &str) -> Option<usize> {
+    groups().iter().position(|g| *g == group)
+}
+
+/// The category the palette opens on.
+///
+/// Road, because almost every placement comes from it: a fresh editor should be
+/// one tap from laying track, not one tap from the start line.
+pub const DEFAULT_GROUP: &str = "Road";
+
 /// Paints a piece can be laid in, by index.
 ///
 /// Twelve, matching the reference: the default summer, two named environments

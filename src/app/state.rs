@@ -55,6 +55,8 @@ pub enum UiAct {
     /// Race the current track, and come back to the editor afterwards rather
     /// than to the title.
     Playtest,
+    /// Show the parts of one palette category.
+    SetPaletteCategory(usize),
     /// Arm a palette piece without placing it, so the preview and cursor have
     /// something to show. Placing is a separate action: arming on every click
     /// would make it impossible to look at a piece before committing to it.
@@ -263,6 +265,10 @@ pub struct EditorData {
     pub cursor: [i16; 3],
     /// Palette piece armed for placement.
     pub armed: retrackt_format::PieceId,
+    /// Which palette category is showing its parts, by position in the list the
+    /// editor offers them in. Re-selecting the one already showing is a no-op:
+    /// the strip keeps its selection rather than closing to a blank panel.
+    pub palette_category: usize,
     /// Selected pieces, by identity. Empty means "every piece" for the reversible
     /// bulk actions — turning a whole track's curves is a thing players want — but
     /// deletion treats empty as "nothing", so a cleared selection cannot wipe the
@@ -307,6 +313,10 @@ impl Default for EditorData {
         Self {
             cursor: [0, 0, 0],
             armed: retrackt_format::PieceId::Straight,
+            palette_category: retrackt_format::piece::group_index(
+                retrackt_format::piece::DEFAULT_GROUP,
+            )
+            .unwrap_or(0),
             selection: Vec::new(),
             clipboard: Vec::new(),
             snapped: false,

@@ -138,9 +138,23 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     // Side by side the palette sits in its own column beside the viewport, so it
     // needs its own scroller to reach pieces below the fold. Stacked it is inside
     // the panel column's scroller, and a nested one would take the wheel from it.
-    let palette_body = palette_list(editor.armed, actions, stacked);
+    let palette_body = palette_list(editor.armed, editor.palette_category, actions);
+    // The panel names the shelf on show rather than the whole shelf: the strip
+    // inside it is what picks a category, and a title reading "Palette" over a
+    // grid of one category says less than the category does.
+    let palette_title = {
+        let mut groups: Vec<&str> = Vec::new();
+        for def in catalog() {
+            let group = def.id.group();
+            if groups.contains(&group) {
+                continue;
+            }
+            groups.push(group);
+        }
+        groups[editor.palette_category.min(groups.len() - 1)].to_string()
+    };
     let palette = list_panel_w(
-        "Palette",
+        &palette_title,
         dims::palette_w(),
         vec![if stacked {
             palette_body
@@ -401,15 +415,15 @@ fn tool_tile(label: &str, actions: &ActionQueue, act: UiAct) -> View {
     )
 }
 
-/// Palette rows. Clicking *arms* a piece rather than placing it, so the preview
+/// Palette. Clicking *arms* a piece rather than placing it, so the preview
 /// can be inspected first; placement is its own gesture.
 ///
-/// Tiles of a drawing and a short name rather than a button per piece: fifteen
-/// full-width buttons is a wall of text to read through, and the shape of a piece
-/// is the thing that says what it is. Arming is all a tile ever does, so the tile
-/// carries no more than that.
-fn palette_list(armed: retrackt_format::PieceId, actions: &ActionQueue, stacked: bool) -> View {
-    let mut tiles: Vec<View> = Vec::new();
+/// A strip of categories with the parts of the chosen one beneath it, the way
+/// the reference's editor splits them: a wall of eight labelled sections is a
+/// list to scroll past, while one category of parts at a time is a shelf to
+/// pick from. Tiles carry the piece's footprint and its short name rather than
+/// a button of prose, and arming is all a tile ever does.
+fn palette_list(armed: retrackt_format::PieceId, category: usize, actions: &ActionQueue) -> View {
     let mut groups: Vec<&str> = Vec::new();
     for def in catalog() {
         let group = def.id.group();
@@ -417,51 +431,70 @@ fn palette_list(armed: retrackt_format::PieceId, actions: &ActionQueue, stacked:
             continue;
         }
         groups.push(group);
-        tiles.push(group_header(group));
-        let row = FlowRow(
+    }
+    let shown = category.min(groups.len().saturating_sub(1));
+    let active = groups[shown];
+
+    let strip: Vec<View> = groups
+        .iter()
+        .enumerate()
+        .map(|(index, group)| category_tab(index, group, index == shown, actions))
+        .collect();
+    let parts: Vec<View> = catalog()
+        .iter()
+        .filter(|d| d.id.group() == active)
+        .map(|piece| {
+            piece_tile(
+                piece.id,
+                piece.id.label(),
+                piece.id == armed,
+                actions,
+                UiAct::ArmPiece(piece.id),
+            )
+        })
+        .collect();
+
+    Column(Modifier::new().gap(dims::SPACE_ROW)).child([
+        FlowRow(
             Modifier::new().gap(dims::SPACE_ROW).fill_max_width(),
             FlowRowConfig {
                 balanced: true,
                 ..FlowRowConfig::default()
             },
         )
-        .child(
-            catalog()
-                .iter()
-                .filter(|d| d.id.group() == group)
-                .map(|piece| {
-                    piece_tile(
-                        piece.id,
-                        piece.id.label(),
-                        piece.id == armed,
-                        actions,
-                        UiAct::ArmPiece(piece.id),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        );
-        tiles.push(row);
-    }
-
-    if stacked {
-        // Stacked, the palette has the full width of the column, so the groups
-        // flow across it instead of down a narrow column that would put the last
-        // group of them below the fold.
-        return FlowRow(
-            Modifier::new().gap(dims::SPACE_ROW),
+        .child(strip),
+        FlowRow(
+            Modifier::new().gap(dims::SPACE_ROW).fill_max_width(),
             FlowRowConfig {
                 balanced: true,
                 ..FlowRowConfig::default()
             },
         )
-        .child(tiles);
-    }
+        .child(parts),
+    ])
+}
 
-    // No scroller: the palette panel is already inside the column's scroller in the
-    // stacked layout, and in the side-by-side layout it is a sibling of that
-    // scroller rather than inside it. Either way a third scroller under the same
-    // pointer only takes the wheel away from the one that matters.
-    Column(Modifier::new().gap(dims::SPACE_ROW)).child(tiles)
+/// One category in the palette strip. Accent-filled while it is the category
+/// showing, since the strip is what says which shelf of parts is on screen.
+fn category_tab(index: usize, group: &str, selected: bool, actions: &ActionQueue) -> View {
+    let config = ButtonConfig {
+        height: theme::dp(34.0),
+        shape_radius: dims::CTRL_R,
+        content_padding: Some(ButtonDefaults::TEXT_CONTENT_PADDING),
+        ..if selected {
+            ButtonConfig {
+                container_color: Some(theme::accent()),
+                content_color: Some(theme::background()),
+                ..ctrl_config()
+            }
+        } else {
+            ctrl_config()
+        }
+    };
+    let queue = actions.clone();
+    outlined_at(group, theme::dp(64.0), config, move || {
+        push(&queue, UiAct::SetPaletteCategory(index))
+    })
 }
 
 /// One palette tile: the piece's footprint, its short name, and the accent fill
@@ -521,7 +554,8 @@ fn piece_tile(
 
 /// The label a tile carries: the catalogue name trimmed to what fits under an
 /// icon. "Curve Right 90" is three words for a corner.
-fn short_name(label: &str) -> &str {
+/// The tile's short name for a piece label, so it fits under an icon.
+pub(crate) fn short_name(label: &str) -> &str {
     match label {
         "Curve Right" => "Curve R",
         "Curve Left" => "Curve L",
@@ -532,20 +566,6 @@ fn short_name(label: &str) -> &str {
         "JumpGap" | "Jump" => "Jump",
         other => other,
     }
-}
-
-/// A palette group heading, with the rule that separates it from the tiles above.
-fn group_header(group: &str) -> View {
-    Column(Modifier::new().gap(theme::dp(4.0))).child([
-        Text(group)
-            .size(theme::sp(13.0))
-            .color(theme::accent())
-            .single_line(),
-        Box(Modifier::new()
-            .height(theme::dp(1.0))
-            .fill_max_width()
-            .background(theme::text_dim().with_alpha_f32(0.3))),
-    ])
 }
 
 /// One row per placed piece: its race position, identity and cell, then selection

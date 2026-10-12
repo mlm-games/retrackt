@@ -476,6 +476,7 @@ impl App {
             UiAct::DeleteGhost(file) => self.delete_ghost(&file),
             UiAct::LoadTrack(track) => self.load_track(&track),
 
+            UiAct::SetPaletteCategory(index) => self.data.editor.palette_category = index,
             UiAct::ArmPiece(id) => {
                 self.data.editor.armed = id;
                 // A newly armed piece has no heading of its own yet, so it starts

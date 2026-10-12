@@ -378,6 +378,26 @@ mod tests {
         .0
     }
 
+    /// The same, with the palette opened on one category.
+    fn editor_at_with_category(dp_w: f32, dp_h: f32, category: usize) -> repose_core::Scene {
+        let _turn = crate::ui::fit::tests::WINDOW
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        set_window_container_size(dp_w, dp_h);
+        set_window_size_class_default(calculate_window_size_class(dp_w as u32, dp_h as u32, 1.0));
+        let mut data = AppData::default();
+        data.editor.palette_category = category;
+        let view = editor_ui(&data, &Rc::new(RefCell::new(Vec::new())) as &ActionQueue);
+        repose_ui::layout_and_paint(
+            &view,
+            (dp_w as u32, dp_h as u32),
+            &HashMap::new(),
+            &Default::default(),
+            None,
+        )
+        .0
+    }
+
     /// The editor's track panel: the tallest wide solid block in the side column.
     fn track_panel_h(scene: &repose_core::Scene) -> f32 {
         scene
@@ -459,11 +479,40 @@ mod tests {
     }
 
     #[test]
-    fn the_palette_is_in_the_tree_at_every_size() {
-        // The palette was built and then mounted only in the side-by-side branch, so
-        // a stacked editor had no way to arm a piece and could place nothing at all.
-        // Arming is the first thing the editor is for, so this is not a cosmetic
-        // difference between layouts.
+    fn picking_a_category_swaps_the_shelf_under_the_strip() {
+        // The strip is the only way to reach a piece that is not on the open
+        // shelf, so switching categories has to change what is laid out: an
+        // editor that ignored the tap would show one category forever.
+        for group in retrackt_format::piece::groups() {
+            let index = retrackt_format::piece::group_index(group).expect("group is listed");
+            let scene = editor_at_with_category(1024.0, 576.0, index);
+            let texts: Vec<String> = scene
+                .nodes
+                .iter()
+                .filter_map(|n| match n {
+                    SceneNode::Text { text, .. } => Some(text.to_string()),
+                    _ => None,
+                })
+                .collect();
+            for piece in retrackt_format::catalog() {
+                let tile = crate::ui::screens::editor::short_name(piece.id.label());
+                let shown = texts.iter().any(|t| *t == tile);
+                assert_eq!(
+                    shown,
+                    piece.id.group() == group,
+                    "{group}: {tile} is {}",
+                    if shown { "shown" } else { "hidden" }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_palette_category_is_reachable_and_shows_its_parts() {
+        // The palette shows one category at a time, so what must hold is that no
+        // piece is stranded: each category's tab is in the tree to switch to, and
+        // the shelf on show carries every piece it is responsible for. A piece
+        // that is in the catalogue and in neither is a piece that cannot be armed.
         for (w, h) in [(360.0f32, 780.0f32), (800.0, 360.0), (1024.0, 576.0)] {
             let scene = editor_at(w, h, 0);
             let texts: Vec<String> = scene
@@ -474,31 +523,25 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert!(texts.iter().any(|t| t == "Palette"), "{w}x{h}: no palette");
-            // One tile per piece of the catalogue, named by its short label.
-            fn short(label: &'static str) -> &'static str {
-                match label {
-                    "Curve Right" => "Curve R",
-                    "Curve Left" => "Curve L",
-                    "Curve 180" => "U-turn",
-                    "Ramp Up" => "Ramp up",
-                    "Ramp Down" => "Ramp dn",
-                    "Checkpoint" => "Check pt",
-                    other => other,
-                }
+            let groups = retrackt_format::piece::groups();
+            for group in &groups {
+                assert!(
+                    texts.iter().any(|t| t == group),
+                    "{w}x{h}: category {group} has no tab to switch to"
+                );
             }
-            let mut named = 0;
+            // The shelf on show is the default one, and it is complete.
+            let open = retrackt_format::piece::DEFAULT_GROUP;
             for piece in retrackt_format::catalog() {
-                let want = short(piece.id.label());
-                if texts.iter().any(|t| t == want) {
-                    named += 1;
+                if piece.id.group() != open {
+                    continue;
                 }
+                let tile = crate::ui::screens::editor::short_name(piece.id.label());
+                assert!(
+                    texts.iter().any(|t| t == tile),
+                    "{w}x{h}: {open} is missing {tile}"
+                );
             }
-            assert_eq!(
-                named,
-                retrackt_format::catalog().len(),
-                "{w}x{h}: a piece cannot be armed, its tile is not in the tree"
-            );
         }
     }
 
