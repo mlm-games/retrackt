@@ -171,10 +171,14 @@ pub enum PieceId {
     TJunction = 18,
     /// A four-way junction: straight through, plus both side roads. Fixed size.
     Crossroads = 19,
+    /// A merging lane joining from the left of travel. Fixed size.
+    YJunction = 20,
+    /// A merging lane joining from the right of travel. Fixed size.
+    YJunctionFlip = 21,
 }
 
 impl PieceId {
-    pub const ALL: [PieceId; 20] = [
+    pub const ALL: [PieceId; 22] = [
         Self::Start,
         Self::Straight,
         Self::CurveRight90,
@@ -195,6 +199,8 @@ impl PieceId {
         Self::Block,
         Self::TJunction,
         Self::Crossroads,
+        Self::YJunction,
+        Self::YJunctionFlip,
     ];
 
     pub fn as_u16(self) -> u16 {
@@ -226,6 +232,8 @@ impl PieceId {
             Self::Block => "Block",
             Self::TJunction => "T Junction",
             Self::Crossroads => "Crossroads",
+            Self::YJunction => "Y Junction",
+            Self::YJunctionFlip => "Y Junction Flip",
             Self::SCurve => "S Curve",
         }
     }
@@ -243,7 +251,9 @@ impl PieceId {
             | Self::CurveLeft90
             | Self::Curve180
             | Self::SCurve => "Road",
-            Self::TJunction | Self::Crossroads => "Junctions",
+            Self::TJunction | Self::Crossroads | Self::YJunction | Self::YJunctionFlip => {
+                "Junctions"
+            }
             Self::RampUp | Self::RampDown => "Slopes",
             Self::BankLeft | Self::BankRight => "Banks",
             Self::Loop => "Stunts",
@@ -256,6 +266,15 @@ impl PieceId {
     /// a sign stands beside one, a block builds with, and none is ever driven on.
     pub fn is_scenery(self) -> bool {
         matches!(self, Self::Wall | Self::Pillar | Self::Sign | Self::Block)
+    }
+
+    /// Pieces where roads meet: a through road plus side arms, with ports for
+    /// every arm. The chain prefers the through road; the arms join like it.
+    pub fn is_junction(self) -> bool {
+        matches!(
+            self,
+            Self::TJunction | Self::Crossroads | Self::YJunction | Self::YJunctionFlip
+        )
     }
 
     /// Pieces the car physically drives on. Scenery is decor only.
@@ -285,6 +304,8 @@ impl PieceId {
                 | Self::Block
                 | Self::TJunction
                 | Self::Crossroads
+                | Self::YJunction
+                | Self::YJunctionFlip
         )
     }
 
@@ -534,6 +555,28 @@ pub const CATALOG: &[PieceDef] = &[
     },
     PieceDef {
         id: PieceId::Crossroads,
+        default_length_cells: 4,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::YJunction,
+        default_length_cells: 4,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::YJunctionFlip,
         default_length_cells: 4,
         default_radius_cells: 0,
         default_bank_deg: 0,

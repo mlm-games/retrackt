@@ -679,6 +679,25 @@ mod tests {
     }
 
     #[test]
+    fn a_merge_lane_joins_its_own_row_head_on() {
+        // Same as a T mouth, but on the lane the merge runs beside: a road on
+        // row 3 meets the Y mouth, while row 2 walks past it.
+        let mut doc = TrackDocument::empty();
+        let y = doc.next_piece_uid();
+        doc.pieces
+            .push(PieceInstance::new(PieceId::YJunction, [0, 0, 0]).with_uid(y));
+        let side = doc.next_piece_uid();
+        doc.pieces.push(
+            PieceInstance::new(PieceId::Straight, [2, 0, 3])
+                .with_uid(side)
+                .with_yaw(1),
+        );
+        doc.normalize_uids();
+        assert_eq!(doc.joins(y), Some(side));
+        assert!(doc.meets_any(side));
+    }
+
+    #[test]
     fn a_side_road_joins_a_junction_mouth_head_on() {
         // A straight butted onto the east mouth must read as the junction's
         // continuation, the same way one butted onto the exit does.

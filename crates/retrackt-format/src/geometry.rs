@@ -291,7 +291,9 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
         | PieceId::Checkpoint
         | PieceId::Boost
         | PieceId::TJunction
-        | PieceId::Crossroads => {
+        | PieceId::Crossroads
+        | PieceId::YJunction
+        | PieceId::YJunctionFlip => {
             push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
                 (Vec3::new(0.0, 0.0, u * l), Vec3::Z, Vec3::Y)
             });
@@ -491,7 +493,7 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
     // A junction's fixed length, guarded: a hand-written length shorter than
     // the mouth leaves the spans backwards. The editor never offers one; the
     // file gets the minimum that still fits the junction.
-    let junction_len = if matches!(id, PieceId::TJunction | PieceId::Crossroads) {
+    let junction_len = if id.is_junction() {
         Some((f32::from(resolve_params(id, params).0) * cell).max(half * 2.0 + cell))
     } else {
         None
@@ -524,7 +526,7 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
         // at the mouths, plus one lifted ribbon per side road out to its joint
         // plane. A kerb wall across a side road is a barrier the side road
         // cannot cross except at speed, which is the opposite of a junction.
-        PieceId::TJunction | PieceId::Crossroads => {
+        PieceId::TJunction | PieceId::Crossroads | PieceId::YJunction | PieceId::YJunctionFlip => {
             let l = junction_len.unwrap_or(4.0 * cell);
             let mid = l / 2.0;
             let mut surface = RawMesh::default();
@@ -553,7 +555,7 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
 
     let ports = if id.is_scenery() {
         Vec::new()
-    } else if matches!(id, PieceId::TJunction | PieceId::Crossroads) {
+    } else if id.is_junction() {
         junction_ports(id, half, cell, junction_len.unwrap_or(4.0 * cell))
     } else {
         entry_exit_ports(&center, cell)
@@ -886,21 +888,31 @@ fn junction_branches(id: PieceId, half: f32, cell: f32, l: f32) -> Vec<Centerlin
     let mid = l / 2.0;
     let reach = (half / cell).floor() as i16 + 1;
     let end = f32::from(reach) * cell;
-    let start = if id == PieceId::Crossroads {
-        -end
-    } else {
-        // Buried just inside the far kerb: the arm's end edge lands where
-        // through traffic never drives, instead of across the middle of it.
-        -half + 0.5
+    // From buried start to joint plane, laterally. A T and a cross run
+    // straight across; a Y eases over a lane, which is what makes it a merge
+    // rather than a turn. The buried end lands just inside the far kerb,
+    // where through traffic never drives, instead of across the middle of it.
+    let (start, start_z, end_z) = match id {
+        PieceId::Crossroads => (-end, mid, mid),
+        PieceId::TJunction => (-half + 0.5, mid, mid),
+        PieceId::YJunction => (-half + 0.5, mid - 0.4 * cell, mid + cell),
+        _ => (-half + 0.5, mid + 0.4 * cell, mid - cell),
     };
     let mut c = Centerline {
         half_width: half,
         ..Centerline::default()
     };
     push_segment(&mut c, 8, |u| {
+        // Smoothstep across: leaves and arrives heading down the road, and
+        // bends only in the middle where there is room for it.
+        let s = u * u * (3.0 - 2.0 * u);
+        let ds = 6.0 * u * (1.0 - u);
+        let dx = end - start;
+        let dz = end_z - start_z;
+        let tan = Vec3::new(dx, 0.0, dz * ds).normalize_or_zero();
         (
-            Vec3::new(start + u * (end - start), ARM_LIFT, mid),
-            Vec3::X,
+            Vec3::new(start + u * dx, ARM_LIFT, start_z + s * dz),
+            tan,
             Vec3::Y,
         )
     });
@@ -922,16 +934,38 @@ fn junction_ports(id: PieceId, half: f32, cell: f32, l: f32) -> Vec<Port> {
             cell: [0, 0, (l / cell).round() as i16],
             outward: GridDir::PosZ,
         },
-        Port {
-            cell: [reach, 0, mid],
-            outward: GridDir::PosX,
-        },
     ];
-    if id == PieceId::Crossroads {
-        ports.push(Port {
-            cell: [-reach, 0, mid],
-            outward: GridDir::NegX,
-        });
+    // One side mouth per arm, on the arm's own row: a merge joins the road
+    // it runs beside, not the junction's middle.
+    match id {
+        PieceId::Crossroads => {
+            ports.push(Port {
+                cell: [reach, 0, mid],
+                outward: GridDir::PosX,
+            });
+            ports.push(Port {
+                cell: [-reach, 0, mid],
+                outward: GridDir::NegX,
+            });
+        }
+        PieceId::TJunction => {
+            ports.push(Port {
+                cell: [reach, 0, mid],
+                outward: GridDir::PosX,
+            });
+        }
+        PieceId::YJunction => {
+            ports.push(Port {
+                cell: [reach, 0, mid + 1],
+                outward: GridDir::PosX,
+            });
+        }
+        _ => {
+            ports.push(Port {
+                cell: [reach, 0, mid - 1],
+                outward: GridDir::PosX,
+            });
+        }
     }
     ports
 }
@@ -1481,7 +1515,12 @@ mod tests {
 
     #[test]
     fn a_junction_paves_every_route_with_no_thin_triangles() {
-        for id in [PieceId::TJunction, PieceId::Crossroads] {
+        for id in [
+            PieceId::TJunction,
+            PieceId::Crossroads,
+            PieceId::YJunction,
+            PieceId::YJunctionFlip,
+        ] {
             let shape = piece_shape(id, &PieceParams::default(), C);
             assert!(!shape.surface.is_empty());
             let (lo, hi) = shape.surface.bounds().unwrap();
@@ -1496,6 +1535,37 @@ mod tests {
                 assert!((b - a).cross(c - a).length() > 1e-6, "{id:?}: degenerate");
                 assert!((n.length() - 1.0).abs() < 1e-3, "{id:?}: normal not unit");
             }
+        }
+    }
+
+    #[test]
+    fn a_y_arm_bends_a_lane_over_instead_of_turning() {
+        // The merge eases sideways a full cell between its buried end and its
+        // mouth, and the mouth sits on the lane it joins rather than the
+        // junction's middle row.
+        for (id, mouth) in [
+            (PieceId::YJunction, [2, 0, 3]),
+            (PieceId::YJunctionFlip, [2, 0, 1]),
+        ] {
+            let shape = piece_shape(id, &PieceParams::default(), C);
+            assert_eq!(shape.ports.len(), 3);
+            assert_eq!(shape.ports[2].cell, mouth);
+            assert_eq!(shape.branches.len(), 1);
+            let arm = &shape.branches[0];
+            let (lo, hi) = (
+                arm.pos.iter().map(|p| p.z).fold(f32::MAX, f32::min),
+                arm.pos.iter().map(|p| p.z).fold(f32::MIN, f32::max),
+            );
+            let span = hi - lo;
+            assert!(
+                span >= C - 0.01,
+                "{id:?}: arm drifts {span}, not a full lane"
+            );
+            // Leaves and arrives heading down the road, bending in the middle.
+            assert!(arm.tan.first().unwrap().x > 0.99);
+            assert!(arm.tan.last().unwrap().x > 0.99);
+            let mid_tan = arm.tan[arm.tan.len() / 2];
+            assert!(mid_tan.z.abs() > 0.05, "{id:?}: arm never bends");
         }
     }
 

@@ -870,6 +870,29 @@ mod tests {
     }
 
     #[test]
+    fn a_merge_lane_holds_the_car_along_its_bend() {
+        // The Y arm leaves the through road's row, so spot-check the bend and
+        // the mouth rather than the middle: those are the points with grass
+        // under them if the arm is short.
+        let mut doc = TrackDocument::empty();
+        let y = doc.next_piece_uid();
+        doc.pieces
+            .push(PieceInstance::new(retrackt_format::PieceId::YJunction, [0, 0, 0]).with_uid(y));
+        doc.normalize_uids();
+        let w = TrackWorld::from_doc(&doc);
+        for (x, z) in [(2.0, 10.5), (6.0, 13.0), (9.0, 15.0)] {
+            let hit = w
+                .ground_at(Vec3::new(x, 30.0, z), 60.0)
+                .unwrap_or_else(|| panic!("no ground at ({x}, {z})"));
+            assert!(
+                hit.normal.dot(Vec3::Y) > 0.99,
+                "ground at ({x}, {z}) is not road-flat: {:?}",
+                hit.normal
+            );
+        }
+    }
+
+    #[test]
     fn blocks_stack_without_sharing_cells() {
         // One cube per anchor cell: a block directly atop another owns a
         // different cell, so a wall of blocks validates clean.
