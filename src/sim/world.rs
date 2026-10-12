@@ -489,16 +489,28 @@ impl TrackWorld {
 
             let def = catalog_by_id(inst.id);
             if def.is_boost {
+                // The pad spans the road, not its middle: a boost box one cell
+                // wide on a road nearly three across leaves the outer lanes
+                // driving over paint that does nothing.
                 let centre = piece_centre(doc, inst);
-                let half = Vec3::splat(doc.cell_size * 0.5);
-                let pad = Vec3::splat(1.0);
+                let world = instance_matrix(inst, doc);
+                let across = world.transform_vector3(Vec3::X).normalize_or_zero();
+                let facing = world.transform_vector3(Vec3::Z).normalize_or_zero();
+                let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
+                let span = shape.center.half_width + 1.0;
+                let along = doc.cell_size * 0.5 + 1.0;
+                let half = Vec3::new(
+                    across.x.abs() * span + facing.x.abs() * along,
+                    doc.cell_size * 0.5 + 1.0,
+                    across.z.abs() * span + facing.z.abs() * along,
+                );
                 boost_zones.push([
-                    (centre - half - pad).x,
-                    (centre - half - pad).y,
-                    (centre - half - pad).z,
-                    (centre + half + pad).x,
-                    (centre + half + pad).y,
-                    (centre + half + pad).z,
+                    (centre - half).x,
+                    (centre - half).y,
+                    (centre - half).z,
+                    (centre + half).x,
+                    (centre + half).y,
+                    (centre + half).z,
                 ]);
             }
         }
@@ -508,19 +520,27 @@ impl TrackWorld {
         // and several may share one number.
         let gate_for = |inst: &PieceInstance, index: usize, is_finish: bool| {
             let world = instance_matrix(inst, doc);
+            // A piece drives along its own local +Z, so the world
+            // direction it expects to be met from is that axis rotated
+            // by the instance. Never zero: the transform is a rotation
+            // about Y, so the axis keeps its length.
+            let facing = world.transform_vector3(Vec3::Z).normalize_or_zero();
+            // The trigger spans the road, not its middle: a gate one cell
+            // wide on a road nearly three across lets a kerb-hugging line
+            // miss it entirely, and on a wide road the miss is a lane wide.
+            let across = world.transform_vector3(Vec3::X).normalize_or_zero();
+            let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
+            let span = shape.center.half_width + 1.0;
+            let along = doc.cell_size * 0.5;
             Gate {
                 piece: inst.uid,
                 centre: piece_centre(doc, inst) + Vec3::new(0.0, doc.cell_size * 0.25, 0.0),
                 half: Vec3::new(
-                    doc.cell_size * 0.5,
+                    across.x.abs() * span + facing.x.abs() * along,
                     doc.cell_size * 0.75,
-                    doc.cell_size * 0.5,
+                    across.z.abs() * span + facing.z.abs() * along,
                 ),
-                // A piece drives along its own local +Z, so the world
-                // direction it expects to be met from is that axis rotated
-                // by the instance. Never zero: the transform is a rotation
-                // about Y, so the axis keeps its length.
-                facing: world.transform_vector3(Vec3::Z).normalize_or_zero(),
+                facing,
                 is_finish,
                 index,
             }
@@ -923,6 +943,48 @@ mod tests {
             .filter(|t| t.owner != PieceUid(0))
             .count();
         assert_eq!(owned, 3 * 12, "three cubes, twelve tris each");
+    }
+
+    #[test]
+    fn a_gate_catches_the_kerb_lines_not_just_the_middle() {
+        // A gate one cell wide on a road nearly three across lets a
+        // kerb-hugging line miss it entirely. Drive the gate's own facing at
+        // increasing lateral offsets: every paved lane must count, the grass
+        // past the kerb must not.
+        use retrackt_format::demo::ChainBuilder;
+        for wide in [false, true] {
+            let mut b = ChainBuilder::new("gates");
+            b.step(PieceId::Start, retrackt_format::PieceParams::default());
+            let mut params = retrackt_format::PieceParams::default();
+            params.wide = wide;
+            b.step(PieceId::Checkpoint, params);
+            b.step(PieceId::Finish, retrackt_format::PieceParams::default());
+            let doc = b.build();
+            let w = TrackWorld::from_doc(&doc);
+            let gate = w.checkpoints.first().expect("a checkpoint gate");
+            let half_road = if wide {
+                retrackt_format::WIDE_ROAD_HALF_CELLS * doc.cell_size
+            } else {
+                retrackt_format::ROAD_HALF_CELLS * doc.cell_size
+            };
+            let reach = doc.cell_size * 2.0;
+            let drive = |lateral: f32| {
+                gate.crossed(
+                    gate.centre - gate.facing * reach + Vec3::X * lateral,
+                    gate.centre + gate.facing * reach + Vec3::X * lateral,
+                )
+            };
+            assert!(drive(0.0), "wide={wide}: middle must count");
+            assert!(drive(half_road - 0.5), "wide={wide}: kerb line must count");
+            assert!(
+                drive(-(half_road - 0.5)),
+                "wide={wide}: other kerb line must count"
+            );
+            assert!(
+                !drive(half_road + 3.0),
+                "wide={wide}: grass past the kerb must not count"
+            );
+        }
     }
 
     #[test]
