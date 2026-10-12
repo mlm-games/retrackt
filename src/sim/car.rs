@@ -1529,16 +1529,29 @@ mod ground_tests {
         let world = TrackWorld::from_doc(&doc);
 
         // Ground well off the road, at the height the road itself runs at.
-        let (x, z) = (40.0f32, 200.0f32);
+        // Just off the road's edge, and close to it: far enough out that the
+        // terrain ring has not started, so this is the plain and not a mountain.
+        let (x, z) = (14.0f32, 20.0f32);
         let hit = world.ground_at(glam::Vec3::new(x, 20.0, z), 60.0);
         let on = world.ground_at(glam::Vec3::new(0.0, 20.0, 30.0), 60.0);
         assert!(hit.is_some(), "there is nothing to land on off the road");
+        // Below the road by the kerb's drop, plus the crown at most, and never
+        // further. The step has to be felt so that leaving the road is visible,
+        // and small enough that the car climbs back on. The test this replaces
+        // demanded the two be level, which made the edge of the road nothing at
+        // all; this one allows for the road being crowned, so the road is
+        // measured where the lip is rather than at its centre.
+        let lip = crate::sim::world::GROUND_DROP;
+        let below = on.unwrap().point.y - hit.unwrap().point.y;
         assert!(
-            (hit.unwrap().point.y - on.unwrap().point.y).abs() < 1e-3,
-            "the plain must not sit below the road: {:?} vs {:?}",
-            hit.map(|h| h.point.y),
-            on.map(|h| h.point.y)
+            below >= lip - 1e-3 && below <= lip + 0.1,
+            "the plain should sit {lip} m below the road's edge, got {below}"
         );
+
+        // The lip itself is a real thing: a ray across the road's edge meets a
+        // face standing above the surface.
+        let edge = world.ground_at(glam::Vec3::new(x + 0.0, 20.0, z + 2.0), 60.0);
+        assert!(edge.is_some(), "there is nothing at the road's edge either");
 
         // And a car driven off the side keeps driving on it.
         let mut car = fresh(&world);

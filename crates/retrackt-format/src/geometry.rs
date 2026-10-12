@@ -6,6 +6,7 @@
 //! cells of ramp rise `n/2` cell edges.
 
 use glam::{Quat, Vec3};
+use std::f32::consts::TAU;
 
 use crate::piece::{GridDir, PieceId, PieceParams, catalog_by_id, resolve_params};
 use crate::{KERB_HEIGHT, ROAD_HALF_CELLS};
@@ -510,16 +511,20 @@ fn ribbon(c: &Centerline, half: f32, kerb: f32) -> (RawMesh, RawMesh) {
         let r1 = t1.cross(n1).normalize_or_zero();
         let (l0, rr0) = (p0 - r0 * half, p0 + r0 * half);
         let (l1, rr1) = (p1 - r1 * half, p1 + r1 * half);
-        push_quad(
-            &mut flat,
-            l0.to_array(),
-            rr0.to_array(),
-            rr1.to_array(),
-            l1.to_array(),
-            n0.to_array(),
-        );
+        // The road's cross-section: a shallow crown, so the surface curves
+        // instead of being one flat quad. Sampled across the width and extruded
+        // along the span, with each strip carrying its own normal taken from the
+        // slope it actually has. Without it the road reads as a flat sheet and
+        // its edges as the crease where the sheet stops.
+        crowned_run(&mut flat, l0, rr0, l1, rr1, n0, n1);
+
         if kerb > 0.0 {
-            for (a, b, sign) in [(l0, l1, -1.0), (rr0, rr1, 1.0)] {
+            for ((side0, side1), sign) in [((l0, l1), -1.0), ((rr0, rr1), 1.0)] {
+                // The lip stands clear of the road by the kerb's own height, so
+                // it is something you can see from the side and something the
+                // car meets, rather than a wall of zero thickness drawn on the
+                // edge column itself.
+                let (a, b) = (side0 + r0 * sign * kerb, side1 + r1 * sign * kerb);
                 let face = (r0 * sign).to_array();
                 stripe_wall(
                     &mut walls,
@@ -528,6 +533,16 @@ fn ribbon(c: &Centerline, half: f32, kerb: f32) -> (RawMesh, RawMesh) {
                     (c.arc[i], c.arc[i + 1]),
                     kerb,
                     face,
+                );
+                // A cap between the road edge and the lip, so the edge is closed
+                // and does not show the inside of the surface.
+                push_quad(
+                    &mut walls,
+                    side0.to_array(),
+                    a.to_array(),
+                    b.to_array(),
+                    side1.to_array(),
+                    (n0 + n1).normalize().to_array(),
                 );
             }
         }
@@ -557,6 +572,56 @@ fn ribbon(c: &Centerline, half: f32, kerb: f32) -> (RawMesh, RawMesh) {
         }
     }
     (flat, walls)
+}
+
+/// Road surface between two edges, crowned.
+///
+/// Sampled across the width rather than drawn as one quad from edge to edge: the
+/// centre rides a fraction of a cell above the edges, and each strip carries the
+/// normal its own slope gives it. One flat quad puts every vertex on one normal,
+/// which is why a road built that way reads as a flat sheet with a crease at
+/// each edge.
+fn crowned_run(out: &mut RawMesh, l0: Vec3, r0: Vec3, l1: Vec3, r1: Vec3, n0: Vec3, n1: Vec3) {
+    /// Strips across the width. Enough for the crown to read as a curve rather
+    /// than as a tent, few enough to stay cheap: every strip is a quad of road.
+    const STRIPS: usize = 5;
+
+    for strip in 0..STRIPS {
+        let (a, b) = (
+            strip as f32 / STRIPS as f32,
+            (strip + 1) as f32 / STRIPS as f32,
+        );
+        let (pa, pb) = (l0.lerp(r0, a), l0.lerp(r0, b));
+        let (qa, qb) = (l1.lerp(r1, a), l1.lerp(r1, b));
+        let ca = n0 * crown_height(a) + pa;
+        let cb = n0 * crown_height(b) + pb;
+        let da = n1 * crown_height(a) + qa;
+        let db = n1 * crown_height(b) + qb;
+        // The strip's own normal: from the slope across the width, not the flat
+        // surface normal it replaces.
+        let along = (db - ca).normalize_or_zero();
+        let across = (cb - ca).normalize_or_zero();
+        let n = along.cross(across).normalize_or_zero();
+        let n = if n.dot(n0) < 0.0 { -n } else { n };
+        push_quad(
+            out,
+            ca.to_array(),
+            cb.to_array(),
+            db.to_array(),
+            da.to_array(),
+            n.to_array(),
+        );
+    }
+}
+
+/// How far above its edge a point this far across the road sits.
+fn crown_height(across: f32) -> f32 {
+    /// Height of the crown at the centre, as a fraction of the road width.
+    const CROWN: f32 = 0.02;
+    // A parabola peaking at the middle and zero at both edges, so the crown
+    // meets the edges level and there is no step where the road stops.
+    let t = across * 2.0 - 1.0;
+    CROWN * ROAD_HALF_CELLS * 2.0 * (1.0 - t * t)
 }
 
 /// Kerb stripe period along the arc. The wall mesh bakes the stripe parity
@@ -1251,5 +1316,129 @@ mod tests {
         };
         let out = mesh.transformed(glam::Mat4::IDENTITY, [0.5, 1.0, 0.5]);
         assert_eq!(out.colors, vec![[0.5, 0.5, 0.125]; 3]);
+    }
+}
+
+/// A terrain ring standing between the plain and the sky.
+///
+/// The same triangles are used by the scene and by the collision world, because
+/// a mountain you can see but not touch is a mountain you drive through: the
+/// reference game hands its range to the physics as well as to the renderer.
+///
+/// Heights come from a fixed generator, so the range is the same range on every
+/// load, and the inner edge is held flat so the track opens onto the plain.
+/// Triangles are returned flat-shaded, as `(a, b, c, normal)` in world metres.
+pub fn mountain_triangles(
+    bounds: ([f32; 3], [f32; 3]),
+    inner_hint: f32,
+) -> Vec<([f32; 3], [f32; 3], [f32; 3], [f32; 3])> {
+    /// Height bands, and how far out each sits. Metres, so a range reads as a
+    /// range against a track a hundred metres long.
+    const BANDS: usize = 8;
+    const STEP: f32 = 100.0;
+    const SCALE: f32 = 100.0;
+    const MIN_INNER: f32 = 100.0;
+    const MAX_INNER: f32 = 1700.0;
+
+    let (lo, hi) = bounds;
+    let centre = [(lo[0] + hi[0]) * 0.5, 0.0, (lo[2] + hi[2]) * 0.5];
+    let half = (hi[0] - lo[0]).max(hi[2] - lo[2]).max(1.0) * 0.5;
+    let inner = (MIN_INNER + half)
+        .max(MIN_INNER + inner_hint)
+        .min(MAX_INNER);
+    if inner >= MAX_INNER {
+        return Vec::new();
+    }
+    // One column per tenth of the inner radius, so the ring is smooth however
+    // large the track is.
+    let columns = (inner * 0.1).max(8.0) as usize;
+
+    let mut noise = crate::geometry::Noise::new(0x2545_F491);
+    let profiles: Vec<[f32; BANDS]> = (0..columns)
+        .map(|_| {
+            let mut row = [0.0f32; BANDS];
+            let (phase, frequency) = (noise.unit() * TAU, 1.0 + noise.unit() * 2.0);
+            let (phase2, frequency2) = (noise.unit() * TAU, 3.0 + noise.unit() * 4.0);
+            let mut peak = 0.0f32;
+            for (band, slot) in row.iter_mut().enumerate() {
+                let u = band as f32 / (BANDS - 1) as f32;
+                let v = (u * frequency * TAU + phase).sin() * 0.6
+                    + (u * frequency2 * TAU + phase2).sin() * 0.4;
+                *slot = v.max(0.0);
+                peak = peak.max(*slot);
+            }
+            row[0] = 0.0;
+            row[BANDS - 1] = 0.0;
+            if peak > 1e-4 {
+                for v in row.iter_mut() {
+                    *v /= peak;
+                }
+            }
+            row
+        })
+        .collect();
+
+    let at = |angle: f32, radius: f32, height: f32| {
+        [
+            centre[0] + angle.cos() * radius,
+            height * SCALE,
+            centre[2] + angle.sin() * radius,
+        ]
+    };
+    let mut out = Vec::new();
+    for column in 0..columns {
+        let t = TAU * column as f32 / columns as f32;
+        let u = TAU * ((column + 1) % columns) as f32 / columns as f32;
+        for band in 0..BANDS - 1 {
+            let r0 = inner + STEP * band as f32;
+            let r1 = inner + STEP * (band + 1) as f32;
+            let (h0, h1) = (profiles[column][band], profiles[column][band + 1]);
+            let (h2, h3) = (
+                profiles[(column + 1) % columns][band],
+                profiles[(column + 1) % columns][band + 1],
+            );
+            let (a, b, c, d) = (at(t, r0, h0), at(u, r0, h2), at(u, r1, h3), at(t, r1, h1));
+            out.push(tri(a, b, c));
+            out.push(tri(a, c, d));
+        }
+    }
+    out
+}
+
+/// One triangle with its outward normal.
+fn tri(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> ([f32; 3], [f32; 3], [f32; 3], [f32; 3]) {
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let n = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    let n = if len < 1e-6 {
+        [0.0, 1.0, 0.0]
+    } else {
+        [n[0] / len, n[1] / len, n[2] / len]
+    };
+    (a, b, c, n)
+}
+
+/// Fixed-seed generator. The range has to be the same range on every load, or a
+/// saved run's background differs from the run it was recorded against.
+pub struct Noise {
+    state: u32,
+}
+
+impl Noise {
+    pub fn new(seed: u32) -> Self {
+        Self { state: seed | 1 }
+    }
+
+    /// Uniform in 0..1.
+    pub fn unit(&mut self) -> f32 {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 17;
+        self.state ^= self.state << 5;
+        self.state as f32 / u32::MAX as f32
     }
 }

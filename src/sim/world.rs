@@ -11,6 +11,26 @@ use retrackt_format::{
     piece::catalog_by_id,
 };
 
+/// World bounds of the track's own geometry, for the terrain ring to sit around.
+fn bounds_of(doc: &TrackDocument) -> ([f32; 3], [f32; 3]) {
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for inst in &doc.pieces {
+        let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
+        let m = inst.world_matrix(doc.cell_size);
+        for p in &shape.center.pos {
+            let w = m.transform_point3(glam::Vec3::from(*p));
+            for a in 0..3 {
+                lo[a] = lo[a].min(w[a]);
+                hi[a] = hi[a].max(w[a]);
+            }
+        }
+    }
+    if lo[0] > hi[0] {
+        return ([0.0; 3], [0.0; 3]);
+    }
+    (lo, hi)
+}
+
 /// One surface triangle with an outward normal.
 #[derive(Clone, Copy, Debug)]
 pub struct Triangle {
@@ -25,6 +45,9 @@ pub struct Triangle {
 /// Half-width of the plain in the collision world. Far past the renderer's far
 /// plane, so a car that wanders always finds ground rather than an edge.
 pub const GROUND_REACH: f32 = 8000.0;
+/// How far below the road the plain sits. A kerb's worth: enough that leaving the
+/// road is felt and seen, little enough that the car climbs back on.
+pub const GROUND_DROP: f32 = 0.25;
 
 impl Triangle {
     #[inline]
@@ -438,6 +461,32 @@ impl TrackWorld {
                 });
             }
 
+            // The kerbs and walls too, not just the road surface. Without them
+            // the edges of the road are painted on: the car drives through a kerb
+            // it can see, and a barrier offers no resistance.
+            for (a, b, c, n) in shape.decor.triangles() {
+                let (ta, tb, tc) = (
+                    world.transform_point3(Vec3::from(a)),
+                    world.transform_point3(Vec3::from(b)),
+                    world.transform_point3(Vec3::from(c)),
+                );
+                // The decor mesh is built by pushing quads and it leaves some
+                // with a collapsed edge where two segments meet. They carry no
+                // area and so no collision, but they do make the grid bucket
+                // work for nothing and trip the no-degenerate invariant.
+                if (tb - ta).cross(tc - ta).length() < 1e-6 {
+                    continue;
+                }
+                let n = world.transform_vector3(Vec3::from(n)).normalize_or_zero();
+                triangles.push(Triangle {
+                    a: ta,
+                    b: tb,
+                    c: tc,
+                    normal: n,
+                    owner: inst.uid,
+                });
+            }
+
             let def = catalog_by_id(inst.id);
             if def.is_boost {
                 let centre = piece_centre(doc, inst);
@@ -502,10 +551,16 @@ impl TrackWorld {
         // height is the road's own lowest point, so the plain never cuts through
         // the track, and it reaches far past the far plane so its edge is never
         // inside the view.
-        let ground_y = triangles
+        // A little below the road, not level with it. Level with it means the
+        // plain and the road are one surface and the edge of the road is nothing:
+        // a kerb is the only cue that the car has left the road, and a car drives
+        // off it without knowing. The reference's road stands a fifth of a metre
+        // over its ground for the same reason.
+        let road_y = triangles
             .iter()
             .flat_map(|t| [t.a.y, t.b.y, t.c.y])
             .fold(f32::INFINITY, f32::min);
+        let ground_y = road_y - GROUND_DROP;
         if ground_y.is_finite() {
             let reach = GROUND_REACH.max(doc.cell_size * 64.0);
             let (a, b, c) = (
@@ -525,6 +580,18 @@ impl TrackWorld {
                 b: c,
                 c: Vec3::new(-reach, ground_y, reach),
                 normal: Vec3::Y,
+                owner: PieceUid(0),
+            });
+        }
+
+        // The terrain range, as something to hit. Same triangles the scene draws,
+        // so a mountain is solid exactly where it is visible.
+        for (a, b, c, n) in retrackt_format::geometry::mountain_triangles(bounds_of(doc), 0.0) {
+            triangles.push(Triangle {
+                a: Vec3::from(a),
+                b: Vec3::from(b),
+                c: Vec3::from(c),
+                normal: Vec3::from(n),
                 owner: PieceUid(0),
             });
         }
