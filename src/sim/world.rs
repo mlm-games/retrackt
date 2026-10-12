@@ -788,6 +788,43 @@ mod tests {
     }
 
     #[test]
+    fn scenery_collides_but_never_warns() {
+        // Props are placed, not chained: a pillar beside the road and a sign
+        // further on must end up solid in the collision world without the
+        // validator reporting either as standing free.
+        let mut b = retrackt_format::ChainBuilder::new("scenery");
+        b.step(PieceId::Start, retrackt_format::PieceParams::default());
+        b.step(PieceId::Straight, retrackt_format::PieceParams::default());
+        b.step(PieceId::Finish, retrackt_format::PieceParams::default());
+        b.step(PieceId::Pillar, retrackt_format::PieceParams::default());
+        b.step(PieceId::Sign, retrackt_format::PieceParams::default());
+        let doc = b.build();
+
+        let diagnostics = retrackt_format::validate(&doc);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.message.contains("standing free")),
+            "scenery is placed, not chained: {:?}",
+            diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+
+        let w = TrackWorld::from_doc(&doc);
+        for id in [PieceId::Pillar, PieceId::Sign] {
+            let uid = doc.pieces.iter().find(|p| p.id == id).unwrap().uid;
+            let owned: Vec<_> = w.triangles.iter().filter(|t| t.owner == uid).collect();
+            assert!(!owned.is_empty(), "{id:?}: no collision triangles");
+            for t in &owned {
+                assert!(t.area() > 1e-4, "{id:?}: degenerate triangle");
+                assert!(
+                    (t.normal.length() - 1.0).abs() < 1e-3,
+                    "{id:?}: normal not unit"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn gates_come_out_in_race_order_not_uid_order() {
         for doc in builtin_tracks() {
             let w = TrackWorld::from_doc(&doc);
@@ -987,7 +1024,7 @@ mod tests {
                     // solid road, so there is nothing to stand on there.
                     continue;
                 }
-                if inst.id == PieceId::Wall {
+                if inst.id.is_scenery() {
                     continue;
                 }
                 let c = piece_centre(&doc, inst);

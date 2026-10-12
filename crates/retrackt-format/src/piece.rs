@@ -150,10 +150,14 @@ pub enum PieceId {
     Boost = 12,
     Finish = 13,
     Wall = 14,
+    /// A free-standing support column. Decor only, like a wall.
+    Pillar = 15,
+    /// A trackside sign board on a post. Decor only, like a wall.
+    Sign = 16,
 }
 
 impl PieceId {
-    pub const ALL: [PieceId; 15] = [
+    pub const ALL: [PieceId; 17] = [
         Self::Start,
         Self::Straight,
         Self::CurveRight90,
@@ -169,6 +173,8 @@ impl PieceId {
         Self::Boost,
         Self::Finish,
         Self::Wall,
+        Self::Pillar,
+        Self::Sign,
     ];
 
     pub fn as_u16(self) -> u16 {
@@ -195,6 +201,8 @@ impl PieceId {
             Self::Boost => "Boost",
             Self::Finish => "Finish",
             Self::Wall => "Wall",
+            Self::Pillar => "Pillar",
+            Self::Sign => "Sign",
             Self::SCurve => "S Curve",
         }
     }
@@ -215,13 +223,20 @@ impl PieceId {
             Self::RampUp | Self::RampDown => "Slopes",
             Self::BankLeft | Self::BankRight => "Banks",
             Self::Loop => "Stunts",
-            Self::Wall => "Props",
+            Self::Wall | Self::Pillar | Self::Sign => "Props",
         }
     }
 
-    /// Pieces the car physically drives on. `Wall` is decor only.
+    /// Pieces that are dressing, not road: no drivable surface, no ports, no
+    /// place in the chain. A wall is the original; a pillar holds a road up
+    /// and a sign stands beside one, and neither is ever driven on.
+    pub fn is_scenery(self) -> bool {
+        matches!(self, Self::Wall | Self::Pillar | Self::Sign)
+    }
+
+    /// Pieces the car physically drives on. Scenery is decor only.
     pub fn is_driveable(self) -> bool {
-        !matches!(self, Self::Wall)
+        !self.is_scenery()
     }
 
     /// Pieces whose shape is a slope: the steepness knob means something to
@@ -237,7 +252,12 @@ impl PieceId {
     pub fn has_length(self) -> bool {
         !matches!(
             self,
-            Self::CurveRight90 | Self::CurveLeft90 | Self::Curve180 | Self::Loop | Self::SCurve
+            Self::CurveRight90
+                | Self::CurveLeft90
+                | Self::Curve180
+                | Self::Loop
+                | Self::SCurve
+                | Self::Sign
         )
     }
 
@@ -433,6 +453,28 @@ pub const CATALOG: &[PieceDef] = &[
     PieceDef {
         id: PieceId::Wall,
         default_length_cells: 4,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::Pillar,
+        default_length_cells: 2,
+        default_radius_cells: 0,
+        default_bank_deg: 0,
+        default_slope_deg: 0,
+        is_start: false,
+        is_finish: false,
+        is_checkpoint: false,
+        is_boost: false,
+    },
+    PieceDef {
+        id: PieceId::Sign,
+        default_length_cells: 1,
         default_radius_cells: 0,
         default_bank_deg: 0,
         default_slope_deg: 0,

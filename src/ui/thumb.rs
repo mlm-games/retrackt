@@ -20,7 +20,7 @@ type Plan = (i16, i16);
 
 /// Cell colours, chosen to match the world so a thumbnail and the scene it
 /// summarises agree: road grey, checkpoint cyan, finish orange, boost yellow,
-/// start orange, wall near-black.
+/// start orange, pillar concrete, sign white, wall near-black.
 fn cell_color(id: PieceId) -> Color {
     let def = catalog_by_id(id);
     let hex = if def.is_start {
@@ -33,6 +33,10 @@ fn cell_color(id: PieceId) -> Color {
         0xFFD23F
     } else if id == PieceId::Wall {
         0x2E333B
+    } else if id == PieceId::Pillar {
+        0x565D66
+    } else if id == PieceId::Sign {
+        0xE8EAED
     } else {
         0x9BA1A9
     };
@@ -219,6 +223,8 @@ mod tests {
             PieceId::Finish,
             PieceId::Boost,
             PieceId::Wall,
+            PieceId::Pillar,
+            PieceId::Sign,
         ] {
             assert_ne!(cell_color(id), road, "{id:?} must be told apart from road");
         }

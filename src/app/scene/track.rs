@@ -202,7 +202,7 @@ fn kerb_palette(decor: &mut RawMesh) {
 }
 
 fn piece_paint(id: PieceId, cell: f32, c: &Centerline, out: &mut RawMesh) {
-    if c.is_empty() || id == PieceId::Wall {
+    if c.is_empty() || id.is_scenery() {
         return;
     }
     edge_lines(c, out);

@@ -408,6 +408,28 @@ pub fn piece_centerline(id: PieceId, params: &PieceParams, cell: f32) -> Centerl
             });
             c.skip = true;
         }
+
+        PieceId::Pillar => {
+            // Not drivable: a support column standing on its anchor cell. The
+            // length knob is its height, so one piece props up a road at any
+            // elevation instead of a stack of fixed blocks.
+            c.half_width = cell * 0.15;
+            push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
+                (Vec3::new(0.0, u * l, 0.0), Vec3::Y, Vec3::Z)
+            });
+            c.skip = true;
+        }
+
+        PieceId::Sign => {
+            // Not drivable: a trackside board on a post. Fixed size, turned by
+            // yaw to face the road it belongs to.
+            c.half_width = cell * 0.4;
+            let h = cell * 0.65;
+            push_segment(&mut c, STRAIGHT_SEGMENTS, |u| {
+                (Vec3::new(0.0, u * h, 0.0), Vec3::Y, Vec3::Z)
+            });
+            c.skip = true;
+        }
     }
 
     c
@@ -442,21 +464,29 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
     let half = center.half_width;
     let has_guide = !center.skip && !center.is_empty();
 
-    // Ride width of a drivable road: the cell edge. Walls are thin.
+    // Ride width of a drivable road: the cell edge. Scenery is decor only:
+    // nothing to drive on, just something to see and to hit.
     let (surface, decor) = match id {
-        // A wall is decor only: nothing to drive on, just a barrier. Its
-        // centre line carries its own thin half-width, so reuse that.
+        // A wall is a thin upright barrier; its centre line carries its own
+        // thin half-width, so reuse that.
         PieceId::Wall => (
             RawMesh::default(),
             ribbon(&center, center.half_width, KERB_HEIGHT * 3.0).1,
         ),
+        // A pillar is a solid column standing on its anchor cell.
+        PieceId::Pillar => (
+            RawMesh::default(),
+            pillar_mesh(cell, resolve_params(id, params).0),
+        ),
+        // A sign is a post with a board on top, facing local +Z.
+        PieceId::Sign => (RawMesh::default(), sign_mesh(cell)),
         _ => {
             let (a, b) = ribbon(&center, half, KERB_HEIGHT);
             (a, b)
         }
     };
 
-    let ports = if id == PieceId::Wall {
+    let ports = if id.is_scenery() {
         Vec::new()
     } else {
         entry_exit_ports(&center, cell)
@@ -465,7 +495,14 @@ pub fn piece_shape(id: PieceId, params: &PieceParams, cell: f32) -> PieceShape {
     let (reserve_min, reserve_max) = reserve_box(&center, cell);
     // Centre line only: widening by the half-width would claim the cells just
     // outside the kerb, falsely colliding pieces at their shared join row.
-    let occupied = occupied_cells(&center, cell, &ports);
+    let mut occupied = occupied_cells(&center, cell, &ports);
+    if id == PieceId::Pillar {
+        // The top cell is the road's, not the pillar's: the column props it,
+        // and counting it flags every supported road as an overlap.
+        if let Some(top) = occupied.iter().map(|c| c[1]).max() {
+            occupied.retain(|c| c[1] != top);
+        }
+    }
 
     PieceShape {
         surface,
@@ -707,6 +744,100 @@ fn push_quad(m: &mut RawMesh, a: [f32; 3], b: [f32; 3], c: [f32; 3], d: [f32; 3]
     m.colors.extend_from_slice(&[[1.0; 3]; 4]);
     m.indices
         .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+/// One axis-aligned solid, wound outward. Corners are absolute local metres.
+fn push_box(m: &mut RawMesh, min: [f32; 3], max: [f32; 3]) {
+    let (x0, y0, z0) = (min[0], min[1], min[2]);
+    let (x1, y1, z1) = (max[0], max[1], max[2]);
+    push_quad(
+        m,
+        [x0, y1, z0],
+        [x0, y1, z1],
+        [x1, y1, z1],
+        [x1, y1, z0],
+        [0.0, 1.0, 0.0],
+    );
+    push_quad(
+        m,
+        [x0, y0, z0],
+        [x1, y0, z0],
+        [x1, y0, z1],
+        [x0, y0, z1],
+        [0.0, -1.0, 0.0],
+    );
+    push_quad(
+        m,
+        [x1, y0, z1],
+        [x1, y0, z0],
+        [x1, y1, z0],
+        [x1, y1, z1],
+        [1.0, 0.0, 0.0],
+    );
+    push_quad(
+        m,
+        [x0, y0, z0],
+        [x0, y0, z1],
+        [x0, y1, z1],
+        [x0, y1, z0],
+        [-1.0, 0.0, 0.0],
+    );
+    push_quad(
+        m,
+        [x0, y0, z1],
+        [x1, y0, z1],
+        [x1, y1, z1],
+        [x0, y1, z1],
+        [0.0, 0.0, 1.0],
+    );
+    push_quad(
+        m,
+        [x1, y0, z0],
+        [x0, y0, z0],
+        [x0, y1, z0],
+        [x1, y1, z0],
+        [0.0, 0.0, -1.0],
+    );
+}
+
+/// A pillar's decor: one solid column on its anchor cell, `tall` cells high.
+///
+/// Quads are tagged dark, which the scene reads as the pale kerb colour: a
+/// support column in warning red would read as a barrier, and it is not one.
+fn pillar_mesh(cell: f32, tall: u8) -> RawMesh {
+    let mut m = RawMesh::default();
+    let w = cell * 0.15;
+    push_box(&mut m, [-w, 0.0, -w], [w, f32::from(tall) * cell, w]);
+    for quad in m.colors.chunks_mut(4) {
+        quad.fill([0.0; 3]);
+    }
+    m
+}
+
+/// A sign's decor: a post with a board on top, facing local +Z.
+///
+/// The board is tagged light and the post dark, which the scene reads as a
+/// red board on a pale post: the reference's warning signs, without a texture.
+fn sign_mesh(cell: f32) -> RawMesh {
+    let mut m = RawMesh::default();
+    let post = cell * 0.04;
+    let post_top = cell * 0.35;
+    push_box(&mut m, [-post, 0.0, -post], [post, post_top, post]);
+    let board_w = cell * 0.4;
+    let board_h = cell * 0.15;
+    let board = m.positions.len() / 4;
+    push_box(
+        &mut m,
+        [-board_w, post_top, -post],
+        [board_w, post_top + board_h * 2.0, post],
+    );
+    for quad in m.colors.chunks_mut(4).skip(board) {
+        quad.fill([1.0; 3]);
+    }
+    for quad in m.colors.chunks_mut(4).take(board) {
+        quad.fill([0.0; 3]);
+    }
+    m
 }
 
 /// Entry and exit ports, quantised from the centre curve's endpoints. Every
@@ -1015,6 +1146,56 @@ mod tests {
         assert!(!shape.decor.is_empty(), "wall still renders");
         assert!(shape.ports.is_empty());
         assert!(!shape.has_guide);
+    }
+
+    #[test]
+    fn scenery_pieces_are_decor_only_with_no_ports() {
+        // A pillar holds a road up and a sign stands beside one: neither is
+        // driven on, neither joins the chain, and both still render and
+        // collide through their decor.
+        for id in [PieceId::Pillar, PieceId::Sign] {
+            let shape = piece_shape(id, &PieceParams::default(), C);
+            assert!(shape.surface.is_empty(), "{id:?} has no drive surface");
+            assert!(!shape.decor.is_empty(), "{id:?} still renders");
+            assert!(shape.ports.is_empty(), "{id:?} joins nothing");
+            assert!(!shape.has_guide, "{id:?} is not a rail");
+            assert!(!id.is_driveable());
+            for (a, b, c, n) in shape.decor.triangles() {
+                let (a, b, c, n) = (Vec3::from(a), Vec3::from(b), Vec3::from(c), Vec3::from(n));
+                let area = (b - a).cross(c - a).length();
+                assert!(area > 1e-6, "{id:?}: degenerate decor triangle");
+                assert!(
+                    (n.length() - 1.0).abs() < 1e-3,
+                    "{id:?}: decor normal not unit"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_pillar_grows_with_its_length_and_yields_its_top_cell() {
+        // The length knob is the column's height: one piece props up a road
+        // at any elevation instead of a stack of fixed blocks.
+        let short = piece_shape(PieceId::Pillar, &PieceParams::default().length(1), C);
+        let tall = piece_shape(PieceId::Pillar, &PieceParams::default().length(3), C);
+        let height = |shape: &PieceShape| {
+            let (lo, hi) = shape.decor.bounds().unwrap();
+            hi[1] - lo[1]
+        };
+        assert!((height(&tall) - 3.0 * height(&short)).abs() < 1e-3);
+        // The top cell is the road's: counting it flags every supported road
+        // as an overlap.
+        let top = tall.occupied.iter().map(|c| c[1]).max().unwrap();
+        assert!(top < 3, "pillar of 3 must not occupy its third cell row");
+    }
+
+    #[test]
+    fn a_sign_is_a_board_on_a_post_not_a_wall() {
+        let shape = piece_shape(PieceId::Sign, &PieceParams::default(), C);
+        let (lo, hi) = shape.decor.bounds().unwrap();
+        assert!(hi[0] - lo[0] < C, "board wider than its cell");
+        assert!(hi[2] - lo[2] < hi[0] - lo[0], "board deeper than wide");
+        assert!(hi[1] - lo[1] > C * 0.5, "sign shorter than a car is long");
     }
 
     /// A jump is road, then nothing, then road: the gap is the absence of
