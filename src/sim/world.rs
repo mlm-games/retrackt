@@ -365,6 +365,65 @@ pub struct TrackWorld {
     grid: Option<Grid>,
 }
 
+/// How big a trigger on a piece is, and which way it faces.
+///
+/// Gates and boost pads both want the same three facts: how wide the road is
+/// here, which way is across it, and which way the piece is driven. They also
+/// want them the same way, or a pad and a gate on the same piece disagree about
+/// where the road ends.
+struct RoadFrame {
+    centre: Vec3,
+    across: Vec3,
+    facing: Vec3,
+    span: f32,
+    along: f32,
+}
+
+impl RoadFrame {
+    fn of(inst: &PieceInstance, doc: &TrackDocument) -> Self {
+        let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
+        let world = instance_matrix(inst, doc);
+        Self {
+            centre: piece_centre(doc, inst),
+            // A piece drives along its own local +Z, so that axis rotated by the
+            // instance is the direction it expects to be met from, and local +X
+            // runs across the road. Never zero: the transform is a rotation
+            // about Y, so each axis keeps its length.
+            across: world.transform_vector3(Vec3::X).normalize_or_zero(),
+            facing: world.transform_vector3(Vec3::Z).normalize_or_zero(),
+            span: shape.center.half_width,
+            along: doc.cell_size * 0.5,
+        }
+    }
+
+    /// Half-extent of a box spanning the road.
+    ///
+    /// Axis-aligned, so a piece turned on the grid still triggers from every
+    /// side. `widen` and `reach` grow it past the road edge and past the ends of
+    /// the piece; `tall` is its own half-height, which has nothing to do with
+    /// either because the road is flat across.
+    fn extent(&self, widen: f32, reach: f32, tall: f32) -> Vec3 {
+        let (span, along) = (self.span + widen, self.along + reach);
+        Vec3::new(
+            self.across.x.abs() * span + self.facing.x.abs() * along,
+            tall,
+            self.across.z.abs() * span + self.facing.z.abs() * along,
+        )
+    }
+
+    /// The same box as the six numbers the simulation keeps a boost pad in.
+    fn min_max(&self, half: Vec3) -> [f32; 6] {
+        [
+            self.centre.x - half.x,
+            self.centre.y - half.y,
+            self.centre.z - half.z,
+            self.centre.x + half.x,
+            self.centre.y + half.y,
+            self.centre.z + half.z,
+        ]
+    }
+}
+
 /// A checkpoint or finish trigger.
 #[derive(Clone, Copy, Debug)]
 pub struct Gate {
@@ -500,26 +559,8 @@ impl TrackWorld {
                 // The pad spans the road, not its middle: a boost box one cell
                 // wide on a road nearly three across leaves the outer lanes
                 // driving over paint that does nothing.
-                let centre = piece_centre(doc, inst);
-                let world = instance_matrix(inst, doc);
-                let across = world.transform_vector3(Vec3::X).normalize_or_zero();
-                let facing = world.transform_vector3(Vec3::Z).normalize_or_zero();
-                let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
-                let span = shape.center.half_width + 1.0;
-                let along = doc.cell_size * 0.5 + 1.0;
-                let half = Vec3::new(
-                    across.x.abs() * span + facing.x.abs() * along,
-                    doc.cell_size * 0.5 + 1.0,
-                    across.z.abs() * span + facing.z.abs() * along,
-                );
-                boost_zones.push([
-                    (centre - half).x,
-                    (centre - half).y,
-                    (centre - half).z,
-                    (centre + half).x,
-                    (centre + half).y,
-                    (centre + half).z,
-                ]);
+                let frame = RoadFrame::of(inst, doc);
+                boost_zones.push(frame.min_max(frame.extent(1.0, 1.0, doc.cell_size * 0.5 + 1.0)));
             }
         }
 
@@ -527,29 +568,16 @@ impl TrackWorld {
         // above: a checkpoint's place in the run is something the author sets,
         // and several may share one number.
         let gate_for = |inst: &PieceInstance, index: usize, is_finish: bool| {
-            let world = instance_matrix(inst, doc);
-            // A piece drives along its own local +Z, so the world
-            // direction it expects to be met from is that axis rotated
-            // by the instance. Never zero: the transform is a rotation
-            // about Y, so the axis keeps its length.
-            let facing = world.transform_vector3(Vec3::Z).normalize_or_zero();
+            let frame = RoadFrame::of(inst, doc);
             // The trigger spans the driving surface edge to edge, like the
             // reference's 10.5 m gate on its 11.1 m surface: every paved lane
             // counts, while a line ridden along the barrier tops misses, as it
             // should, the car being fully off the road.
-            let across = world.transform_vector3(Vec3::X).normalize_or_zero();
-            let shape = piece_shape(inst.id, &inst.params, doc.cell_size);
-            let span = shape.center.half_width;
-            let along = doc.cell_size * 0.5;
             Gate {
                 piece: inst.uid,
-                centre: piece_centre(doc, inst) + Vec3::new(0.0, doc.cell_size * 0.25, 0.0),
-                half: Vec3::new(
-                    across.x.abs() * span + facing.x.abs() * along,
-                    doc.cell_size * 0.75,
-                    across.z.abs() * span + facing.z.abs() * along,
-                ),
-                facing,
+                centre: frame.centre + Vec3::new(0.0, doc.cell_size * 0.25, 0.0),
+                half: frame.extent(0.0, 0.0, doc.cell_size * 0.75),
+                facing: frame.facing,
                 is_finish,
                 index,
             }
@@ -989,6 +1017,47 @@ mod tests {
                 !drive(half_road + 3.0),
                 "wide={wide}: grass past the kerb must not count"
             );
+        }
+    }
+
+    #[test]
+    fn a_boost_pad_covers_the_whole_road_not_its_middle() {
+        // The same failure a narrow gate has, and the one the pad's size is
+        // actually for: a box drawn around the middle of the road leaves the
+        // outer lanes driving over paint that does nothing. Checked against the
+        // kerb lines rather than the centre, because the centre is inside a box
+        // of any width at all.
+        use retrackt_format::demo::ChainBuilder;
+        for wide in [false, true] {
+            let mut b = ChainBuilder::new("boost width");
+            b.step(PieceId::Start, retrackt_format::PieceParams::default());
+            let mut params = retrackt_format::PieceParams::default();
+            params.wide = wide;
+            b.step(PieceId::Boost, params);
+            b.step(PieceId::Finish, retrackt_format::PieceParams::default());
+            let doc = b.build();
+            let w = TrackWorld::from_doc(&doc);
+            let pad = *w.boost_zones.first().expect("a boost pad");
+            let half_road = if wide {
+                retrackt_format::WIDE_ROAD_HALF_CELLS * doc.cell_size
+            } else {
+                retrackt_format::ROAD_HALF_CELLS * doc.cell_size
+            };
+            let mid = Vec3::new(
+                (pad[0] + pad[3]) * 0.5,
+                (pad[1] + pad[4]) * 0.5,
+                (pad[2] + pad[5]) * 0.5,
+            );
+            assert!(
+                w.in_boost_zone(mid),
+                "wide={wide}: the middle of the pad must boost"
+            );
+            for lateral in [half_road - 0.5, -(half_road - 0.5)] {
+                assert!(
+                    w.in_boost_zone(mid + Vec3::X * lateral),
+                    "wide={wide}: the kerb line at {lateral} is on the road and must boost"
+                );
+            }
         }
     }
 

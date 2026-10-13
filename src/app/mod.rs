@@ -1327,42 +1327,11 @@ impl App {
     /// because a colour button was pressed with nothing selected is not what the
     /// button was for.
     fn cycle_color(&mut self, uids: &[retrackt_format::PieceUid], step: i8) {
-        if uids.is_empty() {
-            self.data.notice = Some("Select a piece to recolour.".into());
-            return;
-        }
-        let before: Vec<retrackt_format::PieceInstance> = uids
-            .iter()
-            .filter_map(|uid| self.data.track.piece(*uid).copied())
-            .collect();
-        if before.is_empty() {
-            return;
-        }
         let count = retrackt_format::PIECE_COLORS.len() as i16;
-        for piece in self.data.track.pieces.iter_mut() {
-            if !uids.contains(&piece.uid) {
-                continue;
-            }
+        self.repaint(uids, move |piece| {
             let next = piece.params.color.unwrap_or(0) as i16 + i16::from(step);
-            piece.params.color = Some(next.rem_euclid(count) as u8);
-        }
-        let after: Vec<retrackt_format::PieceInstance> = uids
-            .iter()
-            .filter_map(|uid| self.data.track.piece(*uid).copied())
-            .collect();
-        let edits: Vec<Edit> = before
-            .into_iter()
-            .zip(after)
-            .map(|(before, after)| Edit::Changed {
-                uid: after.uid,
-                before,
-                after,
-            })
-            .collect();
-        for edit in edits {
-            self.history.push(edit);
-        }
-        self.track_changed();
+            Some(next.rem_euclid(count) as u8)
+        });
     }
 
     /// Paint pieces one flat colour, from a swatch.
@@ -1371,11 +1340,26 @@ impl App {
     /// selection red, whatever it was before. Same empty-selection guard as the
     /// cycle, for the same reason.
     fn set_color(&mut self, uids: &[retrackt_format::PieceUid], index: u8) {
+        let clamped = index.min(retrackt_format::PIECE_COLORS.len() as u8 - 1);
+        self.repaint(uids, move |_| Some(clamped));
+    }
+
+    /// Repaint a selection, one undo entry per piece.
+    ///
+    /// `next` is given each selected piece and answers the colour it becomes, or
+    /// `None` to leave it alone. Both painting paths share the selection guard,
+    /// the snapshot and the history because they differ only in what they decide
+    /// the colour is, and a guard that lives in two places is a guard that will
+    /// eventually be in one.
+    fn repaint(
+        &mut self,
+        uids: &[retrackt_format::PieceUid],
+        mut next: impl FnMut(&retrackt_format::PieceInstance) -> Option<u8>,
+    ) {
         if uids.is_empty() {
             self.data.notice = Some("Select a piece to recolour.".into());
             return;
         }
-        let clamped = index.min(retrackt_format::PIECE_COLORS.len() as u8 - 1);
         let before: Vec<retrackt_format::PieceInstance> = uids
             .iter()
             .filter_map(|uid| self.data.track.piece(*uid).copied())
@@ -1384,8 +1368,11 @@ impl App {
             return;
         }
         for piece in self.data.track.pieces.iter_mut() {
-            if uids.contains(&piece.uid) {
-                piece.params.color = Some(clamped);
+            if !uids.contains(&piece.uid) {
+                continue;
+            }
+            if let Some(color) = next(piece) {
+                piece.params.color = Some(color);
             }
         }
         let after: Vec<retrackt_format::PieceInstance> = uids

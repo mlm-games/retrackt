@@ -39,7 +39,7 @@ pub(super) fn build_group(doc: &TrackDocument) -> (MeshGroup, ([f32; 3], [f32; 3
         merge(&mut merged, &shape.surface.transformed(xform, tint));
 
         let mut decor = shape.decor.transformed(xform, [1.0; 3]);
-        kerb_palette(&mut decor);
+        concrete_decor(&mut decor);
         merge(&mut merged, &decor);
 
         let mut paint = RawMesh::default();
@@ -196,11 +196,14 @@ fn push_ground_outline(
 /// Paints the decor's stripe mask into concrete: pale for the barrier's
 /// shoulder, dark for its face.
 ///
-/// A reference barrier reads as poured concrete with a lighter run of it along
-/// its shoulder. The geometry still bakes alternating blocks along the barrier,
-/// which the two tones turn into the darker blocks of a kerbed edge rather than
-/// into red and white stripes.
-fn kerb_palette(decor: &mut RawMesh) {
+/// Everything hanging off the road is one material rather than several, which
+/// is both what the reference reads as and one less thing to keep matched up: a
+/// reference barrier is poured concrete with a lighter run of it along its
+/// shoulder, and the geometry already bakes alternating blocks along the
+/// barrier, which the two tones turn into the darker blocks of a kerbed edge
+/// rather than into red and white stripes. Walls take the same paint, since they
+/// are poured from the same thing.
+fn concrete_decor(decor: &mut RawMesh) {
     for quad in decor.colors.chunks_mut(4) {
         let even = quad[0][0] >= 0.5;
         let hex = if even { BARRIER_LIGHT } else { BARRIER_DARK };
