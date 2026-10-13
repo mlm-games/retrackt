@@ -285,18 +285,21 @@ impl App {
             if self.input.restart && matches!(screen, Screen::Race | Screen::Results) {
                 self.start_race();
             }
-            if self.input.quit
-                && matches!(
-                    screen,
-                    Screen::Race | Screen::Results | Screen::Editor | Screen::Replay
-                )
-            {
+            // Escape gets out of every screen it can be pressed on. A menu that
+            // only leaves by its own button is a menu a keyboard player is stuck
+            // in, and both libraries and the garage are only ever opened from the
+            // title, so each returns to the title.
+            if self.input.quit && Self::escape_leaves(screen) {
                 if screen == Screen::Replay {
                     // Back to the library the tape was picked from, not to the title:
                     // the viewer's only purpose is choosing what to watch next.
                     self.close_replay();
                 } else {
-                    self.leave_run();
+                    match screen {
+                        Screen::Ghosts => self.apply_action(UiAct::CloseGhosts),
+                        Screen::Garage => self.apply_action(UiAct::CloseGarage),
+                        _ => self.leave_run(),
+                    }
                 }
             }
             // Queued rather than applied here: this block runs after the step, and the
@@ -1071,6 +1074,24 @@ impl App {
 
     fn refresh_ghosts(&mut self) {
         self.data.ghosts = self.save.ghosts.all().to_vec();
+    }
+
+    /// Whether Escape gets out of this screen.
+    ///
+    /// Every screen but the title: the title is where Escape has nothing to leave
+    /// to. Kept as its own function because the list has to be updated by hand
+    /// whenever a screen is added, and a screen that misses it is one a keyboard
+    /// player cannot get out of.
+    fn escape_leaves(screen: Screen) -> bool {
+        matches!(
+            screen,
+            Screen::Race
+                | Screen::Results
+                | Screen::Editor
+                | Screen::Replay
+                | Screen::Ghosts
+                | Screen::Garage
+        )
     }
 
     fn leave_run(&mut self) {
@@ -1880,6 +1901,30 @@ impl Default for App {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_gets_out_of_every_screen_but_the_title() {
+        // A screen that misses this is one a keyboard player cannot leave, so
+        // the list is checked against every screen rather than against the ones
+        // someone remembered to name.
+        for screen in [
+            Screen::Title,
+            Screen::Race,
+            Screen::Results,
+            Screen::Editor,
+            Screen::Ghosts,
+            Screen::Replay,
+            Screen::Garage,
+        ] {
+            assert_eq!(
+                App::escape_leaves(screen),
+                screen != Screen::Title,
+                "{screen:?} must be leaveable by Escape"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
