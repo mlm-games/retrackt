@@ -10,9 +10,11 @@ use super::{
 };
 
 const ROAD: u32 = 0x9BA1A9;
-const EDGE_LINE: u32 = 0xF2F4F7;
-const KERB_A: u32 = 0xE5473C;
-const KERB_B: u32 = 0xF2F4F7;
+pub(super) const EDGE_WHITE: u32 = 0xF2F4F7;
+pub(super) const EDGE_RED: u32 = 0xB4382A;
+/// The barrier's two concretes: the darker blocks and the lighter shoulder.
+pub(super) const BARRIER_DARK: u32 = 0x545C66;
+pub(super) const BARRIER_LIGHT: u32 = 0x7E8794;
 const CHECK_DARK: u32 = 0x1B1E24;
 const CHECK_LIGHT: u32 = 0xF2F4F7;
 const BOOST: u32 = 0xFFD23F;
@@ -191,13 +193,21 @@ fn push_ground_outline(
     }
 }
 
-/// Replaces the stripe mask (white/black per quad) baked into decor colours
-/// with the kerb palette.
+/// Paints the decor's stripe mask into concrete: pale for the barrier's
+/// shoulder, dark for its face.
+///
+/// A reference barrier reads as poured concrete with a lighter run of it along
+/// its shoulder. The geometry still bakes alternating blocks along the barrier,
+/// which the two tones turn into the darker blocks of a kerbed edge rather than
+/// into red and white stripes.
 fn kerb_palette(decor: &mut RawMesh) {
-    let (a, b) = (lin(KERB_A), lin(KERB_B));
     for quad in decor.colors.chunks_mut(4) {
-        let color = if quad[0][0] >= 0.5 { a } else { b };
-        quad.fill(color);
+        let even = quad[0][0] >= 0.5;
+        let hex = if even { BARRIER_LIGHT } else { BARRIER_DARK };
+        let tone = lin(hex);
+        for c in quad.iter_mut() {
+            *c = tone;
+        }
     }
 }
 
@@ -234,12 +244,19 @@ fn edge_lines(c: &Centerline, out: &mut RawMesh) {
     const GAP: f32 = 0.10;
     const WIDTH: f32 = 0.16;
     const LIFT: f32 = 0.02;
-    let color = lin(EDGE_LINE);
-    for i in 0..c.pos.len() - 1 {
-        let (p0, p1) = (c.pos[i], c.pos[i + 1]);
-        let (n0, n1) = (c.nrm[i], c.nrm[i + 1]);
-        let (r0, r1) = (c.tan[i].cross(n0), c.tan[i + 1].cross(n1));
-        for s in [-1.0, 1.0] {
+    // One line either side: white on the left, red on the right, as the
+    // reference marks a road. It is the pair of colours that reads as a road
+    // edge at a glance, where two of either reads as lane markings.
+    for s in [-1.0, 1.0] {
+        let color = if s < 0.0 {
+            lin(EDGE_WHITE)
+        } else {
+            lin(EDGE_RED)
+        };
+        for i in 0..c.pos.len() - 1 {
+            let (p0, p1) = (c.pos[i], c.pos[i + 1]);
+            let (n0, n1) = (c.nrm[i], c.nrm[i + 1]);
+            let (r0, r1) = (c.tan[i].cross(n0), c.tan[i + 1].cross(n1));
             let (u, v) = (s * (c.half_width - GAP), s * (c.half_width - GAP - WIDTH));
             let (lo, hi) = (u.min(v), u.max(v));
             push_lit(

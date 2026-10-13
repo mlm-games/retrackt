@@ -568,6 +568,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn road_edges_read_as_concrete_and_marked_lines() {
+        // The reference's barrier is poured concrete in two tones, with a white
+        // line on the left of the road and a red one on the right. Grey barriers
+        // and the two-colour edge lines are what make a road read as road work
+        // rather than as a kerb-striped toy track.
+        let doc = retrackt_format::demo_track();
+        let (group, _) = track::build_group(&doc);
+
+        let (light, dark) = (lin(track::BARRIER_LIGHT), lin(track::BARRIER_DARK));
+        let (white, red) = (lin(track::EDGE_WHITE), lin(track::EDGE_RED));
+        let near = |c: [f32; 3], t: [f32; 3]| {
+            (c[0] - t[0]).abs() < 0.2 && (c[1] - t[1]).abs() < 0.2 && (c[2] - t[2]).abs() < 0.2
+        };
+
+        let mut light_used = false;
+        let mut dark_used = false;
+        let mut white_used = false;
+        let mut red_used = false;
+        for c in &group.colors {
+            if near(*c, light) {
+                light_used = true;
+            }
+            if near(*c, dark) {
+                dark_used = true;
+            }
+            if near(*c, white) {
+                white_used = true;
+            }
+            if near(*c, red) {
+                red_used = true;
+            }
+        }
+        assert!(light_used, "no pale concrete in the barrier");
+        assert!(dark_used, "no dark concrete in the barrier");
+        assert!(white_used, "no white edge line");
+        assert!(red_used, "no red edge line");
+    }
+
+    #[test]
     fn the_terrain_ring_stands_clear_of_the_track_and_inside_the_far_plane() {
         // A mountain built on top of the road would swallow it, and one past the
         // renderer's far plane would be clipped away, which looks exactly like
