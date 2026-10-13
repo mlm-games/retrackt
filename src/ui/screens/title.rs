@@ -168,6 +168,7 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
             pusher(actions, UiAct::OpenEditor),
         ))
         .child(ghost_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)))
+        .child(ghost_btn("Garage", pusher(actions, UiAct::OpenGarage)))
         .child(
             Row(Modifier::new()
                 .gap(theme::dp(8.0))

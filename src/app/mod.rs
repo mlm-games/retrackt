@@ -144,6 +144,7 @@ impl App {
             ghosts: save.ghosts.all().to_vec(),
             ghost_draft: "My ghost".into(),
             practice: save.settings.practice,
+            car_paint: save.settings.car_paint,
             editor: state::EditorData {
                 thumbnails: save.settings.thumbnails,
                 ..state::EditorData::default()
@@ -469,6 +470,20 @@ impl App {
             // Returns to wherever the library was opened from, so reaching it from the
             // results screen does not throw the player past their own result.
             UiAct::CloseGhosts => self.data.screen = self.data.ghost_return,
+            // The garage is reached from the title screen and from nowhere else,
+            // so it returns to the title rather than carrying a return screen of
+            // its own: opening it from a menu that had one would lose it.
+            UiAct::OpenGarage => self.data.screen = Screen::Garage,
+            UiAct::CloseGarage => self.data.screen = Screen::Title,
+            // Persisted like the volume and the practice flag: the paint is a
+            // preference, not a session, and a car that forgets its colour
+            // between runs forgot a choice the player made once.
+            UiAct::SetCarPaint(index) => {
+                let clamped = index.min(theme::CAR_PAINTS.len() as u8 - 1);
+                self.data.car_paint = clamped;
+                self.save.settings.car_paint = clamped;
+                let _ = crate::save::save(&self.save);
+            }
             UiAct::RaceGhost(file) => self.race_ghost(&file),
             UiAct::SaveGhost(name) => self.save_ghost(&name),
             UiAct::SetGhostDraft(name) => self.data.ghost_draft = name,
@@ -592,7 +607,7 @@ impl App {
             return false;
         }
         self.data.notice = None;
-        let car = Car::at_spawn(world.spawn, world.spawn_yaw);
+        let car = Car::at_spawn(world.spawn, world.spawn_yaw, self.data.car_paint);
         {
             let mut session = self.sim.world.resource_mut::<SessionRes>();
             session.0.start(&world);
@@ -1132,7 +1147,7 @@ impl App {
         self.data.editor.can_undo = self.history.can_undo();
         self.data.editor.can_redo = self.history.can_redo();
         let world = TrackWorld::from_doc(&self.data.track);
-        let car = Car::at_spawn(world.spawn, world.spawn_yaw);
+        let car = Car::at_spawn(world.spawn, world.spawn_yaw, self.data.car_paint);
         {
             let mut session = self.sim.world.resource_mut::<SessionRes>();
             session.0.start(&world);

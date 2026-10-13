@@ -8,7 +8,6 @@ use crate::sim::car::{Car, body_matrix};
 
 use super::{lin, push_lit, push_obox, push_tri_lit, raw_mesh_to_group};
 
-const BODY: u32 = 0xFF7A18;
 const GLASS: u32 = 0x1E2733;
 const DARK: u32 = 0x23272E;
 const UNDER: u32 = 0x1A1D23;
@@ -35,7 +34,7 @@ pub(super) fn groups(car: &Car) -> (MeshGroup, MeshGroup, MeshGroup) {
     let body_m = body_matrix(car);
 
     let mut shell = RawMesh::default();
-    bodywork(&mut shell);
+    bodywork(&mut shell, car.paint);
     wheels(&mut shell, car);
     let mut body = raw_mesh_to_group(&shell.transformed(body_m, [1.0; 3]), true);
     body.material.roughness = 0.5;
@@ -54,7 +53,7 @@ pub(super) fn groups(car: &Car) -> (MeshGroup, MeshGroup, MeshGroup) {
 /// and a pair of lit headlights reads as a rival on the road.
 pub(super) fn ghost_group(car: &Car) -> MeshGroup {
     let mut shell = RawMesh::default();
-    bodywork(&mut shell);
+    bodywork(&mut shell, car.paint);
     wheels(&mut shell, car);
     let mut group = raw_mesh_to_group(&shell.transformed(body_matrix(car), [1.0; 3]), true);
     // One flat albedo, not the car's own paint: the shell reads as a solid
@@ -74,10 +73,10 @@ pub(super) fn ghost_group(car: &Car) -> MeshGroup {
 
 /// Everything in body space: +Z forward, +Y up, origin at the car centre,
 /// which itself rides a height above the road.
-fn bodywork(m: &mut RawMesh) {
+fn bodywork(m: &mut RawMesh, paint: u8) {
     let (hx, y0, y1, zf, zr) = (0.80, -0.45, 0.08, 1.32, -1.30);
     let v = Vec3::new;
-    let body = lin(BODY);
+    let body = lin(crate::app::theme::car_paint(paint));
     let under = lin(UNDER);
     let glass = lin(GLASS);
     let dark = lin(DARK);

@@ -46,6 +46,31 @@ pub fn rgb(hex: u32) -> Color {
     )
 }
 
+/// Body paints the garage offers, by index. First is the car as it ships.
+///
+/// A short list of colours that stay legible over the whole track palette, so a
+/// car is findable in a field of ghosts and scenery: the reference offers a
+/// colour wheel, which mostly produces cars nobody can pick out at distance.
+pub const CAR_PAINTS: [u32; 8] = [
+    0xFF7A18, // the original orange
+    0xE24A4A, // racing red
+    0x3D8BD6, // azure
+    0x3EA86B, // forest
+    0xE7D24A, // signal yellow
+    0x8B5BD6, // violet
+    0x2A2F38, // graphite
+    0xF2F4F7, // pearl
+];
+
+/// Body paint of a car, resolved: its own index, or the one it ships with when
+/// a save names a paint the palette no longer has.
+pub fn car_paint(index: u8) -> u32 {
+    CAR_PAINTS
+        .get(index as usize)
+        .copied()
+        .unwrap_or(CAR_PAINTS[0])
+}
+
 pub fn danger() -> Color {
     Color::from_rgb(224, 72, 72)
 }

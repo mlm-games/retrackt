@@ -203,7 +203,7 @@ mod tests {
     /// The heading runs from `+Z` at the bottom, up through vertical at the loop's
     /// equator, to `-Z` on the way back down.
     fn drive_a_loop(cam: &mut ChaseCamera) -> Car {
-        let mut car = Car::at_spawn(Vec3::ZERO, 0.0);
+        let mut car = Car::at_spawn(Vec3::ZERO, 0.0, 0);
         cam.snap(&car);
         for step in 1..=600 {
             let t = step as f32 * PI / 300.0;
@@ -232,7 +232,7 @@ mod tests {
         // `-Z` travel puts the eye at `+Z`, and vice versa: a half turn on.
         let want = yaw_behind(&Car {
             heading_dir: Vec3::NEG_Z,
-            ..Car::at_spawn(Vec3::ZERO, 0.0)
+            ..Car::at_spawn(Vec3::ZERO, 0.0, 0)
         })
         .expect("a horizontal heading has a yaw");
         assert!(
@@ -263,7 +263,7 @@ mod tests {
         // not happen is a discontinuity: one frame carrying the view most of the way
         // round is a snap no easing can hide.
         let mut cam = ChaseCamera::new();
-        let mut car = Car::at_spawn(Vec3::ZERO, 0.0);
+        let mut car = Car::at_spawn(Vec3::ZERO, 0.0, 0);
         cam.snap(&car);
         let mut last = cam.yaw;
         for step in 1..=600 {
@@ -310,7 +310,7 @@ mod tests {
         // same inputs and hold them together, rather than picking a tolerance that
         // happens to fit: the two only ever differ where the absolute reading had
         // no answer to give.
-        let mut car = Car::at_spawn(Vec3::ZERO, 0.0);
+        let mut car = Car::at_spawn(Vec3::ZERO, 0.0, 0);
         let mut cam = ChaseCamera::new();
         cam.snap(&car);
         let mut old = AbsoluteYaw { yaw: cam.yaw };
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn the_chase_camera_puts_the_cars_right_side_on_screen_right() {
-        let car = Car::at_spawn(Vec3::ZERO, 0.0);
+        let car = Car::at_spawn(Vec3::ZERO, 0.0, 0);
         let mut cam = ChaseCamera::new();
         cam.snap(&car);
         let cam = cam.to_orbit(1.0);

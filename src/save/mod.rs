@@ -22,6 +22,11 @@ pub struct Settings {
     /// likes to play: a mode to re-arm every launch is a mode nobody uses for long.
     #[serde(default)]
     pub practice: bool,
+    /// Paint the car is built in, by index into the garage palette. Persisted
+    /// with the volume: it is the one thing about the car the player chose, and
+    /// a car that forgets its colour between runs forgets the choice.
+    #[serde(default)]
+    pub car_paint: u8,
 }
 
 fn default_thumbnails() -> bool {
@@ -36,6 +41,7 @@ impl Default for Settings {
             sfx_volume: 1.0,
             thumbnails: default_thumbnails(),
             practice: false,
+            car_paint: 0,
         }
     }
 }
@@ -552,6 +558,7 @@ mod tests {
             settings: Settings {
                 master_volume: 0.4,
                 sfx_volume: 0.7,
+                car_paint: 4,
                 ..Settings::default()
             },
             ..SaveData::default()
@@ -933,6 +940,10 @@ mod tests {
         assert_eq!(data.version, SAVE_VERSION);
         assert!(data.ghosts.is_empty(), "no tapes existed before version 3");
         assert_eq!(data.settings.master_volume, 0.5);
+        assert_eq!(
+            data.settings.car_paint, 0,
+            "a save predating the garage must open on the first paint"
+        );
     }
 
     #[test]

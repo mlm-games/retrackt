@@ -75,7 +75,7 @@ pub struct CarTuning {
 /// True when a car released at the world's spawn finds road under its wheels.
 /// Racing a spawn that fails this is an endless fall-and-respawn loop.
 pub fn settles_at_spawn(world: &TrackWorld) -> bool {
-    let car = Car::at_spawn(world.spawn, world.spawn_yaw);
+    let car = Car::at_spawn(world.spawn, world.spawn_yaw, 0);
     contact(world, &car, &CarTuning::default()).is_some()
 }
 
@@ -182,13 +182,17 @@ pub struct Car {
     pub heading_dir: Vec3,
     /// Set for one tick when the car lands hard, for effects.
     pub landed_hard: bool,
+    /// Body paint, by index into the garage palette. Cosmetic and carried, not
+    /// simulated: it is the one thing about the car the player picks, and it
+    /// rides with the car so a ghost and a live car are built the same way.
+    pub paint: u8,
     /// Set when the kill-height teleport fires; the runtime reads and clears it,
     /// so a respawn inside a multi-tick frame still reports. Not reset per step.
     pub respawned: bool,
 }
 
 impl Car {
-    pub fn at_spawn(pos: Vec3, yaw: f32) -> Self {
+    pub fn at_spawn(pos: Vec3, yaw: f32, paint: u8) -> Self {
         Self {
             pos,
             vel: Vec3::ZERO,
@@ -204,6 +208,7 @@ impl Car {
             boost_left: 0.0,
             landed_hard: false,
             respawned: false,
+            paint,
         }
     }
 
@@ -264,10 +269,7 @@ impl Car {
                 .ground_normal
                 .lerp(curr.ground_normal, t)
                 .normalize_or_zero(),
-            heading_dir: prev
-                .heading_dir
-                .lerp(curr.heading_dir, t)
-                .normalize_or_zero(),
+            heading_dir: prev.heading_dir.lerp(curr.heading_dir, t),
             air_time: lerp(prev.air_time, curr.air_time),
             wall_contact: lerp(prev.wall_contact, curr.wall_contact),
             boost_left: lerp(prev.boost_left, curr.boost_left),
@@ -276,6 +278,9 @@ impl Car {
             grounded: curr.grounded,
             landed_hard: curr.landed_hard,
             respawned: curr.respawned,
+            // The car being drawn is the car that exists now: a paint that
+            // changed between ticks is not a blend the eye can resolve.
+            paint: curr.paint,
         }
     }
 }
@@ -818,7 +823,7 @@ mod tests {
     }
 
     pub(super) fn fresh(world: &TrackWorld) -> Car {
-        Car::at_spawn(world.spawn, world.spawn_yaw)
+        Car::at_spawn(world.spawn, world.spawn_yaw, 0)
     }
 
     #[test]
@@ -862,7 +867,7 @@ mod tests {
     /// mid-road with no throttle. The barrier meets it, not a spawn.
     fn rolling_at_edge(speed: f32) -> (Car, TrackWorld) {
         let world = flat_track();
-        let mut car = Car::at_spawn(Vec3::new(0.0, 1.0, 10.0), std::f32::consts::FRAC_PI_2);
+        let mut car = Car::at_spawn(Vec3::new(0.0, 1.0, 10.0), std::f32::consts::FRAC_PI_2, 0);
         car.vel = Vec3::new(speed, 0.0, 0.0);
         (car, world)
     }

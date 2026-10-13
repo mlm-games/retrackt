@@ -129,7 +129,9 @@ impl GhostRes {
     /// this is how a viewer goes backwards: restart, then run the ticks again. The
     /// pose it lands on is the same to the bit, not an approximation.
     pub fn restart(&mut self) {
-        self.car = Car::at_spawn(self.spawn, self.spawn_yaw);
+        // A ghost is drawn as one flat tint, so its paint is nothing to
+        // carry: it ships with the default and the renderer never asks.
+        self.car = Car::at_spawn(self.spawn, self.spawn_yaw, 0);
         self.tick = 0;
     }
 
@@ -296,7 +298,10 @@ fn recover_to_checkpoint(
     let Some((pos, yaw)) = session.0.recovery() else {
         return;
     };
-    car.0 = Car::at_spawn(pos, yaw);
+    // The paint survives a recovery: the car that comes back is the same car,
+    // not a fresh one in a different colour.
+    let paint = car.0.paint;
+    car.0 = Car::at_spawn(pos, yaw, paint);
     // Re-set rather than carried: `step_vehicle` built the next tick's car from the
     // spawn, and the runtime clears this flag when it draws, so it only ever means
     // "the car jumped this tick".
@@ -333,7 +338,8 @@ fn advance_session(
             .0
             .recovery()
             .unwrap_or((world.0.spawn, world.0.spawn_yaw));
-        car.0 = crate::sim::car::Car::at_spawn(pos, yaw);
+        let paint = car.0.paint;
+        car.0 = crate::sim::car::Car::at_spawn(pos, yaw, paint);
         session.0.tick_teleported(car.0.pos);
         return;
     }
@@ -449,7 +455,7 @@ mod chain_tests {
         sim.world.insert_resource(TrackRes(world));
         {
             let w = sim.world.resource::<TrackRes>().0.clone();
-            let mut car = Car::at_spawn(w.spawn, w.spawn_yaw);
+            let mut car = Car::at_spawn(w.spawn, w.spawn_yaw, 0);
             car.pos = w.checkpoints[0].centre;
             sim.world.insert_resource(CarRes(car));
             sim.world.resource_mut::<SessionRes>().0.start(&w);
@@ -533,7 +539,7 @@ mod chain_tests {
     /// Drive 120 ticks of fixed input, optionally recording it to `tape`.
     fn drive_recorded_run(mut tape: Option<&mut ReplayTape>) -> Car {
         let world = TrackWorld::from_doc(&demo_track());
-        let mut car = Car::at_spawn(world.spawn, world.spawn_yaw);
+        let mut car = Car::at_spawn(world.spawn, world.spawn_yaw, 0);
         let tune = CarTuning::default();
         let steer = PackedInput::new(0.25, 1.0, 0.0, false, false, false);
         let dt = crate::SIM_STEP.as_secs_f32();
@@ -665,7 +671,7 @@ mod chain_tests {
         sim.world.insert_resource(InputRes::new());
         sim.world.insert_resource(PracticeRes(practice));
         {
-            let mut car = Car::at_spawn(world.spawn, world.spawn_yaw);
+            let mut car = Car::at_spawn(world.spawn, world.spawn_yaw, 0);
             car.pos.y = -10_000.0;
             sim.world.insert_resource(CarRes(car));
             let mut session = sim.world.resource_mut::<SessionRes>();
@@ -789,7 +795,7 @@ mod chain_tests {
         sim.world.insert_resource(ActiveRes(true));
         sim.world.insert_resource(InputRes::new());
         sim.world.insert_resource(PracticeRes(false));
-        let mut car = Car::at_spawn(world.spawn, world.spawn_yaw);
+        let mut car = Car::at_spawn(world.spawn, world.spawn_yaw, 0);
         car.pos.y = -10_000.0;
         sim.world.insert_resource(CarRes(car));
         sim.world.resource_mut::<SessionRes>().0.start(&world);

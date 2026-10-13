@@ -15,6 +15,8 @@ pub enum Screen {
     Ghosts,
     /// A kept tape being watched, with the playhead and speed under it.
     Replay,
+    /// The garage: the car's paint, chosen from a set of swatches.
+    Garage,
 }
 
 /// Which copy of a track a menu row refers to. Built-ins and saved files share
@@ -136,6 +138,10 @@ pub enum UiAct {
     SetThumbnails(bool),
     OpenGhosts,
     CloseGhosts,
+    OpenGarage,
+    CloseGarage,
+    /// Paint the car `index` places along the garage palette.
+    SetCarPaint(u8),
     /// Watch a kept tape by its library file stem.
     WatchGhost(String),
     /// Leave the viewer, returning to the screen it was opened from.
@@ -233,6 +239,11 @@ pub struct AppData {
     /// Best recorded time on the current track under the current vehicle
     /// tuning, in simulated ticks.
     pub best: Option<u32>,
+    /// Body paint the car is built in, by index into the garage palette. Mirrors
+    /// the persisted setting, and changes take the next race rather than the car
+    /// already on the road: a repaint mid-run would be a car changing colour
+    /// under its driver.
+    pub car_paint: u8,
     /// Whether races start in practice: a fall returns to the last checkpoint
     /// rather than the start line, and finishing records nothing.
     pub practice: bool,
