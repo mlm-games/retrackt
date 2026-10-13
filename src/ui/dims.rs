@@ -58,12 +58,43 @@ pub const CTRL_R: Dp = Dp(8.0);
 /// the thing being edited — as the leftover.
 const SIDE_COMFORT_DP: f32 = 480.0;
 
-/// The palette's comfortable width: a piece name, its control's padding and
-/// little else, since arming a piece is all a palette row ever does.
-const PALETTE_COMFORT_DP: f32 = 224.0;
+/// Width of the palette's category strip: a category name and nothing else.
+///
+/// The longest name is "Junctions", which at the palette's type is a little over
+/// half of this, so the strip never has to wrap a label or clip one.
+const STRIP_COMFORT_DP: f32 = 112.0;
+
+/// Width of the palette's shelf of parts, beside the strip.
+///
+/// Room for two tiles across and a gap. It sets the palette's comfortable width
+/// rather than the tiles themselves: how many tiles actually fit across is
+/// decided by [`tile_w`] from whatever width the shelf ends up with, so a
+/// squeezed palette drops to one tile per row instead of clipping every name.
+const SHELF_COMFORT_DP: f32 = 208.0;
+
+/// The palette's comfortable width, being its two halves side by side.
+///
+/// The strip and the shelf are one tool split in two rather than two tools, so
+/// they are sized as one panel: the strip picks which shelf is showing and the
+/// shelf is what a placement is actually made of, and asking for either without
+/// the other is how the pair came to want more window than there was.
+const PALETTE_COMFORT_DP: f32 = STRIP_COMFORT_DP + SHELF_COMFORT_DP;
 
 /// The narrowest the palette may be squeezed to before the editor stacks instead.
-const PALETTE_FLOOR_DP: f32 = 176.0;
+///
+/// Set by the shelf keeping one tile that still fits its own name, not by the
+/// strip: the shelf below that width cannot show a piece without clipping the
+/// name off it, and a clipped name is a piece nobody can tell from its
+/// neighbour.
+const PALETTE_FLOOR_DP: f32 = 248.0;
+
+/// Narrowest a palette tile may be, which is the widest piece name the palette
+/// shows. Below this the names are cut off, which is worse than another row.
+const TILE_MIN_DP: f32 = 88.0;
+
+/// Widest a palette tile may be, so one alone on a roomy shelf is a tile and not
+/// a banner.
+const TILE_MAX_DP: f32 = 120.0;
 
 /// The viewport slot between the two panes.
 const GUTTER_DP: f32 = 40.0;
@@ -117,6 +148,31 @@ impl Layout {
     /// whenever the two are stacked.
     fn palette_content_w(&self) -> Dp {
         self.palette_w - widgets::PANEL_INSET_DP * 2.0
+    }
+
+    /// Width the palette's category strip takes across the palette.
+    ///
+    /// Its own comfortable width beside the shelf, and the palette's whole content
+    /// width when the editor is stacked — where the strip is a row above the shelf
+    /// rather than a column beside it, and so has the room to lay its tabs out
+    /// along a line.
+    fn strip_w(&self) -> Dp {
+        match self.stacked {
+            true => self.palette_content_w(),
+            false => theme::dp(STRIP_COMFORT_DP),
+        }
+    }
+
+    /// Width one tile row inside the shelf has.
+    ///
+    /// The palette's content less the strip and the gap between them. Stacked it is
+    /// the palette's content whole, since nothing is beside the shelf to take any.
+    fn shelf_content_w(&self) -> Dp {
+        match self.stacked {
+            true => self.palette_content_w(),
+            false => (self.palette_content_w() - theme::dp(STRIP_COMFORT_DP) - SPACE_ROW)
+                .coerce_at_least(Dp(0.0)),
+        }
     }
 
     /// Width a piece row's identity label may take: what is left of the row once
@@ -232,6 +288,11 @@ pub fn palette_content_w() -> Dp {
     at(fit::width()).palette_content_w()
 }
 
+/// Width the palette's category strip actually takes across the palette.
+pub fn strip_w() -> Dp {
+    at(fit::width()).strip_w()
+}
+
 /// Width a piece row's identity label may take.
 pub fn label_w() -> Dp {
     at(fit::width()).label_w()
@@ -242,14 +303,27 @@ pub fn ctrl_w() -> Dp {
     at(fit::width()).ctrl_w()
 }
 
-/// Width of one palette tile, which holds two side by side: an icon with a short
-/// name under it, rather than a full-width button per piece.
+/// Width of one palette tile: an icon with a short name under it, rather than a
+/// full-width button per piece.
 ///
-/// Derived from the palette rather than fixed, so two tiles fit across it at
-/// every window the editor lays out side by side, and a phone held upright gets
-/// the wider pair its stacked palette has room for.
+/// Derived from the shelf rather than the whole palette, so the strip beside it
+/// does not silently cost the tiles a column of their own. How many go across
+/// falls out of that width instead of being fixed at two: two while two fit at
+/// full size, and otherwise one filling the shelf. A narrow shelf so costs the
+/// shelf a row rather than every tile in it the end of its name, and the count
+/// then follows on its own because the row no longer fits two.
 pub fn tile_w() -> Dp {
-    theme::dp(((palette_content_w().0 - SPACE_ROW.0) / 2.0).max(72.0))
+    let shelf = shelf_content_w().value();
+    let pair = (shelf - SPACE_ROW.0) / 2.0;
+    theme::dp(match pair >= TILE_MIN_DP {
+        true => pair.min(TILE_MAX_DP),
+        false => shelf.min(TILE_MAX_DP),
+    })
+}
+
+/// Width one row inside the palette's shelf of parts actually has.
+fn shelf_content_w() -> Dp {
+    at(fit::width()).shelf_content_w()
 }
 
 /// Height of the icon inside a palette tile.
@@ -545,6 +619,134 @@ mod tests {
         }
     }
 
+    /// Text in a laid-out scene with the rectangle it was given.
+    fn texts(scene: &repose_core::Scene) -> Vec<(String, Rect)> {
+        scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                SceneNode::Text { text, rect, .. } => {
+                    Some((text.to_string(), (rect.x, rect.y, rect.w, rect.h)))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn side_by_side_the_strip_is_a_column_beside_the_shelf() {
+        // The palette is two halves of one tool, not a strip stacked over a shelf: a
+        // category a player has chosen staying on screen as a row of tabs costs a
+        // whole line of the shelf, which is a whole line of pieces.
+        //
+        // Measured against the label rectangles rather than the buttons, because a
+        // label is centred in its button and so is narrower than it: "Road" and
+        // "Junctions" do not share a left edge, and what has to hold is that the
+        // shelf is clear of the strip rather than that the tabs are one width.
+        let open = retrackt_format::piece::group_index(retrackt_format::piece::DEFAULT_GROUP)
+            .expect("the default group is listed");
+        let laid = texts(&editor_at_with_category(1024.0, 576.0, open));
+
+        let groups = retrackt_format::piece::groups();
+        let tiles: Vec<Rect> = retrackt_format::catalog()
+            .iter()
+            .filter(|d| d.id.group() == retrackt_format::piece::DEFAULT_GROUP)
+            .map(|p| {
+                let name = crate::ui::screens::editor::short_name(p.id.label());
+                laid.iter()
+                    .find(|(t, _)| t == name)
+                    .map(|(_, r)| *r)
+                    .unwrap_or_else(|| panic!("{name} is on the shelf"))
+            })
+            .collect();
+        // The open category's name is also the panel's own title, so take the
+        // lowest of the matches: in a column that is the tab rather than the
+        // heading above it.
+        let tabs: Vec<Rect> = groups
+            .iter()
+            .map(|g| {
+                laid.iter()
+                    .filter(|(t, _)| t == g)
+                    .max_by(|a, b| a.1.1.partial_cmp(&b.1.1).unwrap())
+                    .map(|(_, r)| *r)
+                    .unwrap_or_else(|| panic!("{g} has no tab"))
+            })
+            .collect();
+
+        let strip_right = tabs.iter().map(|r| r.0 + r.2).fold(f32::MIN, f32::max);
+        let tile_left = tiles.iter().map(|t| t.0).fold(f32::MAX, f32::min);
+        assert!(
+            tile_left >= strip_right - 1.0,
+            "a tile overlaps the strip: leftmost tile at {tile_left:.0}, strip ends at {strip_right:.0}"
+        );
+        // A column, so the tabs stack down rather than sitting along one line.
+        let mut ys: Vec<f32> = tabs.iter().map(|r| r.1).collect();
+        ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ys.dedup_by(|a, b| (*a - *b).abs() < 1.0);
+        assert_eq!(ys.len(), tabs.len(), "the tabs stack down the strip");
+    }
+
+    #[test]
+    fn stacked_the_strip_lies_above_the_shelf() {
+        // The other half of the same split: with no width for both, the strip goes
+        // back above the shelf, so the fallback has to be checked too or a change to
+        // the rule that picks between them would only ever be caught on a desktop.
+        let open = retrackt_format::piece::group_index(retrackt_format::piece::DEFAULT_GROUP)
+            .expect("the default group is listed");
+        let laid = texts(&editor_at_with_category(360.0, 780.0, open));
+        let groups = retrackt_format::piece::groups();
+        let tab_bottom = groups
+            .iter()
+            .map(|g| {
+                laid.iter()
+                    .filter(|(t, _)| t == g)
+                    .map(|(_, r)| r.1 + r.3)
+                    .fold(f32::MIN, f32::max)
+            })
+            .fold(f32::MIN, f32::max);
+        let tile_top = retrackt_format::catalog()
+            .iter()
+            .filter(|d| d.id.group() == retrackt_format::piece::DEFAULT_GROUP)
+            .map(|p| {
+                let name = crate::ui::screens::editor::short_name(p.id.label());
+                laid.iter()
+                    .find(|(t, _)| t == name)
+                    .map(|(_, r)| r.1)
+                    .unwrap_or_else(|| panic!("{name} is on the shelf"))
+            })
+            .fold(f32::MAX, f32::min);
+        assert!(
+            tile_top >= tab_bottom,
+            "a tile sits at {tile_top:.0}, above the strip ending at {tab_bottom:.0}"
+        );
+    }
+
+    #[test]
+    fn no_piece_name_is_clipped_at_any_width_the_palette_is_shown_at() {
+        // A tile narrower than the name it carries has the name cut off, which is
+        // worse than a shorter tile: the player sees two pieces they cannot tell
+        // apart and no way to know which is which. Checked over every category at
+        // the two widths that matter — the most squeezed width still holding two
+        // panes, where the tiles are narrowest, and the narrowest window, where
+        // the palette is a single column at the bottom of a stack.
+        for (w, h) in [(928.0f32, 576.0f32), (320.0, 780.0)] {
+            for group in retrackt_format::piece::groups() {
+                let index = retrackt_format::piece::group_index(group).expect("group is listed");
+                let laid = texts(&editor_at_with_category(w, h, index));
+                for piece in retrackt_format::catalog() {
+                    if piece.id.group() != group {
+                        continue;
+                    }
+                    let name = crate::ui::screens::editor::short_name(piece.id.label());
+                    assert!(
+                        laid.iter().any(|(t, _)| t == name),
+                        "{w}x{h}: {group} clips {name} off its tile"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn the_piece_list_grows_with_the_number_of_pieces() {
         // The editor's panels sit inside its own scroller, so they must not be
@@ -630,7 +832,11 @@ mod tests {
 
     #[test]
     fn the_palette_gives_way_before_the_side_column_does() {
-        let l = at(880.0);
+        // 960 dp is inside the band where the two panes still fit but the palette
+        // has been squeezed: narrower than that and the editor stacks rather than
+        // squeezing, which is the whole reason the band exists.
+        let l = at(960.0);
+        assert!(!l.stacked, "960 dp should still hold two panes");
         assert!(l.palette_w.value() < PALETTE_COMFORT_DP);
         assert_eq!(
             l.panel_w.value(),

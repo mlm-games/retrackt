@@ -418,11 +418,16 @@ fn tool_tile(label: &str, actions: &ActionQueue, act: UiAct) -> View {
 /// Palette. Clicking *arms* a piece rather than placing it, so the preview
 /// can be inspected first; placement is its own gesture.
 ///
-/// A strip of categories with the parts of the chosen one beneath it, the way
+/// A strip of categories with the parts of the chosen one beside it, the way
 /// the reference's editor splits them: a wall of eight labelled sections is a
 /// list to scroll past, while one category of parts at a time is a shelf to
 /// pick from. Tiles carry the piece's footprint and its short name rather than
 /// a button of prose, and arming is all a tile ever does.
+///
+/// The strip is a column beside the shelf wherever there is width for a column,
+/// because a category a player has chosen stays on screen as a row of tabs costs
+/// a whole line of the shelf. Too narrow for both, the strip goes back above the
+/// shelf and wraps, which is the same split one tile fewer.
 fn palette_list(armed: retrackt_format::PieceId, category: usize, actions: &ActionQueue) -> View {
     let mut groups: Vec<&str> = Vec::new();
     for def in catalog() {
@@ -435,7 +440,7 @@ fn palette_list(armed: retrackt_format::PieceId, category: usize, actions: &Acti
     let shown = category.min(groups.len().saturating_sub(1));
     let active = groups[shown];
 
-    let strip: Vec<View> = groups
+    let tabs: Vec<View> = groups
         .iter()
         .enumerate()
         .map(|(index, group)| category_tab(index, group, index == shown, actions))
@@ -454,7 +459,7 @@ fn palette_list(armed: retrackt_format::PieceId, category: usize, actions: &Acti
         })
         .collect();
 
-    Column(Modifier::new().gap(dims::SPACE_ROW)).child([
+    let wrap = |items: Vec<View>| {
         FlowRow(
             Modifier::new().gap(dims::SPACE_ROW).fill_max_width(),
             FlowRowConfig {
@@ -462,16 +467,19 @@ fn palette_list(armed: retrackt_format::PieceId, category: usize, actions: &Acti
                 ..FlowRowConfig::default()
             },
         )
-        .child(strip),
-        FlowRow(
-            Modifier::new().gap(dims::SPACE_ROW).fill_max_width(),
-            FlowRowConfig {
-                balanced: true,
-                ..FlowRowConfig::default()
-            },
-        )
-        .child(parts),
-    ])
+        .child(items)
+    };
+    let tab = wrap(tabs.clone());
+    let shelf = wrap(parts);
+
+    match dims::stacked() {
+        true => Column(Modifier::new().gap(dims::SPACE_ROW)).child([tab, shelf]),
+        false => Row(Modifier::new().gap(dims::SPACE_ROW)).child([
+            Box(Modifier::new().width(dims::strip_w()))
+                .child(Column(Modifier::new().gap(dims::SPACE_ROW)).child(tabs)),
+            Box(Modifier::new().fill_max_width()).child(shelf),
+        ]),
+    }
 }
 
 /// One category in the palette strip. Accent-filled while it is the category
@@ -492,7 +500,13 @@ fn category_tab(index: usize, group: &str, selected: bool, actions: &ActionQueue
         }
     };
     let queue = actions.clone();
-    outlined_at(group, theme::dp(64.0), config, move || {
+    let w = match dims::stacked() {
+        // Stacked the tabs share a line with each other, so a fixed width keeps
+        // them equal; as a column each fills the strip.
+        true => theme::dp(64.0),
+        false => dims::strip_w(),
+    };
+    outlined_at(group, w, config, move || {
         push(&queue, UiAct::SetPaletteCategory(index))
     })
 }
