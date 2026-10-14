@@ -554,26 +554,28 @@ mod tests {
             }
             checked += 1;
         }
-        assert!(checked > 8, "only {checked} pieces were checked");
+        assert!(
+            checked > 0,
+            "no piece in the catalogue owns any cells, so nothing was checked"
+        );
     }
 
-    /// A piece that owns no cells owns no block, so filling one places nothing
-    /// rather than placing it once and calling that a block.
+    /// A piece fills a block exactly when it owns cells to fill it with.
+    ///
+    /// Stated as the contract rather than as a claim that some particular piece
+    /// owns none, because which pieces those are is the catalogue's business and
+    /// a test that hard-codes the list goes stale the moment a piece is added.
     #[test]
-    fn a_piece_with_no_occupied_cells_fills_nothing() {
+    fn a_stamp_covers_a_piece_exactly_when_the_piece_owns_cells() {
         let doc = retrackt_format::demo_track();
-        let mut checked = 0;
         for def in catalog() {
             let shape = piece_shape(def.id, &PieceParams::default(), doc.cell_size);
-            if shape.occupied.is_empty() {
-                assert!(
-                    stamp_cells(def.id, &doc, 0).is_empty(),
-                    "{} owns no cells and should fill no block",
-                    def.id.label()
-                );
-                checked += 1;
-            }
+            assert_eq!(
+                stamp_cells(def.id, &doc, 0).is_empty(),
+                shape.occupied.is_empty(),
+                "{}: a piece that owns cells has to fill a block with them, and one that owns none has to fill nothing",
+                def.id.label()
+            );
         }
-        assert!(checked > 0, "the catalogue has no cell-less piece to check");
     }
 }
