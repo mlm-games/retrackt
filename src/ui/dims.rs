@@ -1041,15 +1041,19 @@ mod tests {
         data.track = b.build();
         let shown = labels(&editor_with(&data, 1280.0, 800.0));
         assert!(shown.iter().any(|t| t == "Track settings"), "{shown:?}");
-        assert!(shown.iter().any(|t| t == "Track name"), "{shown:?}");
+        // The field carries the name rather than a hint, since a hint is only drawn
+        // while a field is empty and this one is never empty: it opens on the name
+        // the track already has. So the name is what proves the field is there.
+        assert!(shown.iter().any(|t| t == "settings"), "{shown:?}");
+        assert!(shown.iter().any(|t| t == "Rename"), "{shown:?}");
         for label in ["Start", "Finish", "Gates"] {
             assert!(
                 shown.iter().any(|t| t == label),
                 "track settings has no {label} row: {shown:?}"
             );
         }
-        // The gates it counted are the ones the car will pass, so two gates on this
-        // circuit must read as 2 and not as the piece count.
+        // The gate count is the sequence the car will pass, not the piece count, so
+        // this three-piece circuit with one checkpoint must read as 1.
         assert!(shown.iter().any(|t| t == "1"), "{shown:?}");
     }
 
