@@ -408,8 +408,15 @@ mod tests {
             .replace(['\r', '\n'], " ")
             .replace('%', "%25")
             .replace(':', "%3A");
-        let line = format!("::{level} file=dims.rs,line=0,title={title}::{clean}\n");
-        let _ = std::io::Write::write_all(&mut std::io::stderr(), line.as_bytes());
+        // One command per bounded piece. A single over-long command is a line the
+        // runner cannot parse, and a command it cannot parse takes the commands
+        // after it down too, so a long inventory swallows the very assertion it was
+        // printed to explain.
+        for chunk in clean.as_bytes().chunks(500) {
+            let piece = String::from_utf8_lossy(chunk);
+            let line = format!("::{level} file=dims.rs,line=0,title={title}::{piece}\n");
+            let _ = std::io::Write::write_all(&mut std::io::stderr(), line.as_bytes());
+        }
     }
 
     /// Report a failing assertion as a workflow annotation, so a red build names the
@@ -692,6 +699,7 @@ mod tests {
                 // did lay out costs a whole build to find out.
                 let inventory = every
                     .iter()
+                    .filter(|(_, r)| r.0 < 400.0)
                     .map(|(t, r)| format!("{t}@{:.0},{:.0},{:.0}", r.0, r.1, r.2))
                     .collect::<Vec<_>>()
                     .join(" ");
