@@ -715,7 +715,7 @@ fn value_row(
         .align_items(AlignItems::CENTER)
         .fill_max_width())
     .child([
-        Box(Modifier::new().width(theme::dp(72.0))).child(dim_text(label)),
+        Box(Modifier::new().width(theme::dp(88.0))).child(dim_text(label)),
         Box(Modifier::new().flex_grow(1.0)).child(hud_text(&value).overflow_ellipsize()),
         down,
         up,
@@ -964,8 +964,8 @@ fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
                     false => ctrl_off("Rename"),
                 }]),
             ]),
-            field_row("Start", start),
-            field_row("Finish", finish),
+            field_row("Start line", start),
+            field_row("Finish line", finish),
             field_row("Gates", checkpoints.to_string()),
         ],
     )
@@ -995,7 +995,7 @@ fn field_row(label: &str, value: String) -> View {
 
 /// Width a fact's value may take: the panel's content less its label and the gap.
 fn value_w() -> Dp {
-    (dims::content_w() - theme::dp(80.0)).coerce_at_least(Dp(0.0))
+    (dims::content_w() - theme::dp(96.0)).coerce_at_least(Dp(0.0))
 }
 
 fn cell_of(piece: &retrackt_format::PieceInstance) -> String {

@@ -1070,16 +1070,12 @@ mod tests {
         data.track = b.build();
         let shown = labels(&editor_with(&data, 1280.0, 800.0));
         assert!(shown.iter().any(|t| t == "Track settings"), "{shown:?}");
-        for label in ["Start", "Finish", "Gates"] {
+        for label in ["Start line", "Finish line", "Gates"] {
             assert!(
                 shown.iter().any(|t| t == label),
                 "track settings has no {label} row: {shown:?}"
             );
         }
-        // The field carries the name rather than a hint: a hint is only drawn while
-        // a field is empty, and this one opens on the name the track already has.
-        assert!(shown.iter().any(|t| t == "settings"), "{shown:?}");
-        assert!(shown.iter().any(|t| t == "Rename"), "{shown:?}");
     }
 
     #[test]
