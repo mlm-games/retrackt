@@ -715,7 +715,7 @@ fn value_row(
         .align_items(AlignItems::CENTER)
         .fill_max_width())
     .child([
-        Box(Modifier::new().width(theme::dp(88.0))).child(dim_text(label)),
+        Box(Modifier::new().width(theme::dp(72.0))).child(dim_text(label)),
         Box(Modifier::new().flex_grow(1.0)).child(hud_text(&value).overflow_ellipsize()),
         down,
         up,
@@ -977,17 +977,20 @@ const NONE: &str = "not placed";
 
 /// One named fact about the track, read rather than changed.
 ///
-/// The value is capped as well as ellipsized: a single-line label measures as its
-/// own full length however narrow the box around it, so left uncapped a long cell
-/// coordinate hands the row a minimum width wider than the panel it sits in, and
-/// the whole column grows a sideways scrollbar.
+/// The label gets 96 dp because "Finish line" does not fit in 72, and a label too
+/// narrow for its own text is not merely clipped on screen: the layout drops the
+/// text node entirely, so the label stops existing for anything reading the laid
+/// out tree. The value is capped as well as ellipsized, because a single-line
+/// label measures as its own full length however narrow the box around it, so left
+/// uncapped a long cell coordinate hands the row a minimum width wider than the
+/// panel it sits in and the whole column grows a sideways scrollbar.
 fn field_row(label: &str, value: String) -> View {
     Row(Modifier::new()
         .gap(dims::SPACE_ROW)
         .align_items(AlignItems::CENTER)
         .fill_max_width())
     .child([
-        Box(Modifier::new().width(theme::dp(72.0))).child(dim_text(label)),
+        Box(Modifier::new().width(theme::dp(96.0))).child(dim_text(label)),
         Box(Modifier::new().flex_grow(1.0).max_width(value_w()))
             .child(hud_text(&value).overflow_ellipsize()),
     ])
@@ -995,7 +998,7 @@ fn field_row(label: &str, value: String) -> View {
 
 /// Width a fact's value may take: the panel's content less its label and the gap.
 fn value_w() -> Dp {
-    (dims::content_w() - theme::dp(96.0)).coerce_at_least(Dp(0.0))
+    (dims::content_w() - theme::dp(104.0)).coerce_at_least(Dp(0.0))
 }
 
 fn cell_of(piece: &retrackt_format::PieceInstance) -> String {
