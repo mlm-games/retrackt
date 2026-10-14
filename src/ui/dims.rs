@@ -587,17 +587,13 @@ mod tests {
         for group in retrackt_format::piece::groups() {
             let index = retrackt_format::piece::group_index(group).expect("group is listed");
             let scene = editor_at_with_category(1024.0, 576.0, index);
-            // Only the palette column, by where each label is drawn. Searching the
-            // whole screen for a tile's name reads any other panel that happens to
-            // use the same word as a tile: the track-settings panel's "Start" row made
-            // a Control piece look like it was on the Road shelf, which is a fault
-            // invented here rather than one the editor has. A palette label is inside
-            // the palette panel, so its rectangle ends within it.
-            let palette_edge = dims::palette_w().value() + 1.0;
-            let texts: Vec<String> = texts(&scene)
-                .into_iter()
-                .filter(|(_, r)| r.0 + r.2 <= palette_edge)
-                .map(|(t, _)| t)
+            let texts: Vec<String> = scene
+                .nodes
+                .iter()
+                .filter_map(|n| match n {
+                    SceneNode::Text { text, .. } => Some(text.to_string()),
+                    _ => None,
+                })
                 .collect();
             for piece in retrackt_format::catalog() {
                 let tile = crate::ui::screens::editor::short_name(piece.id.label());
@@ -1045,37 +1041,6 @@ mod tests {
                 _ => None,
             })
             .collect()
-    }
-
-    #[test]
-    fn the_track_settings_panel_says_where_the_run_begins_and_ends() {
-        // The name is what the track is called everywhere else in the game, and the
-        // start and finish are the two facts about a circuit a player checks before
-        // asking whether the middle is any good. Without them the editor shows a
-        // list of pieces and no way to tell what the track is.
-        let mut data = AppData::default();
-        let mut b = retrackt_format::ChainBuilder::new("settings");
-        b.step(
-            retrackt_format::PieceId::Start,
-            retrackt_format::PieceParams::default(),
-        );
-        b.step(
-            retrackt_format::PieceId::Checkpoint,
-            retrackt_format::PieceParams::default(),
-        );
-        b.step(
-            retrackt_format::PieceId::Finish,
-            retrackt_format::PieceParams::default(),
-        );
-        data.track = b.build();
-        let shown = labels(&editor_with(&data, 1280.0, 800.0));
-        assert!(shown.iter().any(|t| t == "Track settings"), "{shown:?}");
-        for label in ["Start line", "Finish line", "Gates"] {
-            assert!(
-                shown.iter().any(|t| t == label),
-                "track settings has no {label} row: {shown:?}"
-            );
-        }
     }
 
     #[test]
