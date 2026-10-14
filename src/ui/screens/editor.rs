@@ -461,11 +461,15 @@ fn palette_list(armed: retrackt_format::PieceId, category: usize, actions: &Acti
         })
         .collect();
 
+    // Greedy wrapping, not balanced. Balancing is for rows of differing widths,
+    // where it evens out the ragged last line; every tile and every tab here is
+    // the same fixed width, so there is nothing to even out and the balance pass
+    // only gets between the shelf and the pieces in it.
     let wrap = |items: Vec<View>| {
         FlowRow(
             Modifier::new().gap(dims::SPACE_ROW).fill_max_width(),
             FlowRowConfig {
-                balanced: true,
+                balanced: false,
                 ..FlowRowConfig::default()
             },
         )

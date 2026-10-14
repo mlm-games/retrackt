@@ -674,13 +674,27 @@ mod tests {
                 .filter(|(_, r)| r.0 + r.2 <= palette_edge)
                 .map(|(t, _)| t)
                 .collect();
+            // The faces on the shelf, so a failure says whether a tile was dropped
+            // whole or drawn without its name.
+            let faces: Vec<String> = scene
+                .nodes
+                .iter()
+                .filter_map(|n| match n {
+                    SceneNode::Rect { rect, .. }
+                        if rect.x <= palette_edge && rect.w >= 80.0 && rect.h >= 50.0 =>
+                    {
+                        Some(format!("{:.0},{:.0},{:.0}", rect.x, rect.y, rect.w))
+                    }
+                    _ => None,
+                })
+                .collect();
             for piece in retrackt_format::catalog() {
                 let tile = crate::ui::screens::editor::short_name(piece.id.label());
                 let shown = texts.iter().any(|t| *t == tile);
                 assert_eq!(
                     shown,
                     piece.id.group() == group,
-                    "{group}: {tile} is {} of {texts:?} inside edge {palette_edge:.1}",
+                    "{group}: {tile} is {} of {texts:?} in faces {faces:?} edge {palette_edge:.1}",
                     if shown { "shown" } else { "hidden" }
                 );
             }
