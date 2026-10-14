@@ -207,7 +207,7 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     // so it belongs with the piece list rather than with the palette.
     let color_panel = color_panel(data, actions);
     let track_column = Column(Modifier::new().gap(dims::SPACE_SECTION)).child([
-        track_settings_panel(data, actions),
+        track_settings_panel(data),
         selection_panel(data, actions),
         track,
         color_panel,
@@ -903,7 +903,7 @@ fn selection_panel(data: &AppData, actions: &ActionQueue) -> View {
 /// name is what the track is called everywhere else in the game, and the start
 /// and finish are the two facts about a circuit that a player checks before
 /// asking whether the middle is any good.
-fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
+fn track_settings_panel(data: &AppData) -> View {
     let track = &data.track;
     let start = track
         .pieces
@@ -920,47 +920,10 @@ fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
         .collect();
     let checkpoints = track.checkpoint_sequence().len();
 
-    let name = if data.editor.name_draft.is_empty() {
-        track.name.clone()
-    } else {
-        data.editor.name_draft.clone()
-    };
-    // Persisted across frames, not rebuilt each frame: a field that gets a fresh
-    // state every frame loses its focus and its caret on every keystroke, so it
-    // would accept one character and lose it. Synced from the editor state, which
-    // is the draft the Rename button reads, so undo or a loaded track shows the
-    // name rather than whatever the field last had.
-    let draft: Rc<RefCell<TextFieldState>> =
-        remember_with_key("editor.name", || RefCell::new(TextFieldState::new()));
-    if draft.borrow().text != name {
-        draft.borrow_mut().text = name;
-    }
-    let dirty = data.editor.name_draft.trim() != track.name && !data.editor.name_draft.is_empty();
-
     list_panel_w(
         "Track settings",
         dims::panel_w(),
         vec![
-            Column(Modifier::new().gap(dims::SPACE_LIST).fill_max_width()).child([
-                BasicTextField(
-                    draft,
-                    Modifier::new().fill_max_width().min_height(dims::CTRL_H),
-                    "Track name",
-                    TextFieldConfig {
-                        line_limits: TextFieldLineLimits::SingleLine,
-                        on_change: Some(Rc::new({
-                            let queue = actions.clone();
-                            move |text: String| push(&queue, UiAct::SetNameDraft(text))
-                        }) as Rc<dyn Fn(String)>),
-                        ..TextFieldConfig::default()
-                    },
-                ),
-                ctrl_row(vec![if dirty {
-                    ctrl_on("Rename", pusher(actions, UiAct::RenameTrack))
-                } else {
-                    ctrl_off("Rename")
-                }]),
-            ]),
             field_row("Start", start),
             field_row(
                 "Finish",
