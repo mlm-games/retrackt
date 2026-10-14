@@ -397,6 +397,21 @@ mod tests {
     /// A rectangle in dp: x, y, width, height.
     type Rect = (f32, f32, f32, f32);
 
+    /// Send a line to the real stderr as a workflow command.
+    ///
+    /// Not `eprintln!`: the test harness captures what that writes and replays it
+    /// only for a test it is already reporting as failed, so a diagnostic printed
+    /// that way is lost in exactly the build that needed it. A build reads workflow
+    /// commands off the process's own stderr, which `eprintln!` never reaches.
+    fn note(level: &str, title: &str, message: &str) {
+        let clean = message
+            .replace(['\r', '\n'], " ")
+            .replace('%', "%25")
+            .replace(':', "%3A");
+        let line = format!("::{level} file=dims.rs,line=0,title={title}::{clean}\n");
+        let _ = std::io::Write::write_all(&mut std::io::stderr(), line.as_bytes());
+    }
+
     /// Report a failing assertion as a workflow annotation, so a red build names the
     /// assertion that failed in its own summary rather than only in a log the checks
     /// API will not hand back.
@@ -415,12 +430,7 @@ mod tests {
                 let at = info.location();
                 let file = at.map_or("dims.rs", |l| l.file());
                 let line = at.map_or(0, |l| l.line());
-                let clean = said
-                    .replace('\n', " ")
-                    .replace('\r', " ")
-                    .replace('%', "%25")
-                    .replace(':', "%3A");
-                eprintln!("::error file={file},line={line},title=failed assertion::{clean}");
+                note("error", &format!("failed {file}:{line}"), &said);
                 previous(info);
             }));
         });
@@ -685,8 +695,10 @@ mod tests {
                     .map(|(t, r)| format!("{t}@{:.0},{:.0},{:.0}", r.0, r.1, r.2))
                     .collect::<Vec<_>>()
                     .join(" ");
-                eprintln!(
-                    "::warning file=dims.rs,line=0,title=palette {group} laid out::edge={palette_edge:.1} {inventory}"
+                note(
+                    "warning",
+                    &format!("palette {group} laid out"),
+                    &format!("edge={palette_edge:.1} {inventory}"),
                 );
                 let wide = scene
                     .nodes
@@ -699,7 +711,7 @@ mod tests {
                     })
                     .collect::<Vec<_>>()
                     .join(" ");
-                eprintln!("::warning file=dims.rs,line=0,title=wide rects::{wide}");
+                note("warning", "wide rects", &wide);
                 shown_groups += 1;
             }
             for piece in retrackt_format::catalog() {
