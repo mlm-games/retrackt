@@ -58,24 +58,13 @@ jobs:
           run_step type-check cargo check --workspace --all-targets
           run_step test cargo test --workspace
           run_step fmt cargo fmt --all -- --check
-      - name: Report each objection as an annotation
+      - name: Report each step's log
         run: |
-          status=0
           for report in reports/*.status; do
             name=$(basename "$report" .status)
             code=$(cat "$report")
-            if [ "$code" = "0" ]; then
-              continue
-            fi
-            status=1
-            # The error lines first: a compiler error ends in a block of `|` and
-            # `help:` noise, so a tail of the log is all noise and no error.
-            body=$(grep -E '^error' "reports/$name.log" | head -15)
-            if [ -z "$body" ]; then
-              body=$(tail -20 "reports/$name.log")
-            fi
-            clean=$(printf '%s' "$body" \
-              | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/:/%3A/g')
-            printf '::error file=reports/%s.log::step %s exited %s\n%s\n' "$name" "$name" "$code" "$clean"
+            bytes=$(wc -c < "reports/$name.log")
+            printf '::error file=reports/%s.log::%s exited %s, log %s bytes\n%s\n' \
+              "$name" "$name" "$code" "$bytes" "$(head -25 "reports/$name.log")"
           done
-          exit $status
+          exit 1
