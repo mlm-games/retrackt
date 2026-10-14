@@ -55,3 +55,37 @@ jobs:
             printf '::error title=type error::%s\n' "$clean"
           done < <(grep -E '^(error|warning)(\[|:)' /tmp/check.log | head -40)
           exit $status
+
+  # Run the tests once, here, and name the failures as annotations.
+  #
+  # The platform jobs say pass or fail and nothing more, and their logs do not
+  # come back through the checks API. Running the same tests once more and turning
+  # each failure into an annotation is what makes a red build say which assertion
+  # failed rather than only that something did.
+  test-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Run the tests
+        run: |
+          set -o pipefail
+          cargo test --workspace 2>&1 | tee /tmp/test.log || true
+      - name: Report each failure as an annotation
+        run: |
+          status=0
+          if grep -qE '^(test result: FAILED|failures:)' /tmp/test.log; then
+            status=1
+          fi
+          {
+            grep -A 3 '^---- .* stdout ----' /tmp/test.log || true
+            grep -E '^failures:$' -A 20 /tmp/test.log || true
+          } | grep -vE '^(note:|help:|\s*\||\s*=|\s*[0-9]+ *\||$)' | head -60 | while IFS= read -r line; do
+            clean=$(printf '%s' "$line" \
+              | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/:/%3A/g')
+            printf '::error title=failed test::%s\n' "$clean"
+          done
+          exit $status
