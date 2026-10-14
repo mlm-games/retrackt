@@ -1150,10 +1150,36 @@ mod tests {
         // it can be looked at in. Without them the editor opens a circuit and
         // leaves it in whatever weather it happened to load.
         assert!(shown.iter().any(|t| t == "Sun direction"), "{shown:?}");
+        assert!(shown.iter().any(|t| t == "Allow overlap"), "{shown:?}");
         for (_, name) in retrackt_format::ENVIRONMENTS {
             assert!(
                 shown.iter().any(|t| t == name),
                 "track settings offers no {name} environment: {shown:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tracks_on_offer_wait_to_be_asked_for() {
+        // A button per track in the column's own width pushes everything below it
+        // down as tracks are saved, until the Clear button needs a scrollbar of its
+        // own to be reached. One button and a panel, opened on ask.
+        let quiet = labels(&editor_with(&AppData::default(), 1280.0, 800.0));
+        assert!(quiet.iter().any(|t| t == "Load"), "{quiet:?}");
+        assert!(
+            !quiet.iter().any(|t| t == "Load a track"),
+            "the load list is open by default"
+        );
+
+        let mut asked = AppData::default();
+        asked.editor.show_loads = true;
+        let open = labels(&editor_with(&asked, 1280.0, 800.0));
+        assert!(open.iter().any(|t| t == "Load a track"), "{open:?}");
+        for track in retrackt_format::builtin_tracks() {
+            assert!(
+                open.iter().any(|t| *t == track.name),
+                "the load list has no {}: {open:?}",
+                track.name
             );
         }
     }

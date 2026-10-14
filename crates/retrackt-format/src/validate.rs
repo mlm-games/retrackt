@@ -159,7 +159,10 @@ pub fn validate(doc: &TrackDocument) -> Vec<Diagnostic> {
             }
         }
     }
-    if !overlapping.is_empty() {
+    // Silenced by the track saying it means to, not by the geometry changing: the
+    // same document is the same overlap either way, and only the track's author
+    // knows whether the cells in question are a mistake or the point.
+    if !overlapping.is_empty() && !doc.allow_overlap {
         let mut names: Vec<&str> = overlapping
             .iter()
             .filter_map(|uid| doc.piece(*uid))
@@ -466,6 +469,34 @@ mod tests {
             warnings(&doc)
         );
         assert!(!is_unraceable(&found));
+    }
+
+    /// A track that says it means to stack its own pieces on its own cells is
+    /// taken at its word. The cells are the same either way; only the author
+    /// knows whether they are a mistake or the point, and the point is often
+    /// scenery deliberately built over the road.
+    #[test]
+    fn a_track_that_allows_overlap_is_not_warned_about_it() {
+        let mut doc = demo_track();
+        let victim = *doc
+            .pieces
+            .iter()
+            .find(|p| {
+                !crate::geometry::piece_shape(p.id, &p.params, doc.cell_size)
+                    .occupied
+                    .is_empty()
+            })
+            .expect("the demo circuit has a piece with a road body");
+        let uid = doc.next_piece_uid();
+        doc.pieces.push(victim.with_uid(uid));
+        doc.normalize_uids();
+
+        doc.allow_overlap = true;
+        let quiet = warnings(&doc);
+        assert!(
+            !quiet.iter().any(|m| m.contains("share cells")),
+            "a track that allows overlap was still warned about it: {quiet:?}"
+        );
     }
 
     #[test]

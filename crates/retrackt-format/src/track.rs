@@ -134,6 +134,14 @@ pub struct TrackDocument {
     /// share is how far round the compass the sun is, not how high it hangs.
     #[serde(default = "default_sun_direction_deg")]
     pub sun_direction_deg: u16,
+    /// Whether two pieces are allowed to stand on the same cells.
+    ///
+    /// Placement has always allowed it and said so in the diagnostics, because the
+    /// road can legitimately widen into a cell a neighbour already reaches — a
+    /// junction's approaches touch. A track that means to stack scenery on its own
+    /// road has to be able to say that is the point, and this is how.
+    #[serde(default)]
+    pub allow_overlap: bool,
 }
 
 fn default_sun_direction_deg() -> u16 {
@@ -158,6 +166,7 @@ impl TrackDocument {
             spawn_yaw_deg: 0.0,
             environment: ENVIRONMENT_SUMMER,
             sun_direction_deg: DEFAULT_SUN_DIRECTION_DEG,
+            allow_overlap: false,
         }
     }
 

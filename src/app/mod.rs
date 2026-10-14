@@ -591,6 +591,13 @@ impl App {
                 self.data.track.sun_direction_deg = deg % 360;
             }
             UiAct::GenerateTrack => self.generate_track(),
+            UiAct::ToggleLoads => self.data.editor.show_loads = !self.data.editor.show_loads,
+            UiAct::SetAllowOverlap(allow) => {
+                self.data.track.allow_overlap = allow;
+                // The diagnostics are what this setting speaks to, so they are the
+                // thing that has to be rebuilt rather than just the flag.
+                self.data.editor.diagnostics = retrackt_format::validate(&self.data.track);
+            }
             UiAct::CopyShareCode => self.copy_share_code(),
             UiAct::LoadShareCode => self.load_share_code(),
             UiAct::SetCodeDraft(code) => self.data.editor.code_draft = code,
@@ -1257,6 +1264,8 @@ impl App {
             TrackRef::Saved(_) => crate::save::load_track(name)
                 .ok_or_else(|| format!("Could not load track \"{name}\"")),
         };
+        // The list is a means of getting a track, not a place to sit afterwards.
+        self.data.editor.show_loads = false;
         match loaded {
             Ok(doc) => self.set_track(doc),
             Err(e) => self.data.notice = Some(e),

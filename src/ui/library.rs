@@ -32,7 +32,7 @@ pub fn with_saved<R>(f: impl FnOnce(&[TrackDocument]) -> R) -> R {
 /// Two files can carry the same track name, and that is not the same as two
 /// adjacent names: `dedup` would keep the second copy whenever the list were not
 /// sorted. Kept in stored order, first occurrence wins.
-fn saved_names() -> Vec<String> {
+pub fn saved_names() -> Vec<String> {
     with_saved(|docs| {
         let mut names: Vec<String> = Vec::new();
         for doc in docs {

@@ -13,7 +13,7 @@ use repose_ui::{
     BasicTextField, Box, Center, Column, DragValue, FlowRow, FlowRowConfig, Row, Text,
     TextFieldConfig, TextFieldState, TextStyle, ViewExt, ZStack,
 };
-use retrackt_format::{PieceUid, catalog};
+use retrackt_format::{PieceUid, builtin_tracks, catalog};
 
 use crate::app::ParamKind;
 use crate::app::state::{ActionQueue, AppData, EditorData, TrackRef, UiAct, push};
@@ -1004,6 +1004,20 @@ fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
                     },
                 )),
             ]),
+            // Whether two pieces may stand on the same cells. The label says what
+            // tapping does rather than what is true, because a control that is on
+            // when overlap is allowed and does nothing when pressed is the one
+            // thing a toggle must not be.
+            ctrl_row(vec![match track.allow_overlap {
+                true => ctrl_on(
+                    "Forbid overlap",
+                    pusher(actions, UiAct::SetAllowOverlap(false)),
+                ),
+                false => ctrl(
+                    "Allow overlap",
+                    pusher(actions, UiAct::SetAllowOverlap(true)),
+                ),
+            }]),
             field_row("Start line", start),
             field_row("Finish line", finish),
             field_row("Gates", checkpoints.to_string()),
@@ -1120,20 +1134,16 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
         children.push(controls_panel());
     }
 
-    let mut loaders: Vec<View> = Vec::new();
-    for track in retrackt_format::builtin_tracks() {
-        let label = format!("Load {}", track.name);
-        let click = pusher(actions, UiAct::LoadTrack(TrackRef::Builtin(track.name)));
-        loaders.push(ctrl(&label, click));
-    }
-    let mut row = vec![
+    children.push(ctrl_row(vec![
         ctrl("Save", pusher(actions, UiAct::SaveTrack)),
         ctrl("Generate", pusher(actions, UiAct::GenerateTrack)),
+        ctrl("Load", pusher(actions, UiAct::ToggleLoads)),
         ctrl("Remove Last", pusher(actions, UiAct::RemoveLastPiece)),
         ctrl_danger("Clear Track", pusher(actions, UiAct::ClearTrack)),
-    ];
-    row.extend(loaders);
-    children.push(ctrl_row(row));
+    ]));
+    if editor.show_loads {
+        children.push(loads_panel(actions));
+    }
 
     children
 }
@@ -1237,6 +1247,61 @@ fn help_section(head: &str, prose: &[&str], keys: &[(&str, &str)]) -> Vec<View> 
         ])
     }));
     rows
+}
+
+/// The tracks on offer, behind one button.
+///
+/// A panel rather than a button per track: the list grows with every track ever
+/// saved, and buttons in the column's own width push everything below them down
+/// until the column needs a scrollbar of its own to reach the Clear button.
+fn loads_panel(actions: &ActionQueue) -> View {
+    let mut builtins = builtin_tracks();
+    builtins.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut rows: Vec<View> = builtins
+        .iter()
+        .map(|doc| {
+            load_row(
+                &doc.name,
+                &format!("{} pieces", doc.pieces.len()),
+                TrackRef::Builtin(doc.name.clone()),
+                actions,
+            )
+        })
+        .collect();
+    rows.extend(
+        crate::ui::library::saved_names()
+            .into_iter()
+            .map(|name| load_row(&name, "saved", TrackRef::Saved(name), actions)),
+    );
+    if rows.is_empty() {
+        rows.push(dim_text("No tracks to load yet."));
+    }
+    list_panel_w("Load a track", dims::panel_w(), rows)
+}
+
+/// One track in the load list: its name, and enough beside it to tell two tracks
+/// of the same name apart before either is loaded.
+fn load_row(name: &str, detail: &str, track: TrackRef, actions: &ActionQueue) -> View {
+    Row(Modifier::new()
+        .gap(dims::SPACE_ROW)
+        .align_items(AlignItems::CENTER)
+        .fill_max_width()
+        .on_click(pusher(actions, UiAct::LoadTrack(track))))
+    .child([
+        Box(Modifier::new().flex_grow(1.0)).child(
+            Text(name)
+                .size(theme::sp(16.0))
+                .color(theme::text())
+                .single_line()
+                .overflow_ellipsize(),
+        ),
+        Box(Modifier::new().width(dims::KEY_W)).child(
+            Text(detail)
+                .size(theme::sp(13.0))
+                .color(theme::text_dim())
+                .single_line(),
+        ),
+    ])
 }
 
 /// Cursor cell, its six directions, and whether the next placement connects.
