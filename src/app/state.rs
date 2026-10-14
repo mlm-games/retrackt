@@ -128,6 +128,8 @@ pub enum UiAct {
     AdjustParam(retrackt_format::PieceUid, crate::app::ParamKind, i8),
     /// Apply one parameter nudge to every selected piece.
     AdjustSelection(crate::app::ParamKind, i8),
+    /// Show or hide the editor's keyboard reference.
+    ToggleHelp,
     /// Encode the current track as a share code and put it on the clipboard.
     CopyShareCode,
     /// Decode the editor's code field into the current track.
@@ -307,6 +309,14 @@ pub struct EditorData {
     pub can_redo: bool,
     /// Problems with the track, recomputed when it changes.
     pub diagnostics: Vec<retrackt_format::Diagnostic>,
+    /// Whether the editor's keyboard reference is open.
+    ///
+    /// Closed by default, and that is the point: the reference is nine rows of
+    /// text about keys nobody reads while placing a piece, and leaving it open put
+    /// it between the player and the list of pieces. It answers "what does G do"
+    /// once, and it is where a player goes looking when they have already found
+    /// every other key.
+    pub show_help: bool,
     /// Share-code field contents, so the draft survives leaving the editor.
     pub code_draft: String,
     /// The last code this track exported to, shown so it can be re-copied.
@@ -340,6 +350,7 @@ impl Default for EditorData {
             code_out: String::new(),
             thumbnails: true,
             hover: None,
+            show_help: false,
         }
     }
 }

@@ -207,6 +207,7 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     // so it belongs with the piece list rather than with the palette.
     let color_panel = color_panel(data, actions);
     let track_column = Column(Modifier::new().gap(dims::SPACE_SECTION)).child([
+        selection_panel(data, actions),
         track,
         color_panel,
         diagnostics_panel(editor),
@@ -614,148 +615,280 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
         .iter()
         .map(|piece| {
             let uid = piece.uid;
-            let selected = data.editor.is_selected(uid);
-            let select = pusher(actions, UiAct::SelectPiece(uid));
-            let toggle = pusher(actions, UiAct::ToggleSelect(uid));
             let (len, rad, bank) = retrackt_format::piece::resolve_params(piece.id, &piece.params);
             let slope = retrackt_format::geometry::resolve_slope(piece.id, &piece.params);
 
-            let nudge = |label: &'static str, kind: ParamKind, delta: i8| {
-                let queue = actions.clone();
-                ctrl(label, move || {
-                    push(&queue, UiAct::AdjustParam(uid, kind, delta))
-                })
-            };
+            // What the piece is set to, read rather than edited here. A row that
+            // carries a control for each of its values is a list whose rows cannot
+            // be scanned: eleven controls in a row leaves nothing to read, so the
+            // list is where the player looks to find a piece and the inspector is
+            // where they change it.
+            let mut bits: Vec<String> = Vec::new();
+            if piece.id.has_length() {
+                bits.push(format!("len {len}"));
+            }
+            if piece.id.has_radius() {
+                bits.push(format!("rad {rad}"));
+            }
+            if piece.id.is_slope() {
+                bits.push(format!("slope {}°", slope.round() as i32));
+                bits.push(format!("bank {bank}°"));
+            }
+            if piece.id.is_driveable() && piece.params.wide {
+                bits.push("wide".into());
+            }
+            if retrackt_format::piece::catalog_by_id(piece.id).is_checkpoint {
+                bits.push(format!("gate {}", gates.get(&uid).copied().unwrap_or(0)));
+            }
 
-            // Radius means nothing for a piece the catalogue gives none, so the
-            // control is withheld rather than offered and silently discarded.
-            let radius = if !piece.id.has_radius() {
-                Vec::new()
-            } else {
-                vec![
-                    dim_text(&format!("rad {rad}")),
-                    nudge("R-", ParamKind::Radius, -1),
-                    nudge("R+", ParamKind::Radius, 1),
-                ]
-            };
-
-            // Three bands rather than one wrapped row: the identity gets a line to
-            // itself, the four edits get a line of their own, and the parameters a
-            // third. As one row the identity and four controls had to share 440 dp,
-            // which is 464 dp of content at the floor — so the row wrapped the same
-            // ragged way at every window size instead of responding to any of them.
-            let length = if piece.id.has_length() {
-                vec![
-                    dim_text(&format!("len {len}")),
-                    nudge("L-", ParamKind::Length, -1),
-                    nudge("L+", ParamKind::Length, 1),
-                ]
-            } else {
-                Vec::new()
-            };
-            let bank = if piece.id.is_slope() {
-                // A slope leans across the road like a bank, and the same
-                // control carries it.
-                vec![
-                    dim_text(&format!("bank {bank}°")),
-                    nudge("B-", ParamKind::Bank, -5),
-                    nudge("B+", ParamKind::Bank, 5),
-                ]
-            } else {
-                Vec::new()
-            };
-            // Steepness is the one control that has nothing to say about a flat
-            // piece, and everything about a slope.
-            let steepness = if piece.id.is_slope() {
-                vec![
-                    dim_text(&format!("slope {}°", slope.round() as i32)),
-                    nudge("S-", ParamKind::Slope, -5),
-                    nudge("S+", ParamKind::Slope, 5),
-                ]
-            } else {
-                Vec::new()
-            };
-            // Width is a toggle, not a knob: a road is one carriageway or the
-            // other, and a slider between them would offer widths the game
-            // has no reason to draw.
-            let width = if piece.id.is_driveable() {
-                let queue = actions.clone();
-                vec![
-                    dim_text(if piece.params.wide { "wide" } else { "narrow" }),
-                    ctrl(
-                        if piece.params.wide { "Narrow" } else { "Wide" },
-                        move || push(&queue, UiAct::ToggleWide(uid)),
-                    ),
-                ]
-            } else {
-                Vec::new()
-            };
-            let params = length
-                .into_iter()
-                .chain(radius)
-                .chain(bank)
-                .chain(steepness)
-                .chain(width);
-            // A checkpoint carries one more value, and it is the one that decides
-            // the run: the order the gates come in. Shown on the piece that owns it
-            // rather than in a panel of its own, because it is a property of that
-            // one gate and of nothing else on the track.
-            let params: Vec<View> = if retrackt_format::piece::catalog_by_id(piece.id).is_checkpoint
-            {
-                params
-                    .chain([
-                        dim_text(&format!("gate {}", gates.get(&uid).copied().unwrap_or(0))),
-                        nudge("G-", ParamKind::Order, -1),
-                        nudge("G+", ParamKind::Order, 1),
-                    ])
-                    .collect()
-            } else {
-                params.collect()
-            };
-
-            Column(Modifier::new().gap(dims::SPACE_LIST)).child([
-                Row(Modifier::new()
-                    .gap(dims::SPACE_ROW)
-                    .align_items(AlignItems::CENTER))
-                .child(
-                    Box(Modifier::new().width(dims::RANK_W)).child(
-                        Text(format!("{}.", rank(uid)))
-                            .size(theme::sp(14.0))
-                            .color(theme::text_dim())
-                            .single_line(),
-                    ),
-                )
-                .child(
-                    // Capped, not stretched: a single-line label measures as
-                    // its own full length however narrow the box is, so left
-                    // uncapped it hands the row a minimum width wider than the
-                    // panel and the piece list grows a sideways scroll.
-                    Box(Modifier::new().fill_max_width().max_width(dims::label_w())).child(
-                        hud_text(&format!(
-                            "{} [{} {} {}] yaw {}",
-                            piece.id.label(),
-                            piece.cell[0],
-                            piece.cell[1],
-                            piece.cell[2],
-                            piece.yaw,
-                        ))
-                        .overflow_ellipsize(),
-                    ),
+            let mut face = Modifier::new()
+                .fill_max_width()
+                .gap(dims::SPACE_ROW)
+                .align_items(AlignItems::CENTER)
+                .padding(theme::dp(4.0))
+                .clip_rounded(theme::dp(6.0))
+                .on_click(pusher(actions, UiAct::SelectPiece(uid)));
+            if data.editor.is_selected(uid) {
+                face = face.background(theme::accent().with_alpha_f32(0.18));
+            }
+            Row(face).child([
+                Box(Modifier::new().width(dims::RANK_W)).child(
+                    Text(format!("{}.", rank(uid)))
+                        .size(theme::sp(14.0))
+                        .color(theme::text_dim())
+                        .single_line(),
                 ),
-                ctrl_row(vec![
-                    if selected {
-                        ctrl_on("Sel", select)
-                    } else {
-                        ctrl("Sel", select)
-                    },
-                    ctrl("+Sel", toggle),
-                    ctrl("Rotate", pusher(actions, UiAct::RotatePiece(uid))),
-                    ctrl_danger("Remove", pusher(actions, UiAct::DeletePiece(uid))),
-                ]),
-                ctrl_row(params),
+                // Capped, not stretched: a single-line label measures as its
+                // own full length however narrow the box is, so left uncapped
+                // it hands the row a minimum width wider than the panel and the
+                // piece list grows a sideways scroll.
+                Box(Modifier::new().flex_grow(1.0).max_width(dims::label_w()))
+                    .child(hud_text(piece.id.label()).overflow_ellipsize()),
+                Box(Modifier::new().width(theme::dp(72.0))).child(
+                    dim_text(&format!(
+                        "[{} {} {}]",
+                        piece.cell[0], piece.cell[1], piece.cell[2]
+                    ))
+                    .overflow_ellipsize(),
+                ),
+                // Weighted against the name rather than equal to it: a name is four
+                // characters and the values are the reason to read the row.
+                Box(Modifier::new().flex_grow(2.0))
+                    .child(dim_text(&bits.join(" · ")).overflow_ellipsize()),
             ])
         })
         .collect()
+}
+
+/// One tunable value, its current setting, and the two ways to move it.
+///
+/// A named value rather than a pair of buttons that say `len-` and `len+`: a
+/// player reading `len-` has to remember what it shortened, and a pair that does
+/// not say what it holds cannot be scanned at all when every value on the piece
+/// has one.
+fn value_row(
+    label: &'static str,
+    value: String,
+    kind: ParamKind,
+    step: i8,
+    actions: &ActionQueue,
+) -> View {
+    let down = {
+        let queue = actions.clone();
+        outlined_at("-", dims::ctrl_w(), ctrl_config(), move || {
+            push(&queue, UiAct::AdjustSelection(kind, -step))
+        })
+    };
+    let up = {
+        let queue = actions.clone();
+        outlined_at("+", dims::ctrl_w(), ctrl_config(), move || {
+            push(&queue, UiAct::AdjustSelection(kind, step))
+        })
+    };
+    Row(Modifier::new()
+        .gap(dims::SPACE_ROW)
+        .align_items(AlignItems::CENTER)
+        .fill_max_width())
+    .child([
+        Box(Modifier::new().width(theme::dp(72.0))).child(dim_text(label)),
+        Box(Modifier::new().flex_grow(1.0)).child(hud_text(&value).overflow_ellipsize()),
+        down,
+        up,
+    ])
+}
+
+/// The value every selected piece agrees on, or a note that they do not.
+///
+/// A row of pieces retuned together shows one number while they agree and says so
+/// the moment they do not, rather than showing whichever piece happened to be
+/// read first: the number has to be the number the next press will move.
+fn agreed(
+    pieces: &[&retrackt_format::PieceInstance],
+    read: impl Fn(&retrackt_format::PieceInstance) -> String,
+) -> String {
+    let first = read(pieces[0]);
+    // `iter` yields `&&PieceInstance` and a closure argument does not deref on its
+    // own, so the inner reference is taken out by hand.
+    match pieces.iter().all(|p| read(*p) == first) {
+        true => first,
+        false => "mixed".into(),
+    }
+}
+
+/// The selection, and every value that can be changed about it.
+///
+/// One panel per selection rather than a control strip on every row of the list.
+/// The list is read constantly and edited rarely, and the piece it must show is
+/// whatever the selection is, so the controls move here where there is room to
+/// name them. Above the list rather than below it, because a piece list grows
+/// without limit and a panel under forty rows is a panel nobody reaches.
+fn selection_panel(data: &AppData, actions: &ActionQueue) -> View {
+    let editor = &data.editor;
+    let pieces: Vec<&retrackt_format::PieceInstance> = editor
+        .selection
+        .iter()
+        .filter_map(|uid| data.track.piece(*uid))
+        .collect();
+    if pieces.is_empty() {
+        return list_panel_w(
+            "Selection",
+            dims::panel_w(),
+            vec![dim_text(
+                "Nothing selected. Click a piece in the list below.",
+            )],
+        );
+    }
+    let one = pieces.len() == 1;
+    let named = match pieces.as_slice() {
+        [only] => only.id.label().to_string(),
+        many => format!("{} pieces", many.len()),
+    };
+    let mut rows: Vec<View> = vec![hud_text(&named)];
+
+    // A control is offered only when every selected piece has the value it would
+    // move. Offering one that half the selection cannot honour is a button that
+    // sometimes does nothing, which is the one behaviour a control must not have.
+    let every = |has: fn(retrackt_format::PieceId) -> bool| pieces.iter().all(|p| has(p.id));
+    if every(retrackt_format::PieceId::has_length) {
+        rows.push(value_row(
+            "Length",
+            agreed(&pieces, |p| {
+                format!(
+                    "{} cells",
+                    retrackt_format::piece::resolve_params(p.id, &p.params).0
+                )
+            }),
+            ParamKind::Length,
+            1,
+            actions,
+        ));
+    }
+    if every(retrackt_format::PieceId::has_radius) {
+        rows.push(value_row(
+            "Radius",
+            agreed(&pieces, |p| {
+                format!(
+                    "{} cells",
+                    retrackt_format::piece::resolve_params(p.id, &p.params).1
+                )
+            }),
+            ParamKind::Radius,
+            1,
+            actions,
+        ));
+    }
+    if every(retrackt_format::PieceId::is_slope) {
+        rows.push(value_row(
+            "Slope",
+            agreed(&pieces, |p| {
+                format!(
+                    "{}°",
+                    retrackt_format::geometry::resolve_slope(p.id, &p.params).round() as i32
+                )
+            }),
+            ParamKind::Slope,
+            5,
+            actions,
+        ));
+        rows.push(value_row(
+            "Bank",
+            agreed(&pieces, |p| {
+                format!(
+                    "{}°",
+                    retrackt_format::piece::resolve_params(p.id, &p.params).2
+                )
+            }),
+            ParamKind::Bank,
+            5,
+            actions,
+        ));
+    }
+    if one {
+        let piece = pieces[0];
+        if piece.id.is_driveable() {
+            let queue = actions.clone();
+            let uid = piece.uid;
+            let wide = piece.params.wide;
+            rows.push(
+                Row(Modifier::new()
+                    .gap(dims::SPACE_ROW)
+                    .align_items(AlignItems::CENTER)
+                    .fill_max_width())
+                .child([
+                    Box(Modifier::new().width(theme::dp(72.0))).child(dim_text("Width")),
+                    Box(Modifier::new().flex_grow(1.0)).child(hud_text(if wide {
+                        "Wide"
+                    } else {
+                        "Narrow"
+                    })),
+                    ctrl(if wide { "Narrow" } else { "Wide" }, move || {
+                        push(&queue, UiAct::ToggleWide(uid))
+                    }),
+                ]),
+            );
+        }
+    }
+    if pieces
+        .iter()
+        .all(|p| retrackt_format::piece::catalog_by_id(p.id).is_checkpoint)
+    {
+        let sequence = data.track.checkpoint_sequence();
+        let shown = |uid: PieceUid| {
+            sequence
+                .iter()
+                .position(|p| p.uid == uid)
+                .map(|i| i + 1)
+                .unwrap_or(0)
+        };
+        rows.push(value_row(
+            "Gate",
+            agreed(&pieces, |p| {
+                format!("{} of {}", shown(p.uid), sequence.len())
+            }),
+            ParamKind::Order,
+            1,
+            actions,
+        ));
+    }
+
+    rows.push(ctrl_row(vec![
+        ctrl("Rotate", pusher(actions, UiAct::RotateSelection(1))),
+        ctrl("Rot -1", pusher(actions, UiAct::RotateSelection(-1))),
+        ctrl("Duplicate", pusher(actions, UiAct::DuplicateSelection)),
+        ctrl_danger("Delete", pusher(actions, UiAct::DeleteSelection)),
+    ]));
+    rows.push(ctrl_row(vec![
+        ctrl("Select All", pusher(actions, UiAct::SelectAll)),
+        ctrl("Select Route", pusher(actions, UiAct::SelectRoute)),
+        ctrl("Clear Sel", pusher(actions, UiAct::SelectNone)),
+        ctrl("Copy", pusher(actions, UiAct::CopySelection)),
+    ]));
+    rows.push(dim_text(&format!(
+        "Clipboard: {} piece{}",
+        editor.clipboard.len(),
+        if editor.clipboard.len() == 1 { "" } else { "s" }
+    )));
+    list_panel_w("Selection", dims::panel_w(), rows)
 }
 
 fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
@@ -763,8 +896,13 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
     let mut children: Vec<View> = Vec::new();
     let count = data.track.pieces.len();
     children.push(dim_text(&format!(
-        "{count} pieces · {} selected",
-        editor.selection.len()
+        "{count} pieces · {} selected · {}",
+        editor.selection.len(),
+        if crate::ui::library::persisted(&data.track) {
+            "saved"
+        } else {
+            "unsaved"
+        }
     )));
     // What the pointer is over, which is what [G] takes. Shown rather than left
     // silent: a key that selects something the player cannot see is a coin toss.
@@ -773,11 +911,6 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
         None => "nothing".into(),
     };
     children.push(dim_text(&format!("Pointer over: {hover}")));
-    children.push(dim_text(if crate::ui::library::persisted(&data.track) {
-        "Saved to library"
-    } else {
-        "Unsaved changes"
-    }));
 
     children.push(cursor_row(editor, actions));
 
@@ -785,6 +918,9 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
     // a second one under the same pointer takes the wheel and keeps it.
     children.push(unscrolled(piece_rows(data, actions)));
 
+    // Placing, and only placing. Everything about the selection lives in the
+    // inspector, and the history is its own pair of buttons rather than two more
+    // in a row that mixes it with what is being placed.
     children.push(ctrl_row(vec![
         ctrl_on("Place", pusher(actions, UiAct::PlaceArmed)),
         ctrl("Turn CW", pusher(actions, UiAct::RotateArmed(1))),
@@ -793,66 +929,33 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
             if editor.snap { "Snap: On" } else { "Snap: Off" },
             pusher(actions, UiAct::ToggleSnap),
         ),
+    ]));
+    children.push(ctrl_row(vec![
         history_btn("Undo", editor.can_undo, actions, UiAct::Undo),
         history_btn("Redo", editor.can_redo, actions, UiAct::Redo),
-        ctrl("Select All", pusher(actions, UiAct::SelectAll)),
-        ctrl("Select Route", pusher(actions, UiAct::SelectRoute)),
-        ctrl("Clear Sel", pusher(actions, UiAct::SelectNone)),
-    ]));
-
-    children.push(ctrl_row(vec![
+        ctrl("Paste", pusher(actions, UiAct::PasteAtCursor)),
         ctrl(
             "Move to Cursor",
             pusher(actions, UiAct::MoveSelectionToCursor),
         ),
-        ctrl("Rotate", pusher(actions, UiAct::RotateSelection(1))),
-        ctrl("Rotate Back", pusher(actions, UiAct::RotateSelection(-1))),
-        ctrl("Copy", pusher(actions, UiAct::CopySelection)),
-        ctrl("Paste", pusher(actions, UiAct::PasteAtCursor)),
-        ctrl("Duplicate", pusher(actions, UiAct::DuplicateSelection)),
-        ctrl_danger("Delete", pusher(actions, UiAct::DeleteSelection)),
     ]));
 
-    // Retuning a whole selection is the point of selecting: lengthening every
-    // straight on a circuit one button at a time is not an edit anyone makes.
-    children.push(ctrl_row(vec![
-        dim_text("Selection"),
-        ctrl(
-            "len-",
-            pusher(actions, UiAct::AdjustSelection(ParamKind::Length, -1)),
-        ),
-        ctrl(
-            "len+",
-            pusher(actions, UiAct::AdjustSelection(ParamKind::Length, 1)),
-        ),
-        ctrl(
-            "rad-",
-            pusher(actions, UiAct::AdjustSelection(ParamKind::Radius, -1)),
-        ),
-        ctrl(
-            "rad+",
-            pusher(actions, UiAct::AdjustSelection(ParamKind::Radius, 1)),
-        ),
-        ctrl(
-            "bank-",
-            pusher(actions, UiAct::AdjustSelection(ParamKind::Bank, -5)),
-        ),
-        ctrl(
-            "bank+",
-            pusher(actions, UiAct::AdjustSelection(ParamKind::Bank, 5)),
-        ),
-    ]));
-
-    children.push(dim_text(&format!(
-        "Clipboard: {} piece{}",
-        editor.clipboard.len(),
-        if editor.clipboard.len() == 1 { "" } else { "s" }
-    )));
-
-    // The editor's own keys, so they can be found on the screen they work on.
-    // The camera keys in particular are meaningless without this: three of them
-    // sit under the left hand where the race puts the throttle.
-    children.push(controls_panel());
+    // The editor's own keys, behind their own button. The camera keys in
+    // particular are meaningless without them — three of those sit under the left
+    // hand where the race puts the throttle — but they are nine rows of text about
+    // keys nobody reads while placing a piece, and open they stood between the
+    // player and the list of pieces.
+    children.push(ctrl_row(vec![ctrl(
+        if editor.show_help {
+            "Hide keys"
+        } else {
+            "Keys"
+        },
+        pusher(actions, UiAct::ToggleHelp),
+    )]));
+    if editor.show_help {
+        children.push(controls_panel());
+    }
 
     let mut loaders: Vec<View> = Vec::new();
     for track in retrackt_format::builtin_tracks() {

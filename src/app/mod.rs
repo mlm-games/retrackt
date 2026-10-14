@@ -567,6 +567,7 @@ impl App {
             UiAct::Undo => self.undo(),
             UiAct::Redo => self.redo(),
             UiAct::AdjustSelection(kind, delta) => self.adjust_selection(kind, delta),
+            UiAct::ToggleHelp => self.data.editor.show_help = !self.data.editor.show_help,
             UiAct::CopyShareCode => self.copy_share_code(),
             UiAct::LoadShareCode => self.load_share_code(),
             UiAct::SetCodeDraft(code) => self.data.editor.code_draft = code,

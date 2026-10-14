@@ -489,11 +489,12 @@ mod tests {
     }
 
     #[test]
-    fn a_checkpoint_row_carries_its_gate_number_and_the_tool_that_changes_it() {
-        // A checkpoint's order is the one edit that is not about its shape, and
-        // it is the one that decides the run. The row has to offer it: without
-        // the number the player cannot tell which gate they are setting, and
-        // without the nudges they cannot set it.
+    fn a_selected_gate_shows_its_number_and_the_way_to_change_it() {
+        // A checkpoint's order is the one edit that is not about its shape, and it
+        // is the one that decides the run. The list reads each gate's number so the
+        // order is visible without selecting anything, and the control that changes
+        // it lives in the inspector with the value it moves beside it — a button
+        // that says only `G+` cannot be read as a gate number until you know it.
         let _turn = crate::ui::fit::tests::WINDOW
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -520,12 +521,7 @@ mod tests {
         );
         data.track = b.build();
         let second = data.track.checkpoint_sequence().last().expect("gates").uid;
-        data.track
-            .pieces
-            .iter_mut()
-            .find(|p| p.uid == second)
-            .expect("the second gate")
-            .params = retrackt_format::PieceParams::default().order(1);
+        data.editor.selection = vec![second];
 
         let (scene, _, _) = repose_ui::layout_and_paint(
             &editor_ui(&data, &Rc::new(RefCell::new(Vec::new())) as &ActionQueue),
@@ -547,9 +543,13 @@ mod tests {
         // passed in, not the order they sit in the file.
         assert!(texts.contains(&"gate 1"), "{texts:?}");
         assert!(texts.contains(&"gate 2"), "{texts:?}");
-        // And both carry the nudges, one per gate.
-        assert_eq!(texts.iter().filter(|t| **t == "G-").count(), 2, "{texts:?}");
-        assert_eq!(texts.iter().filter(|t| **t == "G+").count(), 2, "{texts:?}");
+        // The selected one is named, its order named with it, and the pair of
+        // controls that moves it is on the same line.
+        assert!(texts.contains(&"Checkpoint"), "{texts:?}");
+        assert!(texts.contains(&"Gate"), "{texts:?}");
+        assert!(texts.contains(&"2 of 2"), "{texts:?}");
+        assert!(texts.contains(&"-"), "a gate has to be movable: {texts:?}");
+        assert!(texts.contains(&"+"), "a gate has to be movable: {texts:?}");
     }
 
     #[test]
@@ -977,6 +977,139 @@ mod tests {
                  {} dp past the window",
                 column.3,
                 bottom - h,
+            );
+        }
+    }
+
+    /// The editor laid out with the given state, so a test can ask what the screen
+    /// would actually show rather than what a function would return.
+    fn editor_with(data: &AppData, dp_w: f32, dp_h: f32) -> repose_core::Scene {
+        let _turn = crate::ui::fit::tests::WINDOW
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        set_window_container_size(dp_w, dp_h);
+        set_window_size_class_default(calculate_window_size_class(dp_w as u32, dp_h as u32, 1.0));
+        let view = editor_ui(data, &Rc::new(RefCell::new(Vec::new())) as &ActionQueue);
+        repose_ui::layout_and_paint(
+            &view,
+            (dp_w as u32, dp_h as u32),
+            &HashMap::new(),
+            &Default::default(),
+            None,
+        )
+        .0
+    }
+
+    /// Every piece of text the screen would draw.
+    fn labels(scene: &repose_core::Scene) -> Vec<String> {
+        scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                SceneNode::Text { text, .. } => Some(text.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_key_reference_waits_to_be_asked_for() {
+        // Nine rows of text about keys nobody reads while placing a piece, and open
+        // they stood between the player and the list of pieces. The camera keys are
+        // the ones that needed to be on the screen at all, so they have to be one
+        // tap away rather than always taking the space.
+        let quiet = labels(&editor_with(&AppData::default(), 1280.0, 800.0));
+        assert!(
+            !quiet.iter().any(|t| t.contains("move the camera")),
+            "the key reference is open by default"
+        );
+        assert!(quiet.iter().any(|t| t == "Keys"), "{quiet:?}");
+
+        let mut asked = AppData::default();
+        asked.editor.show_help = true;
+        let open = labels(&editor_with(&asked, 1280.0, 800.0));
+        assert!(
+            open.iter().any(|t| t.contains("move the camera")),
+            "asking for the keys did not open them"
+        );
+        assert!(open.iter().any(|t| t == "Hide keys"), "{open:?}");
+    }
+
+    #[test]
+    fn the_selection_panel_is_empty_until_something_is_selected() {
+        // The inspector is the whole point of selecting, so it must be about the
+        // selection: actions for a selection that does not exist are controls that
+        // would do nothing, which is the one thing a control must never be.
+        // "Duplicate" is unique to the inspector — the dock's tools are Rotate and
+        // the height steppers, so nothing else on the screen carries the word.
+        let empty = labels(&editor_with(&AppData::default(), 1280.0, 800.0));
+        assert!(empty.iter().any(|t| t == "Selection"), "{empty:?}");
+        assert!(
+            !empty.iter().any(|t| t == "Duplicate"),
+            "selection actions are shown with nothing selected"
+        );
+
+        let mut one = AppData::default();
+        one.track.pieces.push(
+            retrackt_format::PieceInstance::new(retrackt_format::PieceId::Straight, [0, 0, 0])
+                .with_uid(retrackt_format::PieceUid(1)),
+        );
+        one.editor.selection = vec![retrackt_format::PieceUid(1)];
+        let held = labels(&editor_with(&one, 1280.0, 800.0));
+        assert!(held.iter().any(|t| t == "Duplicate"), "{held:?}");
+        assert!(held.iter().any(|t| t == "Straight"), "{held:?}");
+    }
+
+    #[test]
+    fn the_piece_list_is_read_only_and_the_inspector_above_it_is_not() {
+        // The list is read constantly and edited rarely, and a row carrying a
+        // control for every value it has is a list whose rows cannot be scanned:
+        // eleven controls in a row of forty dp leaves nothing to read. So a row is a
+        // line of text, and the values it shows are the ones the inspector edits.
+        let mut data = AppData::default();
+        let mut b = retrackt_format::ChainBuilder::new("rows");
+        b.step(
+            retrackt_format::PieceId::Start,
+            retrackt_format::PieceParams::default(),
+        );
+        b.step(
+            retrackt_format::PieceId::RampUp,
+            retrackt_format::PieceParams::default(),
+        );
+        b.step(
+            retrackt_format::PieceId::Finish,
+            retrackt_format::PieceParams::default(),
+        );
+        data.track = b.build();
+        let ramp = data
+            .track
+            .race_order()
+            .iter()
+            .filter_map(|uid| data.track.piece(*uid))
+            .find(|p| p.id == retrackt_format::PieceId::RampUp)
+            .expect("the ramp")
+            .uid;
+        data.editor.selection = vec![ramp];
+
+        let shown = labels(&editor_with(&data, 1280.0, 800.0));
+        // The row reads the values out rather than offering them.
+        assert!(
+            shown.iter().any(|t| t.contains("slope ")),
+            "a slope row does not say its steepness: {shown:?}"
+        );
+        // And the controls that used to sit on it now sit in the inspector, named
+        // after what they move rather than after a minus sign.
+        for name in ["Length", "Slope", "Bank"] {
+            assert!(
+                shown.iter().any(|t| t == name),
+                "the inspector has no {name} row: {shown:?}"
+            );
+        }
+        // The old per-row bands are gone, and nothing anywhere offers them.
+        for gone in ["L-", "L+", "B-", "B+", "S-", "S+", "R-", "R+"] {
+            assert!(
+                !shown.iter().any(|t| t == gone),
+                "{gone} is still a button on a piece row"
             );
         }
     }
