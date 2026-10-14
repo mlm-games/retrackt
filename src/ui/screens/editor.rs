@@ -1137,44 +1137,105 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
     children
 }
 
-/// The editor's own controls, on the screen they belong to.
+/// The editor's own help, on the screen it belongs to.
 ///
-/// Written out rather than implied, because the editor's keys are not the race's:
-/// the arrows and WASD move the camera here and the car there, and a player who
-/// crosses between the two has nothing but this to tell them so.
+/// Four sections rather than one flat table of keys, which is the shape the
+/// reference uses and the only one that answers the three questions a player
+/// actually arrives with. Moving the camera is a gesture first and a key second.
+/// What counts as a valid track is not a key at all, and was only ever stated as
+/// a validation message the player has to already know to go looking for. And
+/// what a share code is for belongs to the share panel, not to a list of keys.
+/// A table of nine rows answers none of the three.
 fn controls_panel() -> View {
-    let lines: [(&str, &str); 9] = [
-        ("WASD / arrows", "move the camera"),
-        ("Q / E", "turn the camera"),
-        ("Wheel", "zoom"),
-        ("Shift + wheel", "edit height"),
-        ("Right drag", "move · middle or Ctrl + right: turn"),
-        ("Click / tap", "place · on a piece, select it"),
-        ("G", "select under the pointer"),
-        ("R / Space", "rotate the selection"),
-        ("X / Del", "delete the selection"),
+    let mut rows: Vec<View> = Vec::new();
+    rows.extend(help_section(
+        "Camera controls",
+        &[
+            "The camera is moved by right clicking and dragging, and turned by the middle button or by Ctrl and right dragging.",
+            "The wheel zooms. Shift and the wheel changes the height being edited, which the stepper in the bottom left also does.",
+            "On a touchscreen, one finger moves the camera, two turn it, and a pinch zooms.",
+        ],
+        &[
+            ("WASD / arrows", "move the camera"),
+            ("Q / E", "turn the camera"),
+            ("Wheel", "zoom"),
+            ("Shift + wheel", "edit height"),
+            ("Right drag", "move · middle or Ctrl + right: turn"),
+        ],
+    ));
+    rows.extend(help_section(
+        "Editing",
+        &[
+            "Choose a piece from the palette, then click the track to place it. Clicking a piece already on the track selects it.",
+            "The Selection panel above the list edits every piece picked at once, and offers a control only when all of them agree on it.",
+        ],
+        &[
+            ("Click / tap", "place · on a piece, select it"),
+            ("G", "select under the pointer"),
+            ("R / Space", "rotate the selection"),
+            ("X / Del", "delete the selection"),
+        ],
+    ));
+    rows.extend(help_section(
+        "Starts, checkpoints and the finish",
+        &[
+            "All three are in the Control category at the top of the palette.",
+            "A track needs at least one Start and one Finish. Where there is more than one Start, the last one placed is the one the car begins from.",
+            "Checkpoints are passed in the order they were placed. A track with none is a warning rather than an error: it is a lap with nothing in the middle.",
+        ],
+        &[],
+    ));
+    rows.extend(help_section(
+        "Sharing a track",
+        &[
+            "Give the track a name in Track settings, then Share encodes it into a code.",
+            "The code is the whole track. Send it to someone and they can play it, or edit it, by pasting it into their own Share panel.",
+        ],
+        &[],
+    ));
+    list_panel_w("How to use the editor", dims::panel_w(), rows)
+}
+
+/// One section of the help: what it is about, said in sentences, and the keys
+/// underneath for the players who already know and just want the letter.
+///
+/// A sentence per text node rather than a paragraph, because each one wraps on
+/// its own and a wrapped paragraph in a scrolling column is a height nobody can
+/// predict.
+fn help_section(head: &str, prose: &[&str], keys: &[(&str, &str)]) -> Vec<View> {
+    let mut rows = vec![
+        Text(head)
+            .size(theme::sp(17.0))
+            .font_family(theme::FONT_DISPLAY)
+            .color(theme::accent())
+            .single_line(),
     ];
-    let rows: Vec<View> = lines
-        .iter()
-        .map(|(keys, what)| {
-            Row(Modifier::new().gap(dims::SPACE_ROW).fill_max_width()).child([
-                Box(Modifier::new().width(dims::KEY_W)).child(
-                    Text(*keys)
-                        .size(theme::sp(13.0))
-                        .color(theme::accent())
-                        .single_line(),
-                ),
-                Box(Modifier::new().flex_grow(1.0)).child(
-                    Text(*what)
-                        .size(theme::sp(13.0))
-                        .color(theme::text_dim())
-                        .single_line()
-                        .overflow_ellipsize(),
-                ),
-            ])
-        })
-        .collect();
-    list_panel_w("Controls", dims::panel_w(), rows)
+    for sentence in prose {
+        rows.push(
+            Text(*sentence)
+                .size(theme::sp(14.0))
+                .color(theme::text_dim())
+                .max_lines(2),
+        );
+    }
+    rows.extend(keys.iter().map(|(keys, what)| {
+        Row(Modifier::new().gap(dims::SPACE_ROW).fill_max_width()).child([
+            Box(Modifier::new().width(dims::KEY_W)).child(
+                Text(*keys)
+                    .size(theme::sp(13.0))
+                    .color(theme::accent())
+                    .single_line(),
+            ),
+            Box(Modifier::new().flex_grow(1.0)).child(
+                Text(*what)
+                    .size(theme::sp(13.0))
+                    .color(theme::text_dim())
+                    .single_line()
+                    .overflow_ellipsize(),
+            ),
+        ])
+    }));
+    rows
 }
 
 /// Cursor cell, its six directions, and whether the next placement connects.

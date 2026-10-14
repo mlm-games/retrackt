@@ -1205,6 +1205,20 @@ mod tests {
             "asking for the keys did not open them"
         );
         assert!(open.iter().any(|t| t == "Hide keys"), "{open:?}");
+        // Asked as four questions rather than one list of keys: the camera, the
+        // placing, what makes a track valid, and what the code is for.
+        for section in [
+            "How to use the editor",
+            "Camera controls",
+            "Editing",
+            "Starts, checkpoints and the finish",
+            "Sharing a track",
+        ] {
+            assert!(
+                open.iter().any(|t| t == section),
+                "the help has no {section} section: {open:?}"
+            );
+        }
     }
 
     #[test]
