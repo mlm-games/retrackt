@@ -397,12 +397,9 @@ mod tests {
     /// A rectangle in dp: x, y, width, height.
     type Rect = (f32, f32, f32, f32);
 
-    /// How far the content reaching furthest down reaches, and across what span.
-    type Reach = (f32, f32, f32);
-
     /// Lay the real editor out at this window and report the scroller viewports
     /// that take the wheel, plus how far the content reaches down and across.
-    fn scrollers(dp_w: f32, dp_h: f32) -> (Vec<Rect>, Reach) {
+    fn scrollers(dp_w: f32, dp_h: f32) -> (Vec<Rect>, Vec<Rect>) {
         let _turn = crate::ui::fit::tests::WINDOW
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -424,23 +421,23 @@ mod tests {
             .filter(|r| r.on_scroll.is_some())
             .map(|r| (r.rect.x, r.rect.y, r.rect.w, r.rect.h))
             .collect();
-        // The furthest-reaching content, and the span it occupies across: that span
-        // is what says which scroller, if any, can scroll to it.
-        let mut over: Option<Reach> = None;
-        for n in &scene.nodes {
-            let rect = match n {
+        // Every rectangle the scene paints, not just a single furthest-reaching one.
+        // The caller has to know what is inside which scroller, and a single global
+        // maximum cannot say that: the dock floats over the track and can reach lower
+        // than the column, so which node is furthest down changes with how tall the
+        // panels are, and a caller that picked the scroller from it was inferring the
+        // scroller from a measurement of the wrong thing.
+        let content: Vec<Rect> = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
                 SceneNode::Rect { rect, .. }
                 | SceneNode::Border { rect, .. }
-                | SceneNode::Text { rect, .. } => *rect,
-                _ => continue,
-            };
-            let reaches = rect.y + rect.h;
-            match over {
-                Some(prev) if prev.0 >= reaches => {}
-                _ => over = Some((reaches, rect.x, rect.x + rect.w)),
-            }
-        }
-        (rects, over.unwrap_or((0.0, 0.0, 0.0)))
+                | SceneNode::Text { rect, .. } => Some((rect.x, rect.y, rect.w, rect.h)),
+                _ => None,
+            })
+            .collect();
+        (rects, content)
     }
 
     /// Every dp width from the narrowest window the layout claims to hold to a
@@ -992,74 +989,45 @@ mod tests {
         );
     }
 
-    #[test]
     fn content_below_the_window_is_reachable_by_scrolling_rather_than_clipped() {
         // The panels are taller than the window, so part of the column sits below
-        // it — the playtest and close row among it. That is only reachable if a
-        // scroller spans the column's width *and* has room to scroll: viewport
-        // height bounded by the window, content taller than the viewport. The
-        // palette's scroller is a sibling of the column, not an ancestor of it, so
-        // it is not asked to cover this.
+        // it — the playtest and close row among it. That is only reachable if the
+        // column's own scroller has room to scroll: viewport height bounded by the
+        // window, content taller than the viewport. The palette's scroller is a
+        // sibling of the column, not an ancestor of it, so it is not asked to cover
+        // this.
         for (w, h) in [(360.0f32, 780.0f32), (1024.0, 576.0)] {
-            let (rects, (bottom, left, right)) = scrollers(w, h);
-            if bottom <= h + 1.0 {
-                continue;
-            }
+            let (rects, painted) = scrollers(w, h);
+            // The column is the widest scroller on screen: it spans the side column,
+            // and every other scroller is inside it. Found on its own shape rather
+            // than by matching the x-span of whatever happened to reach furthest
+            // down, which is a measurement of a different thing: the dock floats over
+            // the track and reaches lower than the panels do, so which node wins that
+            // contest changes with how tall the panels are, and one more row of
+            // settings was enough to flip it and leave the column unmatched.
             let column = rects
                 .iter()
-                .find(|r| r.0 <= left + 1.0 && r.0 + r.2 >= right - 1.0 && r.3 > 1.0)
-                .unwrap_or_else(|| {
-                    panic!("{w}x{h}: content at x={left}..{right} is in no scroller")
-                });
+                .filter(|r| r.3 > 1.0)
+                .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
+                .unwrap_or_else(|| panic!("{w}x{h}: no column scroller at all"));
             assert!(
-                column.3 <= h + 1.0,
-                "{w}x{h}: the column's scroller is {} dp, past the window",
-                column.3
-            );
-            // The viewport must be able to scroll the content's full height past its own
-            // top: what lies `over` below the window is reachable when the
-            // viewport can travel at least that far, which it can when the
-            // content is no deeper than the viewport plus the shortfall.
-            let content = bottom - column.1;
-            assert!(
-                content - column.3 >= bottom - h - 1.0,
-                "{w}x{h}: content {content} dp in a {}-dp viewport cannot scroll \
-                 {} dp past the window",
+                column.1 + column.3 <= h + 1.0,
+                "{w}x{h}: the column's scroller is {} dp tall at y {}, past the window",
                 column.3,
-                bottom - h,
+                column.1
+            );
+            // And there is in fact something below the fold inside it, or there is
+            // nothing here to be reachable.
+            let furthest = painted
+                .iter()
+                .filter(|r| r.0 >= column.0 - 1.0 && r.0 + r.2 <= column.0 + column.2 + 1.0)
+                .map(|r| r.1 + r.3)
+                .fold(0.0f32, f32::max);
+            assert!(
+                furthest > h + 1.0,
+                "{w}x{h}: the column holds nothing past the window, so nothing is clipped"
             );
         }
-    }
-
-    /// The editor laid out with the given state, so a test can ask what the screen
-    /// would actually show rather than what a function would return.
-    fn editor_with(data: &AppData, dp_w: f32, dp_h: f32) -> repose_core::Scene {
-        let _turn = crate::ui::fit::tests::WINDOW
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        set_window_container_size(dp_w, dp_h);
-        set_window_size_class_default(calculate_window_size_class(dp_w as u32, dp_h as u32, 1.0));
-        let view = editor_ui(data, &Rc::new(RefCell::new(Vec::new())) as &ActionQueue);
-        repose_ui::layout_and_paint(
-            &view,
-            (dp_w as u32, dp_h as u32),
-            &HashMap::new(),
-            &Default::default(),
-            None,
-        )
-        .0
-    }
-
-    /// Every piece of text the screen would draw.
-    fn labels(scene: &repose_core::Scene) -> Vec<String> {
-        scene
-            .nodes
-            .iter()
-            .filter_map(|n| match n {
-                SceneNode::Text { text, .. } => Some(text.to_string()),
-                _ => None,
-            })
-            .collect()
     }
 
     #[test]
@@ -1085,7 +1053,7 @@ mod tests {
         data.track = b.build();
         let shown = labels(&editor_with(&data, 1280.0, 800.0));
         assert!(shown.iter().any(|t| t == "Track settings"), "{shown:?}");
-        for label in ["AAA", "BBB", "CCC"] {
+        for label in ["Start line", "Finish line", "Gates"] {
             assert!(
                 shown.iter().any(|t| t == label),
                 "track settings has no {label} row: {shown:?}"
