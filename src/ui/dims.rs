@@ -1146,6 +1146,16 @@ mod tests {
                 "track settings has no {label} row: {shown:?}"
             );
         }
+        // The two settings that decide how the track looks, and every environment
+        // it can be looked at in. Without them the editor opens a circuit and
+        // leaves it in whatever weather it happened to load.
+        assert!(shown.iter().any(|t| t == "Sun direction"), "{shown:?}");
+        for (_, name) in retrackt_format::ENVIRONMENTS {
+            assert!(
+                shown.iter().any(|t| t == name),
+                "track settings offers no {name} environment: {shown:?}"
+            );
+        }
     }
 
     #[test]

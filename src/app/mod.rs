@@ -577,6 +577,19 @@ impl App {
             UiAct::ToggleHelp => self.data.editor.show_help = !self.data.editor.show_help,
             UiAct::SetNameDraft(name) => self.data.editor.name_draft = name,
             UiAct::RenameTrack => self.rename_track(),
+            // A setting rather than an edit: both change how the track looks the
+            // moment they are touched, which is the only way to judge either one,
+            // and undoing them one drag at a time to get back to the look you had
+            // is not a thing anyone wants. The document carries both, so Save and a
+            // share code carry them with everything else.
+            UiAct::SetEnvironment(environment) => {
+                if retrackt_format::is_environment(environment) {
+                    self.data.track.environment = environment;
+                }
+            }
+            UiAct::SetSunDirection(deg) => {
+                self.data.track.sun_direction_deg = deg % 360;
+            }
             UiAct::CopyShareCode => self.copy_share_code(),
             UiAct::LoadShareCode => self.load_share_code(),
             UiAct::SetCodeDraft(code) => self.data.editor.code_draft = code,

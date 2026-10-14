@@ -10,8 +10,8 @@ use repose_core::{
 use repose_material::material3::{Button, ButtonConfig, ButtonDefaults};
 use repose_ui::scroll::{ScrollAreaXY, remember_scroll_state_xy};
 use repose_ui::{
-    BasicTextField, Box, Center, Column, FlowRow, FlowRowConfig, Row, Text, TextFieldConfig,
-    TextFieldState, TextStyle, ViewExt, ZStack,
+    BasicTextField, Box, Center, Column, DragValue, FlowRow, FlowRowConfig, Row, Text,
+    TextFieldConfig, TextFieldState, TextStyle, ViewExt, ZStack,
 };
 use retrackt_format::{PieceUid, catalog};
 
@@ -976,6 +976,34 @@ fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
                     false => ctrl_off("Rename"),
                 }]),
             ]),
+            // Which of the environments, and where the sun is. Both show their
+            // effect the moment they are touched, which is the only way to judge
+            // either one, so neither waits on a Save the way the name does.
+            ctrl_row(
+                retrackt_format::ENVIRONMENTS
+                    .iter()
+                    .map(|(id, name)| match *id == track.environment {
+                        true => ctrl_on(name, pusher(actions, UiAct::SetEnvironment(*id))),
+                        false => ctrl_off(name),
+                    })
+                    .collect::<Vec<View>>(),
+            ),
+            Row(Modifier::new()
+                .gap(dims::SPACE_ROW)
+                .align_items(AlignItems::CENTER)
+                .fill_max_width())
+            .child([
+                label_box("Sun direction"),
+                Box(Modifier::new().flex_grow(1.0)).child(DragValue(
+                    f32::from(track.sun_direction_deg),
+                    (0.0, 359.0),
+                    f32::from(retrackt_format::SUN_DIRECTION_STEP_DEG),
+                    {
+                        let queue = actions.clone();
+                        move |deg: f32| push(&queue, UiAct::SetSunDirection(deg.round() as u16))
+                    },
+                )),
+            ]),
             field_row("Start line", start),
             field_row("Finish line", finish),
             field_row("Gates", checkpoints.to_string()),
@@ -1002,7 +1030,7 @@ fn field_row(label: &str, value: String) -> View {
         .align_items(AlignItems::CENTER)
         .fill_max_width())
     .child([
-        Box(Modifier::new().width(theme::dp(96.0))).child(dim_text(label)),
+        label_box(label),
         Box(Modifier::new().flex_grow(1.0).max_width(value_w()))
             .child(hud_text(&value).overflow_ellipsize()),
     ])
@@ -1011,6 +1039,15 @@ fn field_row(label: &str, value: String) -> View {
 /// Width a fact's value may take: the panel's content less its label and the gap.
 fn value_w() -> Dp {
     (dims::content_w() - theme::dp(104.0)).coerce_at_least(Dp(0.0))
+}
+
+/// A row's label, in the one width every label in the column shares.
+///
+/// Wide enough for the longest of them. Narrower and the label does not merely
+/// clip on screen: the layout drops the text node, so the label stops existing
+/// for anything reading the laid out tree.
+fn label_box(label: &str) -> View {
+    Box(Modifier::new().width(theme::dp(96.0))).child(dim_text(label))
 }
 
 fn cell_of(piece: &retrackt_format::PieceInstance) -> String {

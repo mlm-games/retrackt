@@ -134,6 +134,10 @@ pub enum UiAct {
     SetNameDraft(String),
     /// Give the track the name in the field, as one undoable edit.
     RenameTrack,
+    /// Put the track in one of the environments it can be drawn in.
+    SetEnvironment(u8),
+    /// Take the sun as far round the compass as the track asks for.
+    SetSunDirection(u16),
     /// Encode the current track as a share code and put it on the clipboard.
     CopyShareCode,
     /// Decode the editor's code field into the current track.
