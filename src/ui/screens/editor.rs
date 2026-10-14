@@ -207,7 +207,7 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     // so it belongs with the piece list rather than with the palette.
     let color_panel = color_panel(data, actions);
     let track_column = Column(Modifier::new().gap(dims::SPACE_SECTION)).child([
-        track_settings_panel(data),
+        track_settings_panel(data, actions),
         selection_panel(data, actions),
         track,
         color_panel,
