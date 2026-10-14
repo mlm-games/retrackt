@@ -407,36 +407,8 @@ mod tests {
     /// A rectangle in dp: x, y, width, height.
     type Rect = (f32, f32, f32, f32);
 
-    /// Report a failing assertion as a workflow annotation, so a red build names the
-    /// assertion that failed in its own summary rather than only in a log the checks
-    /// API will not hand back.
-    fn report_failure_where_it_happens() {
-        use std::sync::Once;
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            let previous = std::panic::take_hook();
-            std::panic::set_hook(Box::new(move |info| {
-                let said = info
-                    .payload()
-                    .downcast_ref::<&str>()
-                    .map(|s| (*s).to_string())
-                    .or_else(|| info.payload().downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| String::from("assertion failed"));
-                let at = info.location();
-                let file = at.map_or("dims.rs", |l| l.file());
-                let line = at.map_or(0, |l| l.line());
-                let clean = said
-                    .replace('\n', " ")
-                    .replace('\r', " ")
-                    .replace('%', "%25")
-                    .replace(':', "%3A");
-                eprintln!("::error file={file},line={line},title=failed assertion::{clean}");
-                previous(info);
-            }));
-        });
-    }
+    use crate::report_failure_where_it_happens;
 
-    /// Lay the real editor out at the given window with the given track behind it.
     fn editor_with(data: &AppData, dp_w: f32, dp_h: f32) -> repose_core::Scene {
         report_failure_where_it_happens();
         let _turn = crate::ui::fit::tests::WINDOW
@@ -1151,9 +1123,9 @@ mod tests {
         // leaves it in whatever weather it happened to load.
         assert!(shown.iter().any(|t| t == "Sun direction"), "{shown:?}");
         assert!(shown.iter().any(|t| t == "Allow overlap"), "{shown:?}");
-        // The label says what the next click does rather than what is set, so a
-        // control that is on and does nothing when pressed cannot happen.
-        assert!(shown.iter().any(|t| t == "Block: fill"), "{shown:?}");
+        // The label says what the next click will do rather than what is set, so
+        // a control that reads as on and does nothing when pressed cannot happen.
+        assert!(shown.iter().any(|t| t == "Fill"), "{shown:?}");
         for (_, name) in retrackt_format::ENVIRONMENTS {
             assert!(
                 shown.iter().any(|t| t == name),

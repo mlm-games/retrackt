@@ -1139,11 +1139,14 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
         ctrl("Generate", pusher(actions, UiAct::GenerateTrack)),
         ctrl("Load", pusher(actions, UiAct::ToggleLoads)),
         // Whether a placement fills the armed piece's block or takes one cell of
-        // it. The label says which of the two the next click will do.
+        // it. The label says which of the two the next click will do, and is kept
+        // to a word: this row is at the width where the controls have no slack,
+        // and a control whose label is wider than it ends up is not clipped on
+        // screen so much as dropped from the laid out tree entirely.
         ctrl(
             match editor.fill_block {
-                true => "Block: one",
-                false => "Block: fill",
+                true => "One",
+                false => "Fill",
             },
             pusher(actions, UiAct::ToggleFillBlock),
         ),

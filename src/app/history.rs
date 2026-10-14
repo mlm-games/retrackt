@@ -442,6 +442,7 @@ mod tests {
     /// of them comes out.
     #[test]
     fn a_block_filled_in_one_click_is_undone_in_one_click() {
+        crate::report_failure_where_it_happens();
         let mut doc = three();
         let edit = Edit::Stamped {
             pieces: vec![piece(4, 12), piece(5, 16)],
