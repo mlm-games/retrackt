@@ -207,7 +207,6 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     // so it belongs with the piece list rather than with the palette.
     let color_panel = color_panel(data, actions);
     let track_column = Column(Modifier::new().gap(dims::SPACE_SECTION)).child([
-        track_settings_panel(data, actions),
         selection_panel(data, actions),
         track,
         color_panel,
@@ -902,7 +901,7 @@ fn selection_panel(data: &AppData, actions: &ActionQueue) -> View {
 /// *about* rather than a piece of it: the name is what the track is called
 /// everywhere else in the game, and the start and finish are the two facts about a
 /// circuit a player checks before asking whether the middle is any good.
-fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
+fn track_settings_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
     let track = &data.track;
     let start = track
         .pieces
@@ -941,34 +940,30 @@ fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
     }
     let renamed = !data.editor.name_draft.is_empty() && data.editor.name_draft.trim() != track.name;
 
-    list_panel_w(
-        "Track settings",
-        dims::panel_w(),
-        vec![
-            Column(Modifier::new().gap(dims::SPACE_LIST).fill_max_width()).child([
-                BasicTextField(
-                    draft,
-                    Modifier::new().fill_max_width().min_height(dims::CTRL_H),
-                    "Track name",
-                    TextFieldConfig {
-                        line_limits: TextFieldLineLimits::SingleLine,
-                        on_change: Some(Rc::new({
-                            let queue = actions.clone();
-                            move |text: String| push(&queue, UiAct::SetNameDraft(text))
-                        }) as Rc<dyn Fn(String)>),
-                        ..TextFieldConfig::default()
-                    },
-                ),
-                ctrl_row(vec![match renamed {
-                    true => ctrl_on("Rename", pusher(actions, UiAct::RenameTrack)),
-                    false => ctrl_off("Rename"),
-                }]),
-            ]),
-            field_row("Start", start),
-            field_row("Finish", finish),
-            field_row("Gates", checkpoints.to_string()),
-        ],
-    )
+    vec![
+        Column(Modifier::new().gap(dims::SPACE_LIST).fill_max_width()).child([
+            BasicTextField(
+                draft,
+                Modifier::new().fill_max_width().min_height(dims::CTRL_H),
+                "Track name",
+                TextFieldConfig {
+                    line_limits: TextFieldLineLimits::SingleLine,
+                    on_change: Some(Rc::new({
+                        let queue = actions.clone();
+                        move |text: String| push(&queue, UiAct::SetNameDraft(text))
+                    }) as Rc<dyn Fn(String)>),
+                    ..TextFieldConfig::default()
+                },
+            ),
+            ctrl_row(vec![match renamed {
+                true => ctrl_on("Rename", pusher(actions, UiAct::RenameTrack)),
+                false => ctrl_off("Rename"),
+            }]),
+        ]),
+        field_row("Start", start),
+        field_row("Finish", finish),
+        field_row("Gates", checkpoints.to_string()),
+    ]
 }
 
 /// Reads as "none" rather than as an empty row, so an empty track says it has no
@@ -1005,6 +1000,7 @@ fn cell_of(piece: &retrackt_format::PieceInstance) -> String {
 fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
     let editor = &data.editor;
     let mut children: Vec<View> = Vec::new();
+    children.extend(track_settings_rows(data, actions));
     let count = data.track.pieces.len();
     children.push(dim_text(&format!(
         "{count} pieces · {} selected · {}",

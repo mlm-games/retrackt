@@ -1065,7 +1065,6 @@ mod tests {
         );
         data.track = b.build();
         let shown = labels(&editor_with(&data, 1280.0, 800.0));
-        assert!(shown.iter().any(|t| t == "Track settings"), "{shown:?}");
         for label in ["Start", "Finish", "Gates"] {
             assert!(
                 shown.iter().any(|t| t == label),
