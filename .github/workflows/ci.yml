@@ -64,21 +64,13 @@ jobs:
           for report in reports/*.status; do
             name=$(basename "$report" .status)
             code=$(cat "$report")
-            log="reports/$name.log"
-            title="selfcheck"
-            {
-              grep -E '^(error|warning)(\[|:)' "$log" || true
-              grep -A 4 '^---- .* stdout ----' "$log" || true
-              grep -E '^failures:$' -A 20 "$log" || true
-              grep -E '^Diff in ' "$log" || true
-            } | grep -vE '^(note:|help:|\s*\||\s*=|\s*[0-9]+ *\||$)' | head -40 | while IFS= read -r line; do
-              clean=$(printf '%s' "$line" \
-                | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/:/%3A/g')
-              printf "::error title=%s/%s::%s\n" "$title" "$name" "$clean"
-            done
-            if [ "$code" != "0" ]; then
-              status=1
-              printf '::error title=%s/%s::exited %s\n' "$title" "$name" "$code"
+            if [ "$code" = "0" ]; then
+              continue
             fi
+            status=1
+            body=$(grep -vE '^(note:|help:|\s*\||\s*=|\s*[0-9]+ *\||$)' "reports/$name.log" | tail -25)
+            clean=$(printf '%s' "$body" \
+              | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/:/%3A/g')
+            printf '::error file=reports/%s.log::step %s exited %s\n%s\n' "$name" "$name" "$code" "$clean"
           done
           exit $status
