@@ -644,6 +644,7 @@ mod tests {
         // The strip is the only way to reach a piece that is not on the open
         // shelf, so switching categories has to change what is laid out: an
         // editor that ignored the tap would show one category forever.
+        let mut shown_groups = 0;
         for group in retrackt_format::piece::groups() {
             let index = retrackt_format::piece::group_index(group).expect("group is listed");
             let scene = editor_at_with_category(1024.0, 576.0, index);
@@ -669,19 +670,45 @@ mod tests {
                     _ => None,
                 })
                 .fold(f32::MAX, f32::min);
-            let texts: Vec<String> = texts(&scene)
-                .into_iter()
+            let every = texts(&scene);
+            let texts: Vec<String> = every
+                .iter()
                 .filter(|(_, r)| r.0 + r.2 <= palette_edge)
-                .map(|(t, _)| t)
+                .map(|(t, _)| t.clone())
                 .collect();
+            if shown_groups == 0 {
+                // What the shelf really laid out, as an annotation rather than only
+                // in a log: a red build that says a tile is hidden and not what it
+                // did lay out costs a whole build to find out.
+                let inventory = every
+                    .iter()
+                    .map(|(t, r)| format!("{t}@{:.0},{:.0},{:.0}", r.0, r.1, r.2))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!(
+                    "::warning file=dims.rs,line=0,title=palette {group} laid out::edge={palette_edge:.1} {inventory}"
+                );
+                let wide = scene
+                    .nodes
+                    .iter()
+                    .filter_map(|n| match n {
+                        SceneNode::Rect { rect, .. } if rect.w > 250.0 => {
+                            Some(format!("{:.0}+{:.0}", rect.x, rect.w))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!("::warning file=dims.rs,line=0,title=wide rects::{wide}");
+                shown_groups += 1;
+            }
             for piece in retrackt_format::catalog() {
                 let tile = crate::ui::screens::editor::short_name(piece.id.label());
                 let shown = texts.iter().any(|t| *t == tile);
                 assert_eq!(
                     shown,
                     piece.id.group() == group,
-                    "{group}: {tile} is {}",
-                    if shown { "shown" } else { "hidden" }
+                    "{group}: {tile} is {}, palette edge {palette_edge:.1} holds {texts:?}"
                 );
             }
         }
