@@ -540,9 +540,11 @@ mod tests {
             .collect();
 
         // One gate reads as 1 and the other as 2, which is the order they are
-        // passed in, not the order they sit in the file.
-        assert!(texts.contains(&"gate 1"), "{texts:?}");
-        assert!(texts.contains(&"gate 2"), "{texts:?}");
+        // passed in, not the order they sit in the file. Read as part of the row's
+        // summary rather than as its own label: the row is one line, so its values
+        // arrive joined rather than as a control strip.
+        assert!(texts.iter().any(|t| t.contains("gate 1")), "{texts:?}");
+        assert!(texts.iter().any(|t| t.contains("gate 2")), "{texts:?}");
         // The selected one is named, its order named with it, and the pair of
         // controls that moves it is on the same line.
         assert!(texts.contains(&"Checkpoint"), "{texts:?}");
@@ -757,12 +759,16 @@ mod tests {
         // way, so it is the panel's own height that gives the cap away.
         let few = track_panel_h(&editor_at(1024.0, 576.0, 4));
         let many = track_panel_h(&editor_at(1024.0, 576.0, 24));
+        // Twenty more pieces, and each has to cost a row of real height rather than
+        // nothing: a capped panel is flat here, so the growth is the whole claim.
+        // Stated per piece and not as one total, because a row is now a single line
+        // and a total measured against three bands of controls no longer says
+        // anything — the number would have to be rewritten every time a row changed.
+        let added = many - few;
         assert!(
-            many > few + 1000.0,
-            "the track panel is {:.0} dp for 24 pieces and {:.0} for 4: it is capped, so the \
-             surplus is clipped where the column's scroller cannot reach it",
-            many,
-            few
+            added >= 20.0 * 20.0,
+            "the track panel is {many:.0} dp for 24 pieces and {few:.0} for 4: it is capped, so \
+             the surplus is clipped where the column's scroller cannot reach it"
         );
     }
 
