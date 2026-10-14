@@ -923,17 +923,7 @@ fn track_settings_panel(data: &AppData) -> View {
     list_panel_w(
         "Track settings",
         dims::panel_w(),
-        vec![
-            field_row("Start", start),
-            field_row(
-                "Finish",
-                match finishes.len() {
-                    0 => "— none —".to_string(),
-                    _ => finishes.join(" · "),
-                },
-            ),
-            field_row("Gates", checkpoints.to_string()),
-        ],
+        vec![field_row("Gates", checkpoints.to_string())],
     )
 }
 
