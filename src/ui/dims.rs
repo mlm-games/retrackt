@@ -589,11 +589,26 @@ mod tests {
             let scene = editor_at_with_category(1024.0, 576.0, index);
             // Only the palette column, by where each label is drawn. Searching the
             // whole screen for a tile's name reads any other panel that happens to
-            // use the same word as a tile: the track-settings panel's "Start" row made
-            // a Control piece look like it was on the Road shelf, which is a fault
+            // use the same word as a tile: the track-settings panel's own row made a
+            // Control piece look like it was on the Road shelf, which is a fault
             // invented here rather than one the editor has. A palette label is inside
             // the palette panel, so its rectangle ends within it.
-            let palette_edge = dims::palette_w().value() + 1.0;
+            //
+            // The edge comes from the scene and not from `dims::palette_w()`. That
+            // reads the window size out of a global which the layout helpers release
+            // before returning, so asking it after the layout is a race with every
+            // other layout test running in parallel: on another test's window it
+            // answers a different palette's width, the shelf no longer fits inside
+            // it, and real tiles read as hidden. The scene is the thing being asked
+            // about, so the scene is what it is measured from.
+            let palette_edge = scene
+                .nodes
+                .iter()
+                .filter_map(|n| match n {
+                    SceneNode::Rect { rect, .. } if rect.w > 300.0 => Some(rect.x + rect.w),
+                    _ => None,
+                })
+                .fold(f32::MAX, f32::min);
             let texts: Vec<String> = texts(&scene)
                 .into_iter()
                 .filter(|(_, r)| r.0 + r.2 <= palette_edge)
@@ -1045,6 +1060,37 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn the_track_settings_panel_says_where_the_run_begins_and_ends() {
+        // The name is what the track is called everywhere else in the game, and the
+        // start and finish are the two facts about a circuit a player checks before
+        // asking whether the middle is any good. Without them the editor shows a
+        // list of pieces and no way to tell what the track is.
+        let mut data = AppData::default();
+        let mut b = retrackt_format::ChainBuilder::new("settings");
+        b.step(
+            retrackt_format::PieceId::Start,
+            retrackt_format::PieceParams::default(),
+        );
+        b.step(
+            retrackt_format::PieceId::Checkpoint,
+            retrackt_format::PieceParams::default(),
+        );
+        b.step(
+            retrackt_format::PieceId::Finish,
+            retrackt_format::PieceParams::default(),
+        );
+        data.track = b.build();
+        let shown = labels(&editor_with(&data, 1280.0, 800.0));
+        assert!(shown.iter().any(|t| t == "Track settings"), "{shown:?}");
+        for label in ["Start line", "Finish line", "Gates"] {
+            assert!(
+                shown.iter().any(|t| t == label),
+                "track settings has no {label} row: {shown:?}"
+            );
+        }
     }
 
     #[test]
