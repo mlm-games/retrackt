@@ -207,6 +207,7 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     // so it belongs with the piece list rather than with the palette.
     let color_panel = color_panel(data, actions);
     let track_column = Column(Modifier::new().gap(dims::SPACE_SECTION)).child([
+        track_settings_panel(data, actions),
         selection_panel(data, actions),
         track,
         color_panel,
@@ -714,7 +715,7 @@ fn value_row(
         .align_items(AlignItems::CENTER)
         .fill_max_width())
     .child([
-        Box(Modifier::new().width(theme::dp(72.0))).child(dim_text(label)),
+        Box(Modifier::new().width(theme::dp(88.0))).child(dim_text(label)),
         Box(Modifier::new().flex_grow(1.0)).child(hud_text(&value).overflow_ellipsize()),
         down,
         up,
@@ -893,6 +894,112 @@ fn selection_panel(data: &AppData, actions: &ActionQueue) -> View {
         if editor.clipboard.len() == 1 { "" } else { "s" }
     )));
     list_panel_w("Selection", dims::panel_w(), rows)
+}
+
+/// What the track itself is: its name, and where the run begins and ends.
+///
+/// PolyTrack's editor calls this Track settings, and it is the panel a track is
+/// *about* rather than a piece of it: the name is what the track is called
+/// everywhere else in the game, and the start and finish are the two facts about a
+/// circuit a player checks before asking whether the middle is any good.
+fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
+    let track = &data.track;
+    let start = track
+        .pieces
+        .iter()
+        .find(|p| retrackt_format::piece::catalog_by_id(p.id).is_start)
+        .map(|p| cell_of(p))
+        .unwrap_or_else(|| NONE.into());
+    let finishes: Vec<String> = track
+        .race_order()
+        .iter()
+        .filter_map(|uid| track.piece(*uid))
+        .filter(|p| retrackt_format::piece::catalog_by_id(p.id).is_finish)
+        .map(cell_of)
+        .collect();
+    let checkpoints = track.checkpoint_sequence().len();
+
+    // A circuit may end in more than one place, and every cell of all of them is
+    // more list than a single row can carry. The first, and a count of the rest:
+    // which line is the finish is the fact, and the rest is arithmetic.
+    let finish = match finishes.len() {
+        0 => NONE.into(),
+        1 => finishes[0].clone(),
+        _ => format!("{} +{}", finishes[0], finishes.len() - 1),
+    };
+
+    let draft: Rc<RefCell<TextFieldState>> =
+        remember_with_key("editor.name", || RefCell::new(TextFieldState::new()));
+    let shown_name = match data.editor.name_draft.is_empty() {
+        true => track.name.clone(),
+        false => data.editor.name_draft.clone(),
+    };
+    // Synced rather than seeded, because a field rebuilt each frame loses its focus and
+    // its caret on every keystroke and would accept one character and drop it.
+    if draft.borrow().text != shown_name {
+        draft.borrow_mut().text = shown_name;
+    }
+    let renamed = !data.editor.name_draft.is_empty() && data.editor.name_draft.trim() != track.name;
+
+    list_panel_w(
+        "Track settings",
+        dims::panel_w(),
+        vec![
+            Column(Modifier::new().gap(dims::SPACE_LIST).fill_max_width()).child([
+                BasicTextField(
+                    draft,
+                    Modifier::new().fill_max_width().min_height(dims::CTRL_H),
+                    "Track name",
+                    TextFieldConfig {
+                        line_limits: TextFieldLineLimits::SingleLine,
+                        on_change: Some(Rc::new({
+                            let queue = actions.clone();
+                            move |text: String| push(&queue, UiAct::SetNameDraft(text))
+                        }) as Rc<dyn Fn(String)>),
+                        ..TextFieldConfig::default()
+                    },
+                ),
+                ctrl_row(vec![match renamed {
+                    true => ctrl_on("Rename", pusher(actions, UiAct::RenameTrack)),
+                    false => ctrl_off("Rename"),
+                }]),
+            ]),
+            field_row("Start line", start),
+            field_row("Finish line", finish),
+            field_row("Gates", checkpoints.to_string()),
+        ],
+    )
+}
+
+/// Reads as "none" rather than as an empty row, so an empty track says it has no
+/// start rather than showing a blank where one would be.
+const NONE: &str = "not placed";
+
+/// One named fact about the track, read rather than changed.
+///
+/// The value is capped as well as ellipsized: a single-line label measures as its
+/// own full length however narrow the box around it, so left uncapped a long cell
+/// coordinate hands the row a minimum width wider than the panel it sits in, and
+/// the whole column grows a sideways scrollbar.
+fn field_row(label: &str, value: String) -> View {
+    Row(Modifier::new()
+        .gap(dims::SPACE_ROW)
+        .align_items(AlignItems::CENTER)
+        .fill_max_width())
+    .child([
+        Box(Modifier::new().width(theme::dp(72.0))).child(dim_text(label)),
+        Box(Modifier::new().flex_grow(1.0).max_width(value_w()))
+            .child(hud_text(&value).overflow_ellipsize()),
+    ])
+}
+
+/// Width a fact's value may take: the panel's content less its label and the gap.
+fn value_w() -> Dp {
+    (dims::content_w() - theme::dp(96.0)).coerce_at_least(Dp(0.0))
+}
+
+fn cell_of(piece: &retrackt_format::PieceInstance) -> String {
+    format!("[{} {} {}]", piece.cell[0], piece.cell[1], piece.cell[2])
 }
 
 fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
