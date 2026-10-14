@@ -90,13 +90,6 @@ struct EditorView {
     selection: Vec<retrackt_format::PieceUid>,
 }
 
-/// Longest a track name may be typed.
-///
-/// Bounded by the filesystem rather than by taste: a name is sanitised into a
-/// filename stem but never shortened, so a name past what the filesystem can
-/// hold in one path component would fail on save.
-pub const MAX_NAME_CHARS: usize = 48;
-
 /// Which of a piece's tunable values an editor button drives.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ParamKind {
@@ -575,8 +568,6 @@ impl App {
             UiAct::Redo => self.redo(),
             UiAct::AdjustSelection(kind, delta) => self.adjust_selection(kind, delta),
             UiAct::ToggleHelp => self.data.editor.show_help = !self.data.editor.show_help,
-            UiAct::SetNameDraft(name) => self.data.editor.name_draft = name,
-            UiAct::RenameTrack => self.rename_track(),
             UiAct::CopyShareCode => self.copy_share_code(),
             UiAct::LoadShareCode => self.load_share_code(),
             UiAct::SetCodeDraft(code) => self.data.editor.code_draft = code,
@@ -1159,7 +1150,6 @@ impl App {
             self.data.editor.selection = saved.selection;
         }
         self.data.screen = Screen::Editor;
-        self.data.editor.name_draft = self.data.track.name.clone();
         self.data.editor.diagnostics = retrackt_format::validate(&self.data.track);
         self.data.editor.can_undo = self.history.can_undo();
         self.data.editor.can_redo = self.history.can_redo();
@@ -1414,33 +1404,6 @@ impl App {
         piece.params.wide = !piece.params.wide;
         let after = *piece;
         self.history.push(Edit::Changed { uid, before, after });
-        self.track_changed();
-    }
-
-    /// Give the track the name in the field, as one undoable edit.
-    ///
-    /// Capped because the name is not only a label: it is what a track's save file
-    /// and its record stem are found by, and the sanitiser that makes it a filename
-    /// does not shorten it. A name of unbounded length would save a file the
-    /// filesystem cannot hold, and the failure would surface on save rather than
-    /// where it was typed.
-    fn rename_track(&mut self) {
-        let wanted: String = self
-            .data
-            .editor
-            .name_draft
-            .trim()
-            .chars()
-            .take(MAX_NAME_CHARS)
-            .collect();
-        // A rename to the name already in hand is not an edit. Left in, it fills
-        // the bounded history with entries that undo nothing and push real ones out.
-        if wanted.is_empty() || wanted == self.data.track.name {
-            return;
-        }
-        let before = std::mem::replace(&mut self.data.track.name, wanted);
-        let after = self.data.track.name.clone();
-        self.history.push(Edit::Renamed { before, after });
         self.track_changed();
     }
 
