@@ -1271,7 +1271,7 @@ fn loads_panel(actions: &ActionQueue) -> View {
     rows.extend(
         crate::ui::library::saved_names()
             .into_iter()
-            .map(|name| load_row(&name, "saved", TrackRef::Saved(name), actions)),
+            .map(|name| load_row(&name, "saved", TrackRef::Saved(name.clone()), actions)),
     );
     if rows.is_empty() {
         rows.push(dim_text("No tracks to load yet."));
