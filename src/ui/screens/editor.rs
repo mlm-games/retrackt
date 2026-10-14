@@ -207,6 +207,7 @@ pub fn editor_ui(data: &AppData, actions: &ActionQueue) -> View {
     // so it belongs with the piece list rather than with the palette.
     let color_panel = color_panel(data, actions);
     let track_column = Column(Modifier::new().gap(dims::SPACE_SECTION)).child([
+        track_settings_panel(data, actions),
         selection_panel(data, actions),
         track,
         color_panel,
@@ -475,7 +476,10 @@ fn palette_list(armed: retrackt_format::PieceId, category: usize, actions: &Acti
 
     match dims::stacked() {
         true => Column(Modifier::new().gap(dims::SPACE_ROW)).child([tab, shelf]),
-        false => Row(Modifier::new().gap(dims::SPACE_ROW)).child([
+        false => Row(Modifier::new()
+            .gap(dims::SPACE_ROW)
+            .align_items(AlignItems::Start))
+        .child([
             Box(Modifier::new().width(dims::strip_w()))
                 .child(Column(Modifier::new().gap(dims::SPACE_ROW)).child(tabs)),
             Box(Modifier::new().fill_max_width()).child(shelf),
@@ -534,6 +538,7 @@ fn piece_tile(
     });
     let mut face = Modifier::new()
         .width(dims::tile_w())
+        .height(dims::tile_h())
         .padding(theme::dp(4.0))
         .background(theme::surface())
         .border(

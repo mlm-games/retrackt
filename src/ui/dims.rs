@@ -66,11 +66,11 @@ const STRIP_COMFORT_DP: f32 = 112.0;
 
 /// Width of the palette's shelf of parts, beside the strip.
 ///
-/// Room for two tiles across and a gap. It sets the palette's comfortable width
-/// rather than the tiles themselves: how many tiles actually fit across is
-/// decided by [`tile_w`] from whatever width the shelf ends up with, so a
-/// squeezed palette drops to one tile per row instead of clipping every name.
-const SHELF_COMFORT_DP: f32 = 208.0;
+/// Room for two tiles across and the gap between them, and no less: at 208 the
+/// shelf held one tile filling it whole, which is a banner rather than a shelf of
+/// parts. Sized so the comfortable palette divides cleanly into two, because the
+/// comfortable palette is the one almost every desktop gets.
+const SHELF_COMFORT_DP: f32 = 232.0;
 
 /// The palette's comfortable width, being its two halves side by side.
 ///
@@ -95,6 +95,9 @@ const TILE_MIN_DP: f32 = 88.0;
 /// Widest a palette tile may be, so one alone on a roomy shelf is a tile and not
 /// a banner.
 const TILE_MAX_DP: f32 = 120.0;
+
+/// Height of a tile's name under its icon, and the gap above it.
+const TILE_LABEL_DP: f32 = 18.0;
 
 /// The viewport slot between the two panes.
 const GUTTER_DP: f32 = 40.0;
@@ -307,18 +310,35 @@ pub fn ctrl_w() -> Dp {
 /// full-width button per piece.
 ///
 /// Derived from the shelf rather than the whole palette, so the strip beside it
-/// does not silently cost the tiles a column of their own. How many go across
-/// falls out of that width instead of being fixed at two: two while two fit at
-/// full size, and otherwise one filling the shelf. A narrow shelf so costs the
-/// shelf a row rather than every tile in it the end of its name, and the count
-/// then follows on its own because the row no longer fits two.
+/// does not silently cost the tiles a column of their own.
+///
+/// The count is chosen first and the width measured from it, never the reverse.
+/// A width picked on its own and a count inferred from it is how a shelf ended up
+/// with two 120 dp tiles across a space sized for one and a horizontal scrollbar
+/// under it: 120 fits a 160 dp shelf, so one fits, and the row put two there
+/// anyway. Measuring the width as `shelf / count` makes the row *unable* to hold
+/// one more, so it has nothing to disagree about. Below the width a name fits at
+/// all, the shelf takes one tile filling it rather than clipping every name in it.
 pub fn tile_w() -> Dp {
     let shelf = shelf_content_w().value();
-    let pair = (shelf - SPACE_ROW.0) / 2.0;
-    theme::dp(match pair >= TILE_MIN_DP {
-        true => pair.min(TILE_MAX_DP),
-        false => shelf.min(TILE_MAX_DP),
-    })
+    let fit = |count: usize| (shelf - SPACE_ROW.0 * (count as f32 - 1.0)) / count as f32;
+    for count in [4usize, 3, 2] {
+        let w = fit(count);
+        if w >= TILE_MIN_DP && w <= TILE_MAX_DP {
+            return theme::dp(w);
+        }
+    }
+    // Nothing divides the shelf into readable tiles, so one tile fills it.
+    theme::dp(shelf)
+}
+
+/// Height of a palette tile.
+///
+/// Fixed rather than left to its contents: a tile with no height of its own is
+/// stretched to whatever the row around it is tall, which on a tall window made
+/// every tile a full-height slab instead of a card.
+pub fn tile_h() -> Dp {
+    theme::dp(tile_icon_h().0 + TILE_LABEL_DP + theme::dp(8.0).0)
 }
 
 /// Width one row inside the palette's shelf of parts actually has.
@@ -1045,6 +1065,32 @@ mod tests {
             assert!(
                 shown.iter().any(|t| t == label),
                 "track settings has no {label} row: {shown:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tile_row_never_overflows_the_shelf_it_sits_in() {
+        // A palette that scrolls sideways is a palette showing half a tile. The cause
+        // was a tile width chosen on its own and a count inferred from it: 120 dp fits
+        // a 160 dp shelf, so one fits, and the row put two there anyway. The width is
+        // now measured from the count, so the row cannot hold one more than the count.
+        // Checked as geometry across the whole width range rather than on the two
+        // widths that happened to look wrong.
+        for w in WIDTHS {
+            let l = at(w);
+            let shelf = l.shelf_content_w().value();
+            let tile = tile_w().value();
+            assert!(
+                tile <= shelf + 0.5,
+                "{w} dp: a {tile} dp tile in a {shelf} dp shelf"
+            );
+            // And the shelf holds a whole number of them: a shelf with room for one
+            // and a half is a shelf with a scrollbar under it.
+            let across = ((shelf + SPACE_ROW.0) / (tile + SPACE_ROW.0)).floor();
+            assert!(
+                (across * (tile + SPACE_ROW.0) - SPACE_ROW.0 - shelf).abs() < 0.5,
+                "{w} dp: {across} tiles of {tile:.0} dp leave a {shelf:.0} dp shelf ragged"
             );
         }
     }
