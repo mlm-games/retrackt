@@ -592,6 +592,7 @@ impl App {
             }
             UiAct::GenerateTrack => self.generate_track(),
             UiAct::ToggleLoads => self.data.editor.show_loads = !self.data.editor.show_loads,
+            UiAct::ToggleFillBlock => self.data.editor.fill_block = !self.data.editor.fill_block,
             UiAct::SetAllowOverlap(allow) => {
                 self.data.track.allow_overlap = allow;
                 // The diagnostics are what this setting speaks to, so they are the
@@ -1341,14 +1342,55 @@ impl App {
             self.data.editor.armed_yaw,
             self.data.editor.snap,
         );
-        let uid = self.data.track.next_piece_uid();
-        let piece = PieceInstance::new(id, place.anchor)
-            .with_uid(uid)
-            .with_yaw(place.yaw);
+        // With the block filled, the piece goes down across every cell its own
+        // extent covers rather than one cell of it. A piece that owns no cells
+        // owns no block, so it still places once.
+        let cells = match self.data.editor.fill_block {
+            false => vec![place.anchor],
+            true => match placement::stamp_cells(id, &self.data.track, place.yaw) {
+                // The stamp is relative to the piece, so the anchor cell leads.
+                offsets if offsets.is_empty() => vec![place.anchor],
+                offsets => offsets
+                    .into_iter()
+                    .map(|d| {
+                        [
+                            place.anchor[0] + d[0],
+                            place.anchor[1] + d[1],
+                            place.anchor[2] + d[2],
+                        ]
+                    })
+                    .collect(),
+            },
+        };
         let at = self.data.track.pieces.len();
-        self.data.track.pieces.push(piece);
-        self.history.push(Edit::Added { at, piece });
-        self.data.editor.selection = vec![uid];
+        let mut placed: Vec<PieceInstance> = Vec::with_capacity(cells.len());
+        for cell in cells {
+            if self.data.track.pieces.len() >= retrackt_format::MAX_PIECES {
+                break;
+            }
+            // Read per piece, so each stamped piece takes a uid of its own rather
+            // than the whole block sharing one identity.
+            let uid = self.data.track.next_piece_uid();
+            let piece = PieceInstance::new(id, cell)
+                .with_uid(uid)
+                .with_yaw(place.yaw);
+            self.data.track.pieces.push(piece.clone());
+            placed.push(piece);
+        }
+        if placed.is_empty() {
+            return;
+        }
+        match placed.as_slice() {
+            [only] => self.history.push(Edit::Added {
+                at,
+                piece: only.clone(),
+            }),
+            block => self.history.push(Edit::Stamped {
+                pieces: block.to_vec(),
+            }),
+        }
+        let piece = placed[0].clone();
+        self.data.editor.selection = vec![piece.uid];
         // Following the cursor keeps a run of placements going without a click
         // per piece, which is what chaining onto the last exit used to do.
         self.set_cursor(placement::exit_cell(&self.data.track, &piece));
@@ -2043,6 +2085,7 @@ fn describe_edit(edit: &Edit, verb: &str) -> String {
             after.len()
         ),
         Edit::Renamed { before, after } => format!("{verb} renaming {before} to {after}."),
+        Edit::Stamped { pieces } => format!("{verb} filling a block of {} pieces.", pieces.len()),
     }
 }
 

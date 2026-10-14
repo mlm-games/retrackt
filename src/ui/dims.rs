@@ -1151,6 +1151,9 @@ mod tests {
         // leaves it in whatever weather it happened to load.
         assert!(shown.iter().any(|t| t == "Sun direction"), "{shown:?}");
         assert!(shown.iter().any(|t| t == "Allow overlap"), "{shown:?}");
+        // The label says what the next click does rather than what is set, so a
+        // control that is on and does nothing when pressed cannot happen.
+        assert!(shown.iter().any(|t| t == "Block: fill"), "{shown:?}");
         for (_, name) in retrackt_format::ENVIRONMENTS {
             assert!(
                 shown.iter().any(|t| t == name),

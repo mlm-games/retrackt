@@ -74,6 +74,38 @@ pub fn placement_at(
     }
 }
 
+/// Every cell of the block a piece fills, turned by `yaw`, nearest cell first.
+///
+/// The piece's own extent rather than a fixed block size, which is what makes the
+/// toggle mean the same thing for every piece: a straight fills its own length,
+/// a block part fills its own area. Turned rather than measured again, so a
+/// stamped block comes out the shape the piece is being placed at rather than the
+/// shape it was authored in.
+///
+/// Empty for a piece with no occupied cells at all, which the caller reads as
+/// "place one", because a decor piece that owns nothing cannot own a block.
+pub fn stamp_cells(id: PieceId, doc: &TrackDocument, yaw: u8) -> Vec<[i16; 3]> {
+    let shape = piece_shape(id, &PieceParams::default(), doc.cell_size);
+    let Some(first) = shape.occupied.first().copied() else {
+        return Vec::new();
+    };
+    let (lo, hi) = shape.occupied.iter().fold((first, first), |(lo, hi), c| {
+        (
+            [lo[0].min(c[0]), lo[1].min(c[1]), lo[2].min(c[2])],
+            [hi[0].max(c[0]), hi[1].max(c[1]), hi[2].max(c[2])],
+        )
+    });
+    let mut cells = Vec::new();
+    for y in lo[1]..=hi[1] {
+        for z in lo[2]..=hi[2] {
+            for x in lo[0]..=hi[0] {
+                cells.push(rotate_local_xz([x - lo[0], y - lo[1], z - lo[2]], yaw));
+            }
+        }
+    }
+    cells
+}
+
 /// Nearest open exit port to `cell`, within `reach` cells in every axis.
 ///
 /// An exit is open when no entry already mates with it head-on. Sorting by
@@ -488,5 +520,60 @@ mod tests {
             !p.snapped || p.anchor != at_finish,
             "a piece must not be dropped onto the Finish gate"
         );
+    }
+
+    /// A block is filled by the piece's own extent, so the toggle means the same
+    /// thing for every piece rather than stamping a fixed square of whatever
+    /// happens to be armed — and it is the same block at every heading, only
+    /// turned, so a block does not change size when the piece is rotated.
+    #[test]
+    fn a_stamp_is_the_pieces_own_extent_turned_by_its_heading() {
+        let doc = retrackt_format::demo_track();
+        let mut checked = 0;
+        for def in catalog() {
+            let shape = piece_shape(def.id, &PieceParams::default(), doc.cell_size);
+            if shape.occupied.is_empty() {
+                continue;
+            }
+            let lo = shape.occupied.iter().fold([i16::MAX; 3], |lo, c| {
+                [lo[0].min(c[0]), lo[1].min(c[1]), lo[2].min(c[2])]
+            });
+            let hi = shape.occupied.iter().fold([i16::MIN; 3], |hi, c| {
+                [hi[0].max(c[0]), hi[1].max(c[1]), hi[2].max(c[2])]
+            });
+            let extent = (hi[0] - lo[0] + 1) as usize
+                * (hi[1] - lo[1] + 1) as usize
+                * (hi[2] - lo[2] + 1) as usize;
+            for yaw in 0..4u8 {
+                assert_eq!(
+                    stamp_cells(def.id, &doc, yaw).len(),
+                    extent,
+                    "{} at yaw {yaw} filled a number of cells other than the {extent} its own extent spans",
+                    def.id.label()
+                );
+            }
+            checked += 1;
+        }
+        assert!(checked > 8, "only {checked} pieces were checked");
+    }
+
+    /// A piece that owns no cells owns no block, so filling one places nothing
+    /// rather than placing it once and calling that a block.
+    #[test]
+    fn a_piece_with_no_occupied_cells_fills_nothing() {
+        let doc = retrackt_format::demo_track();
+        let mut checked = 0;
+        for def in catalog() {
+            let shape = piece_shape(def.id, &PieceParams::default(), doc.cell_size);
+            if shape.occupied.is_empty() {
+                assert!(
+                    stamp_cells(def.id, &doc, 0).is_empty(),
+                    "{} owns no cells and should fill no block",
+                    def.id.label()
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "the catalogue has no cell-less piece to check");
     }
 }

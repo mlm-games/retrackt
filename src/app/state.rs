@@ -144,6 +144,8 @@ pub enum UiAct {
     SetAllowOverlap(bool),
     /// Show or hide the list of tracks that can be loaded.
     ToggleLoads,
+    /// Stamp a placement across the piece's whole block, or place just one.
+    ToggleFillBlock,
     /// Encode the current track as a share code and put it on the clipboard.
     CopyShareCode,
     /// Decode the editor's code field into the current track.
@@ -332,6 +334,8 @@ pub struct EditorData {
     /// every other key.
     pub show_help: bool,
     pub show_loads: bool,
+    /// Whether a placement fills the armed piece's block rather than one cell.
+    pub fill_block: bool,
     /// How many times Generate has been pressed, so each press draws a different
     /// circuit rather than the same one over and over.
     pub generate_press: u64,
@@ -377,6 +381,7 @@ impl Default for EditorData {
             hover: None,
             show_help: false,
             show_loads: false,
+            fill_block: false,
             generate_press: 0,
         }
     }

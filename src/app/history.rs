@@ -34,6 +34,13 @@ pub enum Edit {
     },
     /// The document was renamed.
     Renamed { before: String, after: String },
+    /// Several pieces placed as one action, filling a block.
+    ///
+    /// Its own variant rather than one `Added` per piece because the cells went
+    /// down together: undoing a block that took one click should not take one
+    /// click per cell, and the cells are kept by uid so the order they were
+    /// pushed in cannot decide which of them comes out.
+    Stamped { pieces: Vec<PieceInstance> },
 }
 
 impl Edit {
@@ -49,6 +56,13 @@ impl Edit {
             Edit::Changed { uid, before, .. } => replace(doc, *uid, *before),
             Edit::Replaced { before, .. } => doc.pieces = before.clone(),
             Edit::Renamed { before, .. } => doc.name = before.clone(),
+            Edit::Stamped { pieces } => {
+                for piece in pieces {
+                    if let Some(at) = doc.pieces.iter().position(|p| p.uid == piece.uid) {
+                        doc.pieces.remove(at);
+                    }
+                }
+            }
         }
     }
 
@@ -64,6 +78,12 @@ impl Edit {
             Edit::Changed { uid, after, .. } => replace(doc, *uid, *after),
             Edit::Replaced { after, .. } => doc.pieces = after.clone(),
             Edit::Renamed { after, .. } => doc.name = after.clone(),
+            Edit::Stamped { pieces } => {
+                for piece in pieces {
+                    let at = doc.pieces.len();
+                    insert_at(doc, at, piece.clone());
+                }
+            }
         }
     }
 }
@@ -414,5 +434,27 @@ mod tests {
         h.clear();
         assert!(!h.can_undo() && !h.can_redo());
         assert!(h.undo(&mut doc).is_none());
+    }
+
+    /// A block went down in one click, so it comes back up in one click. The
+    /// pieces are found by identity rather than by position, because the cells
+    /// were pushed together and the order they went down in must not decide which
+    /// of them comes out.
+    #[test]
+    fn a_block_filled_in_one_click_is_undone_in_one_click() {
+        let mut doc = three();
+        let edit = Edit::Stamped {
+            pieces: vec![piece(4, 12), piece(5, 16)],
+        };
+        doc.pieces.extend(edit.pieces.clone());
+        assert_eq!(doc.pieces.len(), 5);
+
+        edit.undo(&mut doc);
+        assert_eq!(doc.pieces.len(), 3, "one click left cells behind: {doc:?}");
+        assert!(doc.pieces.iter().all(|p| p.uid.0 < 4), "{doc:?}");
+
+        edit.redo(&mut doc);
+        assert_eq!(doc.pieces.len(), 5, "{doc:?}");
+        assert!(doc.pieces.iter().any(|p| p.uid.0 == 5), "{doc:?}");
     }
 }
