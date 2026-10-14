@@ -22,3 +22,36 @@ jobs:
       cargo-rapk-version: "0.23.1"
       upload-artifacts: true
       app-slug: retrackt-desktop
+
+  # Type-check the test targets and say what is wrong, as annotations.
+  #
+  # The shared workflow builds the library for every platform and runs the tests
+  # separately, but nothing in it compiles the test targets on its own: a type
+  # error that only exists under `#[cfg(test)]` fails every test job at once and
+  # says nothing about which line. And rustc's own output does not come back
+  # through the checks API, so a red build is otherwise just a red build. This
+  # job turns each compiler error into a workflow annotation, which does.
+  test-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Type-check the test targets
+        run: |
+          set -o pipefail
+          cargo check --workspace --all-targets 2>&1 | tee /tmp/check.log || true
+      - name: Report each compiler error as an annotation
+        run: |
+          status=0
+          while IFS= read -r line; do
+            case "$line" in
+              error*) status=1 ;;
+            esac
+            clean=$(printf '%s' "$line" \
+              | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/:/%3A/g')
+            printf '::error title=type error::%s\n' "$clean"
+          done < <(grep -E '^(error|warning)(\[|:)' /tmp/check.log | head -40)
+          exit $status
