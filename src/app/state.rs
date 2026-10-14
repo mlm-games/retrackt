@@ -130,10 +130,6 @@ pub enum UiAct {
     AdjustSelection(crate::app::ParamKind, i8),
     /// Show or hide the editor's keyboard reference.
     ToggleHelp,
-    /// Record what has been typed into the track-name field.
-    SetNameDraft(String),
-    /// Give the track the name in the field, as one undoable edit.
-    RenameTrack,
     /// Encode the current track as a share code and put it on the clipboard.
     CopyShareCode,
     /// Decode the editor's code field into the current track.
@@ -321,12 +317,6 @@ pub struct EditorData {
     /// once, and it is where a player goes looking when they have already found
     /// every other key.
     pub show_help: bool,
-    /// The track name as it is being typed, before it is committed.
-    ///
-    /// A draft rather than the name itself: renaming on every keystroke would put
-    /// one undo entry per letter, and would rename a track to "" halfway through
-    /// clearing its name. The name moves when Rename is pressed.
-    pub name_draft: String,
     /// Share-code field contents, so the draft survives leaving the editor.
     pub code_draft: String,
     /// The last code this track exported to, shown so it can be re-copied.
@@ -357,7 +347,6 @@ impl Default for EditorData {
             can_redo: false,
             diagnostics: Vec::new(),
             code_draft: String::new(),
-            name_draft: String::new(),
             code_out: String::new(),
             thumbnails: true,
             hover: None,
