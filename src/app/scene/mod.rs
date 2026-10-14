@@ -6,6 +6,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use glam::Vec3;
 use repame_view3d::{Frame3d, MeshGroup, SceneLight, ShadowDesc};
 use retrackt_format::geometry::RawMesh;
+use retrackt_format::{ENVIRONMENT_DESERT, ENVIRONMENT_SUMMER, ENVIRONMENT_WINTER};
 
 use super::App;
 use crate::app::state::Screen;
@@ -47,7 +48,6 @@ const HORIZON: u32 = 0xCFE6F7;
 const ZENITH: u32 = 0x4E9BE0;
 const GRASS_A: u32 = 0x69BD5F;
 const GRASS_B: u32 = 0x5BB052;
-use retrackt_format::{ENVIRONMENT_DESERT, ENVIRONMENT_SUMMER, ENVIRONMENT_WINTER};
 /// Inside the far plane, outside the ground ring: the dome always hides the
 /// world edge while the camera stays within the track.
 const SKY_RADIUS: f32 = 1900.0;
@@ -366,7 +366,7 @@ fn push_tile(group: &mut MeshGroup, i: i32, j: i32, pitch: f32, tint: [f32; 3]) 
 /// triangles a frame for a pattern the eye cannot resolve out there. The colour
 /// is the lighter of the two the tiles alternate between, so the change from
 /// checked to plain reads as distance rather than as a step in hue.
-fn plain_group(centre: Vec3) -> MeshGroup {
+fn plain_group(centre: Vec3, at: &Atmosphere) -> MeshGroup {
     let mut group = MeshGroup {
         depth_test: true,
         ..MeshGroup::default()
@@ -386,7 +386,7 @@ fn plain_group(centre: Vec3) -> MeshGroup {
         [x0, y, z0 + r * 2.0],
         [x0 + r * 2.0, y, z0 + r * 2.0],
         [x0 + r * 2.0, y, z0],
-        a,
+        at.ground_a,
         [0.0, 1.0, 0.0],
     );
     group
@@ -501,7 +501,7 @@ impl SkyDome {
     /// Only the tints move: the shape, and the heights they are mixed by, are the
     /// same for every environment, so this is the whole of what a preset costs
     /// and it costs nothing per frame once the preset is set.
-    pub(super) fn set_atmosphere(&mut self, at: &Atmosphere) -> bool {
+    fn set_atmosphere(&mut self, at: &Atmosphere) -> bool {
         if self.environment == at.environment {
             return false;
         }
@@ -601,7 +601,7 @@ impl App {
         frame.push(self.sky.at(centre));
         // The plain follows the view, so it is built here rather than cached with
         // the ground: the detailed tiles are static and this one is not.
-        frame.push(plain_group(centre));
+        frame.push(plain_group(centre, &at));
         // Ground and track are handed over by value: `Frame3d` owns its groups
         // and repame-view3d has no shared-group handle, so a per-frame clone is
         // the price of them appearing in every frame. They stay separate groups
@@ -824,13 +824,16 @@ mod tests {
         // sits near the end of a cell. Checked from several positions, including
         // one far outside any track, because "fly the camera off the plain" is
         // the case this exists for.
+        // The quad's reach does not depend on what it is coloured, so this asks
+        // with the default atmosphere rather than naming a track.
+        let at = atmosphere(ENVIRONMENT_SUMMER, 0);
         for centre in [
             Vec3::new(45.0, 0.0, 45.0),
             Vec3::new(-3199.0, 0.0, 3199.0),
             Vec3::new(-9000.0, 0.0, 4000.0),
             Vec3::new(0.0, 0.0, 0.0),
         ] {
-            let group = plain_group(centre);
+            let group = plain_group(centre, &at);
             assert_eq!(group.tri_count(), 2, "the plain is one quad");
             let cover = |axis: usize| {
                 let lo = group
