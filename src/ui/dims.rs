@@ -397,28 +397,6 @@ mod tests {
     /// A rectangle in dp: x, y, width, height.
     type Rect = (f32, f32, f32, f32);
 
-    /// Send a line to the real stderr as a workflow command.
-    ///
-    /// Not `eprintln!`: the test harness captures what that writes and replays it
-    /// only for a test it is already reporting as failed, so a diagnostic printed
-    /// that way is lost in exactly the build that needed it. A build reads workflow
-    /// commands off the process's own stderr, which `eprintln!` never reaches.
-    fn note(level: &str, title: &str, message: &str) {
-        let clean = message
-            .replace(['\r', '\n'], " ")
-            .replace('%', "%25")
-            .replace(':', "%3A");
-        // One command per bounded piece. A single over-long command is a line the
-        // runner cannot parse, and a command it cannot parse takes the commands
-        // after it down too, so a long inventory swallows the very assertion it was
-        // printed to explain.
-        for chunk in clean.as_bytes().chunks(500) {
-            let piece = String::from_utf8_lossy(chunk);
-            let line = format!("::{level} file=dims.rs,line=0,title={title}::{piece}\n");
-            let _ = std::io::Write::write_all(&mut std::io::stderr(), line.as_bytes());
-        }
-    }
-
     /// Report a failing assertion as a workflow annotation, so a red build names the
     /// assertion that failed in its own summary rather than only in a log the checks
     /// API will not hand back.
@@ -437,7 +415,12 @@ mod tests {
                 let at = info.location();
                 let file = at.map_or("dims.rs", |l| l.file());
                 let line = at.map_or(0, |l| l.line());
-                note("error", &format!("failed {file}:{line}"), &said);
+                let clean = said
+                    .replace('\n', " ")
+                    .replace('\r', " ")
+                    .replace('%', "%25")
+                    .replace(':', "%3A");
+                eprintln!("::error file={file},line={line},title=failed assertion::{clean}");
                 previous(info);
             }));
         });
@@ -661,7 +644,6 @@ mod tests {
         // The strip is the only way to reach a piece that is not on the open
         // shelf, so switching categories has to change what is laid out: an
         // editor that ignored the tap would show one category forever.
-        let mut shown_groups = 0;
         for group in retrackt_format::piece::groups() {
             let index = retrackt_format::piece::group_index(group).expect("group is listed");
             let scene = editor_at_with_category(1024.0, 576.0, index);
@@ -687,48 +669,19 @@ mod tests {
                     _ => None,
                 })
                 .fold(f32::MAX, f32::min);
-            let every = texts(&scene);
-            let texts: Vec<String> = every
-                .iter()
+            let texts: Vec<String> = texts(&scene)
+                .into_iter()
                 .filter(|(_, r)| r.0 + r.2 <= palette_edge)
-                .map(|(t, _)| t.clone())
+                .map(|(t, _)| t)
                 .collect();
-            if shown_groups == 0 {
-                // What the shelf really laid out, as an annotation rather than only
-                // in a log: a red build that says a tile is hidden and not what it
-                // did lay out costs a whole build to find out.
-                let inventory = every
-                    .iter()
-                    .filter(|(_, r)| r.0 < 400.0)
-                    .map(|(t, r)| format!("{t}@{:.0},{:.0},{:.0}", r.0, r.1, r.2))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                note(
-                    "warning",
-                    &format!("palette {group} laid out"),
-                    &format!("edge={palette_edge:.1} {inventory}"),
-                );
-                let wide = scene
-                    .nodes
-                    .iter()
-                    .filter_map(|n| match n {
-                        SceneNode::Rect { rect, .. } if rect.w > 250.0 => {
-                            Some(format!("{:.0}+{:.0}", rect.x, rect.w))
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                note("warning", "wide rects", &wide);
-                shown_groups += 1;
-            }
             for piece in retrackt_format::catalog() {
                 let tile = crate::ui::screens::editor::short_name(piece.id.label());
                 let shown = texts.iter().any(|t| *t == tile);
                 assert_eq!(
                     shown,
                     piece.id.group() == group,
-                    "{group}: {tile} is {}, palette edge {palette_edge:.1} holds {texts:?}"
+                    "{group}: {tile} is {} of {texts:?} inside edge {palette_edge:.1}",
+                    if shown { "shown" } else { "hidden" }
                 );
             }
         }
