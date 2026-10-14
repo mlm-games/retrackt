@@ -547,7 +547,6 @@ mod tests {
     #[test]
     fn a_stamp_is_the_pieces_own_extent_turned_by_its_heading() {
         crate::report_failure_where_it_happens();
-        crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
         let mut checked = 0;
         for def in retrackt_format::catalog() {
@@ -587,7 +586,6 @@ mod tests {
     /// a test that hard-codes the list goes stale the moment a piece is added.
     #[test]
     fn a_stamp_covers_a_piece_exactly_when_the_piece_owns_cells() {
-        crate::report_failure_where_it_happens();
         crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
         for def in retrackt_format::catalog() {

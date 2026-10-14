@@ -457,12 +457,15 @@ mod tests {
     #[test]
     fn a_block_filled_in_one_click_is_undone_in_one_click() {
         crate::report_failure_where_it_happens();
-        crate::report_failure_where_it_happens();
         let mut doc = three();
+        // Built apart from the edit, because a field cannot be read back off an
+        // enum value: the other variants have no `pieces`, so the only way to
+        // name one is to destructure it.
+        let pieces = vec![piece(4, 12), piece(5, 16)];
         let edit = Edit::Stamped {
-            pieces: vec![piece(4, 12), piece(5, 16)],
+            pieces: pieces.clone(),
         };
-        doc.pieces.extend(edit.pieces.clone());
+        doc.pieces.extend(pieces);
         assert_eq!(doc.pieces.len(), 5);
 
         edit.undo(&mut doc);
