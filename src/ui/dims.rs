@@ -1019,6 +1019,37 @@ mod tests {
     }
 
     #[test]
+    fn the_track_settings_panel_says_where_the_run_begins_and_ends() {
+        // The name is what the track is called everywhere else in the game, and the
+        // start and finish are the two facts about a circuit a player checks before
+        // asking whether the middle is any good. Without them the editor shows a
+        // list of pieces and no way to tell what the track is.
+        let mut data = AppData::default();
+        let mut b = retrackt_format::ChainBuilder::new("settings");
+        b.step(
+            retrackt_format::PieceId::Start,
+            retrackt_format::PieceParams::default(),
+        );
+        b.step(
+            retrackt_format::PieceId::Checkpoint,
+            retrackt_format::PieceParams::default(),
+        );
+        b.step(
+            retrackt_format::PieceId::Finish,
+            retrackt_format::PieceParams::default(),
+        );
+        data.track = b.build();
+        let shown = labels(&editor_with(&data, 1280.0, 800.0));
+        assert!(shown.iter().any(|t| t == "Track settings"), "{shown:?}");
+        for label in ["Start", "Finish", "Gates"] {
+            assert!(
+                shown.iter().any(|t| t == label),
+                "track settings has no {label} row: {shown:?}"
+            );
+        }
+    }
+
+    #[test]
     fn the_key_reference_waits_to_be_asked_for() {
         // Nine rows of text about keys nobody reads while placing a piece, and open
         // they stood between the player and the list of pieces. The camera keys are
