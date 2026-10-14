@@ -550,7 +550,7 @@ mod tests {
         crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
         let mut checked = 0;
-        for def in catalog() {
+        for def in retrackt_format::catalog() {
             let shape = piece_shape(def.id, &PieceParams::default(), doc.cell_size);
             if shape.occupied.is_empty() {
                 continue;
@@ -590,7 +590,7 @@ mod tests {
         crate::report_failure_where_it_happens();
         crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
-        for def in catalog() {
+        for def in retrackt_format::catalog() {
             let shape = piece_shape(def.id, &PieceParams::default(), doc.cell_size);
             assert_eq!(
                 stamp_cells(def.id, &doc, 0).is_empty(),
