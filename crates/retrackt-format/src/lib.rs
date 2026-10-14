@@ -15,7 +15,7 @@ pub mod track;
 pub mod validate;
 
 pub use code::{CodeError, export_code, import_code};
-pub use demo::{ChainBuilder, builtin_tracks, demo_track, stunt_track};
+pub use demo::{ChainBuilder, builtin_tracks, demo_track, generated_track, stunt_track};
 pub use fingerprint::gameplay_fingerprint;
 pub use geometry::{Centerline, RawMesh, piece_shape};
 pub use piece::{

@@ -590,6 +590,7 @@ impl App {
             UiAct::SetSunDirection(deg) => {
                 self.data.track.sun_direction_deg = deg % 360;
             }
+            UiAct::GenerateTrack => self.generate_track(),
             UiAct::CopyShareCode => self.copy_share_code(),
             UiAct::LoadShareCode => self.load_share_code(),
             UiAct::SetCodeDraft(code) => self.data.editor.code_draft = code,
@@ -1437,6 +1438,23 @@ impl App {
     /// does not shorten it. A name of unbounded length would save a file the
     /// filesystem cannot hold, and the failure would surface on save rather than
     /// where it was typed.
+    fn generate_track(&mut self) {
+        // Seeded from what is already there and a counter that moves each press,
+        // so pressing it twice gives two circuits rather than one twice.
+        self.data.editor.generate_press += 1;
+        let seed = self.data.editor.generate_press
+            ^ (self.data.track.pieces.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        let drawn = retrackt_format::generated_track(seed, &self.data.track.name);
+        // Only the road is replaced. The name and the environment are what the
+        // player chose, and a button labelled Generate is about the line, not
+        // about undoing somebody's afternoon.
+        let before = std::mem::replace(&mut self.data.track.pieces, drawn.pieces);
+        let after = self.data.track.pieces.clone();
+        self.history.push(Edit::Replaced { before, after });
+        self.data.editor.selection.clear();
+        self.track_changed();
+    }
+
     fn rename_track(&mut self) {
         let wanted: String = self
             .data

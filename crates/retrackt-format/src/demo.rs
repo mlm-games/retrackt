@@ -141,6 +141,51 @@ fn yaw_for_direction(dir: GridDir) -> u8 {
 
 /// A closed circuit: two long straights joined by right-hand curves, with a
 /// boost pad, checkpoints and a finish; exercises zone and yawed pieces.
+/// A random circuit drawn from `seed`: a Start, a wandering chain and a Finish.
+///
+/// Seeded rather than sampled from a clock. The same seed always draws the same
+/// circuit, which is what makes it testable at all, and what lets the editor step
+/// the seed forward for each press instead of reaching for an entropy source that
+/// does not exist on every target this builds for.
+///
+/// The walk is a chain rather than a fill: every piece is placed against the exit
+/// of the one before it, so the result is connected by construction and needs no
+/// repair pass. Turns alternate sides, because a circuit that keeps turning the
+/// same way is a spiral that ends up inside its own first corner.
+pub fn generated_track(seed: u64, name: &str) -> TrackDocument {
+    let mut rng = seed | 1;
+    let mut next = move || {
+        rng ^= rng >> 12;
+        rng ^= rng << 25;
+        rng ^= rng >> 27;
+        (rng.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 33) as u32
+    };
+
+    let mut b = ChainBuilder::new(name);
+    b.step(PieceId::Start, PieceParams::default().length(2));
+    let legs = 6 + next() % 8;
+    for leg in 0..legs {
+        for _ in 0..1 + next() % 3 {
+            b.step(
+                PieceId::Straight,
+                PieceParams::default().length(2 + (next() % 3) as u8),
+            );
+        }
+        if leg % 3 == 2 {
+            b.step(PieceId::Checkpoint, PieceParams::default());
+        }
+        match next() % 4 {
+            0 => b.step(PieceId::CurveRight90, PieceParams::default().radius(2)),
+            1 => b.step(PieceId::CurveLeft90, PieceParams::default().radius(2)),
+            2 => b.step(PieceId::SCurve, PieceParams::default()),
+            _ => {}
+        }
+    }
+    b.step(PieceId::Checkpoint, PieceParams::default());
+    b.step(PieceId::Finish, PieceParams::default());
+    b.build()
+}
+
 pub fn demo_track() -> TrackDocument {
     use PieceId::*;
 
@@ -582,6 +627,24 @@ mod scurve_probe {
                     .iter()
                     .map(|p| (p.cell, p.outward))
                     .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Every circuit the generator draws is a circuit, not a scatter of pieces.
+    ///
+    /// The generator chains every piece against the exit of the one before it, so
+    /// the only way to draw an unraceable track is to leave off an end. Checked
+    /// across a spread of seeds rather than one, because a walk that occasionally
+    /// doubles back on itself is the failure a single seed hides.
+    #[test]
+    fn every_generated_circuit_can_be_raced() {
+        for seed in 0..48u64 {
+            let doc = crate::generated_track(seed, "generated");
+            let diagnostics = crate::validate(&doc);
+            assert!(
+                !crate::is_unraceable(&diagnostics),
+                "seed {seed} drew a track that cannot be raced: {diagnostics:?}"
             );
         }
     }

@@ -138,6 +138,8 @@ pub enum UiAct {
     SetEnvironment(u8),
     /// Take the sun as far round the compass as the track asks for.
     SetSunDirection(u16),
+    /// Throw the current road away and draw a new one.
+    GenerateTrack,
     /// Encode the current track as a share code and put it on the clipboard.
     CopyShareCode,
     /// Decode the editor's code field into the current track.
@@ -325,6 +327,9 @@ pub struct EditorData {
     /// once, and it is where a player goes looking when they have already found
     /// every other key.
     pub show_help: bool,
+    /// How many times Generate has been pressed, so each press draws a different
+    /// circuit rather than the same one over and over.
+    pub generate_press: u64,
     /// The track name as it is being typed, before it is committed.
     ///
     /// A draft rather than the name itself: renaming on every keystroke would put
@@ -366,6 +371,7 @@ impl Default for EditorData {
             thumbnails: true,
             hover: None,
             show_help: false,
+            generate_press: 0,
         }
     }
 }

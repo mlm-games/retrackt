@@ -1128,6 +1128,7 @@ fn build_children(data: &AppData, actions: &ActionQueue) -> Vec<View> {
     }
     let mut row = vec![
         ctrl("Save", pusher(actions, UiAct::SaveTrack)),
+        ctrl("Generate", pusher(actions, UiAct::GenerateTrack)),
         ctrl("Remove Last", pusher(actions, UiAct::RemoveLastPiece)),
         ctrl_danger("Clear Track", pusher(actions, UiAct::ClearTrack)),
     ];
