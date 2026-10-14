@@ -945,25 +945,6 @@ fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
         "Track settings",
         dims::panel_w(),
         vec![
-            Column(Modifier::new().gap(dims::SPACE_LIST).fill_max_width()).child([
-                BasicTextField(
-                    draft,
-                    Modifier::new().fill_max_width().min_height(dims::CTRL_H),
-                    "Track name",
-                    TextFieldConfig {
-                        line_limits: TextFieldLineLimits::SingleLine,
-                        on_change: Some(Rc::new({
-                            let queue = actions.clone();
-                            move |text: String| push(&queue, UiAct::SetNameDraft(text))
-                        }) as Rc<dyn Fn(String)>),
-                        ..TextFieldConfig::default()
-                    },
-                ),
-                ctrl_row(vec![match renamed {
-                    true => ctrl_on("Rename", pusher(actions, UiAct::RenameTrack)),
-                    false => ctrl_off("Rename"),
-                }]),
-            ]),
             field_row("Start line", start),
             field_row("Finish line", finish),
             field_row("Gates", checkpoints.to_string()),
