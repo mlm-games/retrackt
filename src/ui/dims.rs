@@ -320,7 +320,17 @@ pub fn ctrl_w() -> Dp {
 /// one more, so it has nothing to disagree about. Below the width a name fits at
 /// all, the shelf takes one tile filling it rather than clipping every name in it.
 pub fn tile_w() -> Dp {
-    let shelf = shelf_content_w().value();
+    tile_w_of(&at(fit::width()))
+}
+
+/// Tile width for one window, rather than for whatever window is current.
+///
+/// Separate from [`tile_w`] so a test can ask what a window *would* get without
+/// setting the global up first. Comparing a tile measured from the current window
+/// against a shelf measured from some other one compares two unrelated layouts,
+/// and the tile test did exactly that.
+fn tile_w_of(layout: &Layout) -> Dp {
+    let shelf = layout.shelf_content_w().value();
     let fit = |count: usize| (shelf - SPACE_ROW.0 * (count as f32 - 1.0)) / count as f32;
     for count in [4usize, 3, 2] {
         let w = fit(count);
@@ -339,11 +349,6 @@ pub fn tile_w() -> Dp {
 /// every tile a full-height slab instead of a card.
 pub fn tile_h() -> Dp {
     theme::dp(tile_icon_h().0 + TILE_LABEL_DP + theme::dp(8.0).0)
-}
-
-/// Width one row inside the palette's shelf of parts actually has.
-fn shelf_content_w() -> Dp {
-    at(fit::width()).shelf_content_w()
 }
 
 /// Height of the icon inside a palette tile.
@@ -1049,7 +1054,7 @@ mod tests {
         for w in WIDTHS {
             let l = at(w);
             let shelf = l.shelf_content_w().value();
-            let tile = tile_w().value();
+            let tile = tile_w_of(&l).value();
             assert!(
                 tile <= shelf + 0.5,
                 "{w} dp: a {tile} dp tile in a {shelf} dp shelf"
