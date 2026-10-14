@@ -2012,6 +2012,7 @@ mod tests {
 
     #[test]
     fn escape_gets_out_of_every_screen_but_the_title() {
+        crate::report_failure_where_it_happens();
         // A screen that misses this is one a keyboard player cannot leave, so
         // the list is checked against every screen rather than against the ones
         // someone remembered to name.
@@ -2036,6 +2037,7 @@ mod tests {
 
     #[test]
     fn a_delta_is_read_at_the_last_checkpoint_both_runs_reached() {
+        crate::report_failure_where_it_happens();
         let ghost = [100, 200, 300];
         // Ahead at the first gate, behind at the second: the newer shared one wins.
         assert_eq!(split_delta(&[90, 210], Some(&ghost)), Some(10));
@@ -2045,6 +2047,7 @@ mod tests {
 
     #[test]
     fn there_is_no_delta_before_a_shared_checkpoint_or_without_a_ghost() {
+        crate::report_failure_where_it_happens();
         assert_eq!(split_delta(&[100, 200], Some(&[])), None);
         assert_eq!(split_delta(&[100], None), None);
         assert_eq!(split_delta(&[], Some(&[100])), None);
@@ -2052,6 +2055,7 @@ mod tests {
 
     #[test]
     fn a_delta_falls_back_to_the_last_checkpoint_the_ghost_also_reached() {
+        crate::report_failure_where_it_happens();
         // The ghost has one split and the player three: the only comparison on
         // offer is the first, and it is stale but not wrong. Reporting it beats
         // showing nothing while the ghost is visibly ahead on the road.
@@ -2060,6 +2064,7 @@ mod tests {
 
     #[test]
     fn a_delta_never_panics_on_a_ghost_with_fewer_splits() {
+        crate::report_failure_where_it_happens();
         // A tape from an older build, or one recorded on a track that has since
         // gained a checkpoint: the columns must not be zipped past their end.
         assert_eq!(split_delta(&[100, 200, 300], Some(&[100, 200])), Some(0));

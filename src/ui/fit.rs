@@ -192,6 +192,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_phone_in_portrait_is_treated_as_narrow() {
+        crate::report_failure_where_it_happens();
         let _turn = portrait();
         assert!(is_narrow());
         assert!(width() < 600.0, "{}", width());
@@ -199,12 +200,14 @@ pub(crate) mod tests {
 
     #[test]
     fn a_desktop_window_is_not_treated_as_narrow() {
+        crate::report_failure_where_it_happens();
         let _turn = desktop();
         assert!(!is_narrow());
     }
 
     #[test]
     fn a_panel_fits_a_phone_in_portrait() {
+        crate::report_failure_where_it_happens();
         let _turn = portrait();
         // The comfortable width is 560; the window is 360 less two 12 dp margins.
         assert!(
@@ -216,6 +219,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_panel_keeps_its_comfortable_width_on_a_desktop() {
+        crate::report_failure_where_it_happens();
         let _turn = desktop();
         assert!(
             (panel_width(560.0) - 560.0).abs() < 0.001,
@@ -226,6 +230,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_panel_is_never_taller_than_a_phone_screen() {
+        crate::report_failure_where_it_happens();
         let _turn = portrait();
         assert!(panel_height(520.0) <= height());
         assert!(panel_height(520.0) < 780.0);
@@ -233,6 +238,7 @@ pub(crate) mod tests {
 
     #[test]
     fn buttons_narrow_enough_for_two_to_share_a_phone_row() {
+        crate::report_failure_where_it_happens();
         let _turn = portrait();
         // Three buttons at the desktop's 150 dp cannot wrap on 360; at this width
         // two fit, which is what makes a wrapped row read as deliberate.
@@ -242,6 +248,7 @@ pub(crate) mod tests {
 
     #[test]
     fn no_single_part_of_a_list_row_is_wider_than_the_list() {
+        crate::report_failure_where_it_happens();
         // A wrapping row can only be as wide as its widest *line*, so the guarantee
         // is that every indivisible part fits: the label, and the group of buttons that
         // share a line. A plain row instead had the whole of label-plus-buttons as one
@@ -264,6 +271,7 @@ pub(crate) mod tests {
 
     #[test]
     fn three_buttons_wrap_to_two_lines_rather_than_overflowing() {
+        crate::report_failure_where_it_happens();
         // What the tight case actually resolves to on a phone: the label on its own
         // line, then two buttons and one. Stated so the shape is deliberate rather
         // than whatever the wrapping happens to produce.
@@ -285,6 +293,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_label_gives_way_before_a_button_does() {
+        crate::report_failure_where_it_happens();
         // The label is capped by the buttons' width rather than the other way
         // round, so adding a control never pushes the row off the edge.
         let _turn = portrait();
@@ -296,12 +305,14 @@ pub(crate) mod tests {
 
     #[test]
     fn a_label_is_roomy_on_a_desktop() {
+        crate::report_failure_where_it_happens();
         let _turn = desktop();
         assert!(label_width(3) >= 240.0);
     }
 
     #[test]
     fn a_narrow_list_row_wraps_rather_than_overflowing() {
+        crate::report_failure_where_it_happens();
         // Two buttons per line is the widest line that must fit; anything wider has
         // to wrap onto the next one.
         let _turn = portrait();
@@ -312,6 +323,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_fitted_length_is_never_wider_than_the_window() {
+        crate::report_failure_where_it_happens();
         // The engine reports 360 dp before the first layout, which is the whole
         // reason the default is safe to compose against: a 560 dp request becomes
         // 336, not an off-screen panel.
@@ -321,6 +333,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_length_narrower_than_the_window_is_left_alone() {
+        crate::report_failure_where_it_happens();
         // Clamping must not stretch: 100 dp asked for on a wide window stays 100.
         let roomy = fit(100.0, 0.0);
         assert!((roomy - 100.0).abs() < 0.001 || roomy == width().max(MIN_DP));
@@ -328,6 +341,7 @@ pub(crate) mod tests {
 
     #[test]
     fn each_pane_in_a_row_claims_the_room_the_other_leaves() {
+        crate::report_failure_where_it_happens();
         // Two side-by-side panels sized off the same window each think they own all
         // of it, which is how a 230 dp palette and a 660 dp column end up asking for
         // 890 of a 360 dp screen. Reserving the other's comfortable width for each
@@ -358,6 +372,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_fitted_length_never_collapses_to_nothing() {
+        crate::report_failure_where_it_happens();
         // A reserve larger than the window must still leave a usable width, or the
         // panel would lay out at nothing and read as an empty screen.
         assert!(fit(560.0, 100_000.0) >= MIN_DP);
@@ -365,6 +380,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_panel_is_capped_and_fitted_but_never_wider_than_the_window() {
+        crate::report_failure_where_it_happens();
         let w = panel_width(560.0);
         assert!(w <= width().max(MIN_DP) + 0.001);
         assert!(w <= 560.0 + 0.001);
@@ -372,6 +388,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_panel_height_fits_the_window() {
+        crate::report_failure_where_it_happens();
         assert!(panel_height(520.0) <= height().max(MIN_DP));
         assert!(panel_height(10_000.0) <= height().max(MIN_DP));
     }

@@ -195,6 +195,7 @@ mod tests {
 
     #[test]
     fn undoing_an_add_puts_the_piece_back_where_it_went_in() {
+        crate::report_failure_where_it_happens();
         let mut doc = three();
         let mut h = History::new();
         let at = 1;
@@ -210,6 +211,7 @@ mod tests {
 
     #[test]
     fn undoing_a_remove_restores_the_piece_at_its_old_position() {
+        crate::report_failure_where_it_happens();
         let mut doc = three();
         let mut h = History::new();
         let at = 1;
@@ -227,6 +229,7 @@ mod tests {
 
     #[test]
     fn undoing_a_change_restores_every_field_not_just_the_edited_one() {
+        crate::report_failure_where_it_happens();
         let mut doc = three();
         let mut h = History::new();
         let before = doc.pieces[1];
@@ -240,6 +243,7 @@ mod tests {
 
     #[test]
     fn redo_of_a_change_restores_the_edited_value() {
+        crate::report_failure_where_it_happens();
         // The other half of the record: an entry holding only the pre-edit value
         // can undo but cannot redo, and redo would silently do nothing.
         let mut doc = three();
@@ -257,6 +261,7 @@ mod tests {
 
     #[test]
     fn undo_walks_back_through_several_actions() {
+        crate::report_failure_where_it_happens();
         let mut doc = three();
         let mut h = History::new();
         for n in 0..4u32 {
@@ -279,6 +284,7 @@ mod tests {
 
     #[test]
     fn redo_replays_what_undo_took_back() {
+        crate::report_failure_where_it_happens();
         let mut doc = three();
         let mut h = History::new();
         let removed = doc.pieces.remove(0);
@@ -295,6 +301,7 @@ mod tests {
 
     #[test]
     fn redo_of_a_whole_document_swap_reinstates_the_new_pieces() {
+        crate::report_failure_where_it_happens();
         let mut doc = three();
         let mut h = History::new();
         let original = doc.pieces.clone();
@@ -312,6 +319,7 @@ mod tests {
 
     #[test]
     fn a_rename_undoes_and_redoes() {
+        crate::report_failure_where_it_happens();
         let mut doc = three();
         let mut h = History::new();
         let before = doc.name.clone();
@@ -329,6 +337,7 @@ mod tests {
 
     #[test]
     fn a_new_action_discards_the_redo_stack() {
+        crate::report_failure_where_it_happens();
         let mut doc = three();
         let mut h = History::new();
         let removed = doc.pieces.remove(0);
@@ -349,6 +358,7 @@ mod tests {
 
     #[test]
     fn an_entry_names_a_piece_so_later_edits_cannot_redirect_it() {
+        crate::report_failure_where_it_happens();
         // The property snapshots get wrong: the removed piece was at index 1, and
         // a later insertion shifts index 1 onto a different piece. An entry keyed
         // on identity still lands correctly.
@@ -367,6 +377,7 @@ mod tests {
 
     #[test]
     fn an_edit_that_changed_nothing_is_not_recorded() {
+        crate::report_failure_where_it_happens();
         let p = piece(1, 0);
         assert_eq!(changed(p.uid, p, p), None);
         let moved = PieceInstance::new(PieceId::CurveRight90, [0, 0, 0]).with_uid(PieceUid(1));
@@ -375,6 +386,7 @@ mod tests {
 
     #[test]
     fn an_entry_replayed_against_a_changed_document_does_not_panic() {
+        crate::report_failure_where_it_happens();
         // Recorded at index 3, then the document shrinks to one piece: undoing
         // must clamp rather than index out of the vector.
         let mut doc = three();
@@ -405,6 +417,7 @@ mod tests {
 
     #[test]
     fn the_history_is_bounded() {
+        crate::report_failure_where_it_happens();
         let mut doc = TrackDocument::empty();
         let mut h = History::new();
         for n in 0..(MAX_DEPTH + 50) {
@@ -424,6 +437,7 @@ mod tests {
 
     #[test]
     fn clearing_forgets_both_directions() {
+        crate::report_failure_where_it_happens();
         let mut doc = three();
         let mut h = History::new();
         let removed = doc.pieces.remove(0);
@@ -442,6 +456,7 @@ mod tests {
     /// of them comes out.
     #[test]
     fn a_block_filled_in_one_click_is_undone_in_one_click() {
+        crate::report_failure_where_it_happens();
         crate::report_failure_where_it_happens();
         let mut doc = three();
         let edit = Edit::Stamped {

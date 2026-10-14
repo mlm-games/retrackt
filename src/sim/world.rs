@@ -827,6 +827,7 @@ mod tests {
 
     #[test]
     fn every_builtin_track_builds_a_collision_world() {
+        crate::report_failure_where_it_happens();
         for doc in builtin_tracks() {
             let w = TrackWorld::from_doc(&doc);
             assert!(!w.triangles.is_empty(), "{}: no triangles", doc.name);
@@ -838,6 +839,7 @@ mod tests {
 
     #[test]
     fn scenery_collides_but_never_warns() {
+        crate::report_failure_where_it_happens();
         // Props are placed, not chained: a pillar beside the road and a sign
         // further on must end up solid in the collision world without the
         // validator reporting either as standing free.
@@ -882,6 +884,7 @@ mod tests {
 
     #[test]
     fn a_junction_holds_the_car_on_every_route_through_it() {
+        crate::report_failure_where_it_happens();
         // Through road and side mouth must both be ground: a junction whose
         // arm is paint over grass drops the car, and a kerb left across the
         // mouth reads as ground until the car meets the wall it stands on.
@@ -926,6 +929,7 @@ mod tests {
 
     #[test]
     fn a_merge_lane_holds_the_car_along_its_bend() {
+        crate::report_failure_where_it_happens();
         // The Y arm leaves the through road's row, so spot-check the bend and
         // the mouth rather than the middle: those are the points with grass
         // under them if the arm is short.
@@ -949,6 +953,7 @@ mod tests {
 
     #[test]
     fn blocks_stack_without_sharing_cells() {
+        crate::report_failure_where_it_happens();
         // One cube per anchor cell: a block directly atop another owns a
         // different cell, so a wall of blocks validates clean.
         let mut doc = TrackDocument::empty();
@@ -976,6 +981,7 @@ mod tests {
 
     #[test]
     fn a_gate_catches_the_kerb_lines_not_just_the_middle() {
+        crate::report_failure_where_it_happens();
         // A gate one cell wide on a road nearly three across lets a
         // kerb-hugging line miss it entirely. Drive the gate's own facing at
         // increasing lateral offsets: every paved lane must count, the grass
@@ -1022,6 +1028,7 @@ mod tests {
 
     #[test]
     fn a_boost_pad_covers_the_whole_road_not_its_middle() {
+        crate::report_failure_where_it_happens();
         // The same failure a narrow gate has, and the one the pad's size is
         // actually for: a box drawn around the middle of the road leaves the
         // outer lanes driving over paint that does nothing. Checked against the
@@ -1063,6 +1070,7 @@ mod tests {
 
     #[test]
     fn gates_come_out_in_race_order_not_uid_order() {
+        crate::report_failure_where_it_happens();
         for doc in builtin_tracks() {
             let w = TrackWorld::from_doc(&doc);
             let order = doc.race_order();
@@ -1086,6 +1094,7 @@ mod tests {
 
     #[test]
     fn gate_order_follows_the_document_not_the_road() {
+        crate::report_failure_where_it_happens();
         // The test this replaces reversed the uids and required the gate
         // sequence to come back in road order regardless, because race order was
         // a walk from the Start through whatever ports met. Pieces are placed
@@ -1145,6 +1154,7 @@ mod tests {
 
     #[test]
     fn a_gate_the_car_cannot_reach_is_reported_rather_than_refused() {
+        crate::report_failure_where_it_happens();
         // A checkpoint placed in mid air still builds and still gets a gate: the
         // document does not know what the car will do, and refusing the track
         // would refuse free placement. What the validator offers is a warning.
@@ -1180,6 +1190,7 @@ mod tests {
 
     #[test]
     fn gate_indices_number_the_sequence_the_player_drives() {
+        crate::report_failure_where_it_happens();
         for doc in builtin_tracks() {
             let w = TrackWorld::from_doc(&doc);
             for (i, gate) in w.checkpoints.iter().enumerate() {
@@ -1194,6 +1205,7 @@ mod tests {
 
     #[test]
     fn a_shuffled_file_builds_the_same_gate_sequence() {
+        crate::report_failure_where_it_happens();
         let doc = builtin_tracks().remove(0);
         let mut shuffled = doc.clone();
         shuffled.pieces.reverse();
@@ -1209,6 +1221,7 @@ mod tests {
 
     #[test]
     fn a_gate_is_hit_by_the_straight_line_along_its_own_facing() {
+        crate::report_failure_where_it_happens();
         for doc in builtin_tracks() {
             let w = TrackWorld::from_doc(&doc);
             for gate in w.checkpoints.iter().chain(w.finishes.iter()) {
@@ -1234,6 +1247,7 @@ mod tests {
 
     #[test]
     fn no_degenerate_or_badly_normal_triangles() {
+        crate::report_failure_where_it_happens();
         for doc in builtin_tracks() {
             let w = TrackWorld::from_doc(&doc);
             for t in &w.triangles {
@@ -1253,6 +1267,7 @@ mod tests {
 
     #[test]
     fn every_driveable_piece_has_ground_under_its_centre() {
+        crate::report_failure_where_it_happens();
         for doc in builtin_tracks() {
             let w = TrackWorld::from_doc(&doc);
             for inst in &doc.pieces {
@@ -1278,6 +1293,7 @@ mod tests {
 
     #[test]
     fn a_downward_ray_finds_the_road_and_its_normal_points_up() {
+        crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
         let w = TrackWorld::from_doc(&doc);
         let p = retrackt_format::demo::piece_centre(&doc, &doc.pieces[2]);
@@ -1290,6 +1306,7 @@ mod tests {
 
     #[test]
     fn an_upward_ray_finds_nothing_through_the_road() {
+        crate::report_failure_where_it_happens();
         // Back faces are rejected, so shooting up from under the road misses.
         let doc = retrackt_format::demo_track();
         let w = TrackWorld::from_doc(&doc);
@@ -1302,6 +1319,7 @@ mod tests {
 
     #[test]
     fn a_ray_that_misses_the_track_returns_none() {
+        crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
         let w = TrackWorld::from_doc(&doc);
         assert!(
@@ -1313,6 +1331,7 @@ mod tests {
 
     #[test]
     fn gates_are_ordered_and_finishes_are_finishes() {
+        crate::report_failure_where_it_happens();
         let doc = builtin_tracks().remove(0);
         let w = TrackWorld::from_doc(&doc);
         for (i, g) in w.checkpoints.iter().enumerate() {
@@ -1327,6 +1346,7 @@ mod tests {
 
     #[test]
     fn an_explicit_checkpoint_order_reorders_the_gates_the_car_passes() {
+        crate::report_failure_where_it_happens();
         // The last checkpoint on the road is handed order 1, so the run must
         // count it first. This is the whole point of the field: without it the
         // gate sequence is fixed by the geometry and an author cannot change it.
@@ -1347,6 +1367,7 @@ mod tests {
 
     #[test]
     fn every_finish_line_on_the_track_becomes_a_gate() {
+        crate::report_failure_where_it_happens();
         let mut doc = builtin_tracks().remove(0);
         // A second finish, well off the road, so it is a gate nothing reaches.
         let uid = doc.next_piece_uid();
@@ -1379,6 +1400,7 @@ mod tests {
 
     #[test]
     fn the_car_spawns_above_road_level() {
+        crate::report_failure_where_it_happens();
         for doc in builtin_tracks() {
             let w = TrackWorld::from_doc(&doc);
             assert!(
@@ -1396,6 +1418,7 @@ mod tests {
 
     #[test]
     fn boost_zones_sit_on_the_road() {
+        crate::report_failure_where_it_happens();
         let doc = builtin_tracks().remove(0);
         let w = TrackWorld::from_doc(&doc);
         let b = w.boost_zones[0];
@@ -1410,6 +1433,7 @@ mod tests {
 
     #[test]
     fn closest_point_on_triangle_projection() {
+        crate::report_failure_where_it_happens();
         let t = Triangle {
             a: Vec3::new(0.0, 0.0, 0.0),
             b: Vec3::new(1.0, 0.0, 0.0),

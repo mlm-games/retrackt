@@ -389,6 +389,7 @@ mod tests {
 
     #[test]
     fn nothing_on_the_title_screen_falls_off_the_side() {
+        crate::report_failure_where_it_happens();
         // The track line is a wrapping row, but a percentage width resolves to the
         // content width once an ancestor is itself sized to its content, which
         // unwrapped it again and pushed 13 dp past a 320 dp screen.
@@ -406,6 +407,7 @@ mod tests {
 
     #[test]
     fn the_library_and_the_controls_share_a_row_only_when_there_is_room() {
+        crate::report_failure_where_it_happens();
         // The two panels were always in a column: the `stacked` flag chose their
         // sizes and nothing else, so the comment describing a row described an
         // arrangement the screen never took.

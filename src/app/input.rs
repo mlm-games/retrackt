@@ -538,6 +538,7 @@ mod tests {
 
     #[test]
     fn stick_sign_follows_vehicle_steer_convention() {
+        crate::report_failure_where_it_happens();
         let right = pad(|b| b.axis(GamepadAxis::LeftStickX, 0.8));
         assert_eq!(pad_controls(&right).steer, 0.8);
 
@@ -547,12 +548,14 @@ mod tests {
 
     #[test]
     fn stick_deadzone_silences_resting_tilt() {
+        crate::report_failure_where_it_happens();
         let resting = pad(|b| b.axis(GamepadAxis::LeftStickX, 0.1));
         assert_eq!(pad_controls(&resting).steer, 0.0);
     }
 
     #[test]
     fn triggers_and_shoulders_drive_the_car() {
+        crate::report_failure_where_it_happens();
         let controls = pad(|b| {
             b.axis(GamepadAxis::RightTrigger, 0.9);
             b.axis(GamepadAxis::LeftTrigger, 0.9);
@@ -565,6 +568,7 @@ mod tests {
 
     #[test]
     fn face_buttons_fire_restart_and_quit_edges() {
+        crate::report_failure_where_it_happens();
         let controls = pad(|b| {
             b.button(repose_core::input::GamepadButton::North, true);
             b.button(repose_core::input::GamepadButton::East, true);
@@ -575,6 +579,7 @@ mod tests {
 
     #[test]
     fn touch_up_throttles_down_brakes_right_steers() {
+        crate::report_failure_where_it_happens();
         let (steer, throttle, brake) = stick_axis((0.0, -STICK_TRAVEL_DP), STICK_TRAVEL_DP);
         assert_eq!(steer, 0.0);
         assert!(throttle && !brake);
@@ -590,6 +595,7 @@ mod tests {
 
     #[test]
     fn the_knob_recentres_when_the_finger_lifts() {
+        crate::report_failure_where_it_happens();
         let mut sched = Scheduler::new();
         let mut stick = TouchStick::default();
         assert_eq!(stick.finger, None);
@@ -612,6 +618,7 @@ mod tests {
 
     #[test]
     fn the_ring_slides_with_a_finger_that_runs_past_full_travel() {
+        crate::report_failure_where_it_happens();
         // Beyond full travel the ring comes along, so a thumb that reaches the edge
         // of the screen keeps steering instead of jamming against a fixed stop.
         let mut sched = Scheduler::new();
@@ -639,6 +646,7 @@ mod tests {
 
     #[test]
     fn a_drag_within_travel_leaves_the_ring_where_it_was() {
+        crate::report_failure_where_it_happens();
         let mut sched = Scheduler::new();
         let mut stick = TouchStick::default();
         let travel = travel_px();
@@ -658,6 +666,7 @@ mod tests {
 
     #[test]
     fn the_knob_never_leaves_the_ring_however_far_the_finger_goes() {
+        crate::report_failure_where_it_happens();
         // The knob is a position on the ring, not a free vector, so full deflection
         // is the ceiling however far the drag runs — and a drag short of it is
         // proportional rather than clamped.
@@ -687,6 +696,7 @@ mod tests {
 
     #[test]
     fn the_stick_is_not_drawn_once_the_finger_lifts() {
+        crate::report_failure_where_it_happens();
         // The stick used to be marked visible on touch-down and never unmarked, so
         // it stayed on screen for the rest of the session once used.
         let mut sched = Scheduler::new();
@@ -703,6 +713,7 @@ mod tests {
 
     #[test]
     fn the_stick_is_not_drawn_before_the_first_touch() {
+        crate::report_failure_where_it_happens();
         let sched = Scheduler::new();
         let mut input = InputState::default();
         input.poll(&sched, true);
@@ -711,6 +722,7 @@ mod tests {
 
     #[test]
     fn a_race_ending_mid_touch_does_not_hand_a_held_stick_to_the_next_one() {
+        crate::report_failure_where_it_happens();
         // Leaving the race screen with a finger down used to leave the stick held,
         // so the next race opened already deflected.
         let mut sched = Scheduler::new();
@@ -764,6 +776,7 @@ mod tests {
 
     #[test]
     fn a_height_key_steps_once_then_repeats_after_a_delay() {
+        crate::report_failure_where_it_happens();
         let frames = steps_while_held(&[PhysicalKey::KeyF], 40);
 
         assert_eq!(frames[0], 1, "the press itself fires");
@@ -795,6 +808,7 @@ mod tests {
 
     #[test]
     fn the_height_repeat_stays_on_its_period_rather_than_drifting() {
+        crate::report_failure_where_it_happens();
         for key in [PhysicalKey::KeyF, PhysicalKey::KeyZ] {
             let sign = if key == PhysicalKey::KeyF { 1 } else { -1 };
             let frames = steps_while_held(&[key], 80);
@@ -813,6 +827,7 @@ mod tests {
 
     #[test]
     fn releasing_a_height_key_resets_its_repeat() {
+        crate::report_failure_where_it_happens();
         let mut input = InputState::new();
         for _ in 0..REPEAT_DELAY_FRAMES + 2 {
             input.poll_editor(&sched_with(&[PhysicalKey::KeyF]));
@@ -827,6 +842,7 @@ mod tests {
 
     #[test]
     fn the_movement_keys_move_the_camera_rather_than_the_cursor() {
+        crate::report_failure_where_it_happens();
         // The cursor follows the mouse; the ground-plane keys belong to the view.
         let forward = axes_while_held(&[PhysicalKey::KeyW, PhysicalKey::ArrowUp]);
         assert_eq!(forward.move_cam, [1.0, 0.0]);
@@ -844,6 +860,7 @@ mod tests {
 
     #[test]
     fn the_turn_keys_turn_left_and_right() {
+        crate::report_failure_where_it_happens();
         assert_eq!(axes_while_held(&[PhysicalKey::KeyQ]).turn_cam, -1.0);
         assert_eq!(axes_while_held(&[PhysicalKey::KeyE]).turn_cam, 1.0);
         assert_eq!(
@@ -856,6 +873,7 @@ mod tests {
 
     #[test]
     fn a_held_movement_key_keeps_moving_the_camera_every_frame() {
+        crate::report_failure_where_it_happens();
         // Continuous, not repeated: a camera glides, it does not step.
         let sched = sched_with(&[PhysicalKey::KeyW]);
         let mut input = InputState::new();
@@ -866,6 +884,7 @@ mod tests {
 
     #[test]
     fn opposite_movement_cancel_rather_than_doubling_up() {
+        crate::report_failure_where_it_happens();
         assert_eq!(
             axes_while_held(&[PhysicalKey::KeyW, PhysicalKey::KeyS]).move_cam,
             [0.0, 0.0]
@@ -882,6 +901,7 @@ mod tests {
 
     #[test]
     fn a_command_fires_on_the_press_and_not_while_held() {
+        crate::report_failure_where_it_happens();
         let mut input = InputState::new();
         let sched = sched_with(&[PhysicalKey::ControlLeft, PhysicalKey::KeyC]);
 
@@ -901,6 +921,7 @@ mod tests {
 
     #[test]
     fn a_modified_movement_key_does_not_move_the_camera() {
+        crate::report_failure_where_it_happens();
         let mut input = InputState::new();
         let frame = input.poll_editor(&sched_with(&[PhysicalKey::ControlLeft, PhysicalKey::KeyD]));
         assert_eq!(
@@ -913,6 +934,7 @@ mod tests {
 
     #[test]
     fn shift_a_selects_the_route_and_plain_a_moves_the_camera() {
+        crate::report_failure_where_it_happens();
         let shifted = axes_while_held(&[PhysicalKey::ShiftLeft, PhysicalKey::KeyA]);
         assert_eq!(
             shifted.move_cam,
@@ -927,6 +949,7 @@ mod tests {
 
     #[test]
     fn undo_and_redo_accept_either_control_side() {
+        crate::report_failure_where_it_happens();
         for ctrl in [PhysicalKey::ControlLeft, PhysicalKey::ControlRight] {
             let mut input = InputState::new();
             assert!(
@@ -946,6 +969,7 @@ mod tests {
 
     #[test]
     fn either_of_rotate_or_space_turns_the_selection() {
+        crate::report_failure_where_it_happens();
         for key in [PhysicalKey::KeyR, PhysicalKey::Space] {
             let mut input = InputState::new();
             assert!(
@@ -960,6 +984,7 @@ mod tests {
     /// piece that has not been placed yet while also turning one that has.
     #[test]
     fn the_armed_piece_is_turned_by_its_own_commands() {
+        crate::report_failure_where_it_happens();
         assert!(
             poll_first(&[PhysicalKey::KeyT]).turn_armed,
             "T turns the armed piece"
@@ -983,6 +1008,7 @@ mod tests {
     /// player reached into the track to select something.
     #[test]
     fn snapshotting_is_toggled_by_v() {
+        crate::report_failure_where_it_happens();
         assert!(
             poll_first(&[PhysicalKey::KeyV]).toggle_snap,
             "V toggles snapping"
@@ -1000,6 +1026,7 @@ mod tests {
     /// Edge-latched: held, a turn command fires once, not once per frame.
     #[test]
     fn turn_commands_fire_once_per_press() {
+        crate::report_failure_where_it_happens();
         let mut input = InputState::new();
         let sched = sched_with(&[PhysicalKey::KeyT]);
         assert!(input.poll_editor(&sched).pressed.turn_armed);
@@ -1011,6 +1038,7 @@ mod tests {
 
     #[test]
     fn either_delete_backspace_or_x_removes_the_selection() {
+        crate::report_failure_where_it_happens();
         for key in [
             PhysicalKey::Delete,
             PhysicalKey::Backspace,
@@ -1026,6 +1054,7 @@ mod tests {
 
     #[test]
     fn a_key_selects_the_piece_under_the_pointer() {
+        crate::report_failure_where_it_happens();
         let mut input = InputState::new();
         assert!(
             input
@@ -1037,6 +1066,7 @@ mod tests {
 
     #[test]
     fn leaving_the_editor_does_not_fire_a_key_that_was_still_held() {
+        crate::report_failure_where_it_happens();
         let mut input = InputState::new();
         let sched = sched_with(&[PhysicalKey::Enter]);
         assert!(input.poll_editor(&sched).pressed.place);
@@ -1053,6 +1083,7 @@ mod tests {
 
     #[test]
     fn leaving_the_editor_mutes_the_height_and_the_commands() {
+        crate::report_failure_where_it_happens();
         // The camera keys are continuous, so a key still held after leaving and
         // re-entering keeps gliding, exactly as it should. What must not survive
         // the trip is anything edge-latched: a command fired by the player
@@ -1077,6 +1108,7 @@ mod tests {
 
     #[test]
     fn nothing_is_pressed_when_no_editor_key_is_held() {
+        crate::report_failure_where_it_happens();
         let mut input = InputState::new();
         let frame = input.poll_editor(&sched_with(&[]));
         assert_eq!(frame.move_cam, [0.0, 0.0]);

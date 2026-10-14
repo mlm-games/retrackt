@@ -65,6 +65,7 @@ mod tests {
 
     #[test]
     fn duplicate_names_collapse_and_keep_stored_order() {
+        crate::report_failure_where_it_happens();
         SAVED.with(|slot| {
             *slot.borrow_mut() = Some(vec![doc("b", 1), doc("a", 1), doc("b", 2)]);
         });
@@ -76,6 +77,7 @@ mod tests {
 
     #[test]
     fn persisted_compares_the_whole_document() {
+        crate::report_failure_where_it_happens();
         let stored = doc("t", 2);
         SAVED.with(|slot| *slot.borrow_mut() = Some(vec![stored.clone()]));
         assert!(persisted(&stored));
@@ -91,6 +93,7 @@ mod tests {
 
     #[test]
     fn invalidating_forces_a_reread() {
+        crate::report_failure_where_it_happens();
         SAVED.with(|slot| *slot.borrow_mut() = Some(vec![doc("first", 1)]));
         assert_eq!(saved_names(), vec!["first".to_string()]);
         // Nothing replaces the cached copy on its own, so asking twice is stable.

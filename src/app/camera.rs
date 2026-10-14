@@ -222,6 +222,7 @@ mod tests {
 
     #[test]
     fn a_camera_comes_out_the_far_side_of_a_loop() {
+        crate::report_failure_where_it_happens();
         // The car finishes the loop travelling the other way, so the eye has to end
         // up on the other side of it. It used to end up on the *same* side — in
         // front of the car — because the yaw was read afresh each frame off a
@@ -259,6 +260,7 @@ mod tests {
 
     #[test]
     fn a_camera_never_snaps_across_a_loop() {
+        crate::report_failure_where_it_happens();
         // The turn is eased, so a whip reads as the camera spinning round. What must
         // not happen is a discontinuity: one frame carrying the view most of the way
         // round is a snap no easing can hide.
@@ -306,6 +308,7 @@ mod tests {
 
     #[test]
     fn a_camera_turning_on_flat_road_is_unchanged() {
+        crate::report_failure_where_it_happens();
         // Every corner has to look the same as it did. Run both readings over the
         // same inputs and hold them together, rather than picking a tolerance that
         // happens to fit: the two only ever differ where the absolute reading had
@@ -339,6 +342,7 @@ mod tests {
 
     #[test]
     fn the_chase_camera_puts_the_cars_right_side_on_screen_right() {
+        crate::report_failure_where_it_happens();
         let car = Car::at_spawn(Vec3::ZERO, 0.0, 0);
         let mut cam = ChaseCamera::new();
         cam.snap(&car);

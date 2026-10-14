@@ -622,6 +622,7 @@ mod basis_tests {
 
     #[test]
     fn an_already_quantised_run_replays_bit_exactly() {
+        crate::report_failure_where_it_happens();
         // The property a ghost depends on. A tape stores quantised inputs, so a
         // run that consumed them must reproduce exactly when they are fed back
         // through the same `step_car`. Both halves here use the same packed
@@ -669,6 +670,7 @@ mod basis_tests {
 
     #[test]
     fn quantisation_error_is_bounded_by_one_step() {
+        crate::report_failure_where_it_happens();
         // The property the test above leans on, stated directly: a packed input
         // is within one quantisation step of the float it came from. Without this
         // bound, replaying a tape could differ from the run by more than rounding.
@@ -686,6 +688,7 @@ mod basis_tests {
     /// a surface normal and a forward direction must be a real rotation.
     #[test]
     fn surface_basis_is_right_handed() {
+        crate::report_failure_where_it_happens();
         let cases = [
             (Vec3::Y, Vec3::Z),
             (Vec3::Y, Vec3::X),
@@ -716,6 +719,7 @@ mod basis_tests {
 
     #[test]
     fn axes_are_orthonormal_for_a_heading_on_a_bank() {
+        crate::report_failure_where_it_happens();
         let n = Vec3::new(0.3, 0.95, 0.0).normalize();
         for heading in [0.0, 1.0, 2.5, -3.0] {
             let (fwd, right) = surface_axes(n, heading);
@@ -729,6 +733,7 @@ mod basis_tests {
 
     #[test]
     fn a_heading_pointing_into_the_surface_still_yields_a_valid_frame() {
+        crate::report_failure_where_it_happens();
         let (fwd, right) = surface_axes(Vec3::Y, 0.0);
         assert!((fwd.length() - 1.0).abs() < 1e-5);
         assert!((right.length() - 1.0).abs() < 1e-5);
@@ -828,6 +833,7 @@ mod tests {
 
     #[test]
     fn the_car_climbs_a_wall_and_sticks_to_its_face() {
+        crate::report_failure_where_it_happens();
         use retrackt_format::demo::ChainBuilder;
 
         // Runway, quarter pipe, then twenty metres of flat wall. Ballistic
@@ -874,6 +880,7 @@ mod tests {
 
     #[test]
     fn a_slow_car_is_stopped_by_the_barrier() {
+        crate::report_failure_where_it_happens();
         // Six metres a second into a car-height wall: the barrier earns its
         // name, and the car stays on the road rather than visiting the grass.
         let (mut car, world) = rolling_at_edge(6.0);
@@ -897,6 +904,7 @@ mod tests {
 
     #[test]
     fn a_fast_car_mounts_the_barrier() {
+        crate::report_failure_where_it_happens();
         // Twenty-eight into the same wall: momentum carries the car up the
         // round-over. It must get up over the peak or across to the shoulder,
         // not stop dead as if the barrier were a cliff.
@@ -917,6 +925,7 @@ mod tests {
 
     #[test]
     fn the_car_accelerates_forward_and_stays_upright_on_flat_road() {
+        crate::report_failure_where_it_happens();
         let world = flat_track();
         let mut car = fresh(&world);
         drive_car(
@@ -978,6 +987,7 @@ mod tests {
 
     #[test]
     fn the_car_climbs_a_ramp_without_leaving_the_road() {
+        crate::report_failure_where_it_happens();
         use retrackt_format::demo::ChainBuilder;
 
         let mut b = ChainBuilder::new("Test Ramp");
@@ -1042,6 +1052,7 @@ mod tests {
 
     #[test]
     fn the_car_respects_its_top_speed() {
+        crate::report_failure_where_it_happens();
         let world = flat_track();
         let tune = CarTuning::default();
         let mut car = fresh(&world);
@@ -1064,6 +1075,7 @@ mod tests {
 
     #[test]
     fn braking_decelerates_and_stops() {
+        crate::report_failure_where_it_happens();
         let world = flat_track();
         // One continuous run: accelerate, then brake on the same car.
         let mut car = fresh(&world);
@@ -1096,6 +1108,7 @@ mod tests {
 
     #[test]
     fn holding_the_brake_at_a_standstill_does_not_reverse() {
+        crate::report_failure_where_it_happens();
         let world = flat_track();
         let start = fresh(&world).pos.z;
         let mut car = fresh(&world);
@@ -1118,6 +1131,7 @@ mod tests {
 
     #[test]
     fn steering_turns_the_car_and_changes_heading() {
+        crate::report_failure_where_it_happens();
         let world = flat_track();
         let input = VehicleInput {
             throttle: 0.5,
@@ -1160,6 +1174,7 @@ mod tests {
 
     #[test]
     fn the_car_drives_a_full_loop_and_comes_back_down() {
+        crate::report_failure_where_it_happens();
         let world = loop_track();
         let tune = CarTuning::default();
         let mut car = fresh(&world);
@@ -1206,6 +1221,7 @@ mod tests {
 
     #[test]
     fn the_car_is_never_buried_in_the_road_while_grounded() {
+        crate::report_failure_where_it_happens();
         // Driving off the end of a track is legitimate; what must never happen
         // is the car passing *through* the road while still reporting contact.
         for doc in [demo_track(), stunt_track()] {
@@ -1304,6 +1320,7 @@ mod tests {
 
     #[test]
     fn driving_is_deterministic() {
+        crate::report_failure_where_it_happens();
         // The whole point of a fixed step: identical input, identical state.
         let world = TrackWorld::from_doc(&stunt_track());
         let tune = CarTuning::default();
@@ -1332,6 +1349,7 @@ mod tests {
 
     #[test]
     fn reversing_backs_the_car_up() {
+        crate::report_failure_where_it_happens();
         let world = flat_track();
         let mut car = fresh(&world);
         // Drive forward first: reversing from the spawn standstill immediately
@@ -1377,6 +1395,7 @@ mod tests {
 
     #[test]
     fn handbrake_reduces_lateral_grip() {
+        crate::report_failure_where_it_happens();
         let tune = CarTuning::default();
         // Compared directly: the tuned value must be lower, which is what
         // makes the handbrake slide.
@@ -1385,6 +1404,7 @@ mod tests {
 
     #[test]
     fn boost_pads_give_extra_speed() {
+        crate::report_failure_where_it_happens();
         let world = TrackWorld::from_doc(&demo_track());
         let tune = CarTuning::default();
         let mut car = fresh(&world);
@@ -1402,6 +1422,7 @@ mod tests {
 
     #[test]
     fn a_zero_dt_is_a_no_op() {
+        crate::report_failure_where_it_happens();
         let world = flat_track();
         let mut car = fresh(&world);
         let before = car;
@@ -1420,6 +1441,7 @@ mod tests {
 
     #[test]
     fn surface_projection_removes_the_normal_component() {
+        crate::report_failure_where_it_happens();
         let n = Vec3::new(0.0, 0.6, 0.8).normalize();
         let v = Vec3::new(3.0, 4.0, 5.0);
         let p = project(v, n);
@@ -1439,6 +1461,7 @@ mod jump_check {
 
     #[test]
     fn the_jump_is_still_clearable_at_the_new_scale() {
+        crate::report_failure_where_it_happens();
         // The landing must sit below the lip, and the gap must be empty. These
         // were true at the old scale and must stay true now that a piece is four
         // cells long and a cell is five metres.
@@ -1523,6 +1546,7 @@ mod drive_tests {
     /// launch pad, and the car hops its way down a perfectly smooth climb.
     #[test]
     fn a_road_that_climbs_and_descends_is_driven_not_launched_from() {
+        crate::report_failure_where_it_happens();
         let mut b = ChainBuilder::new("climb");
         b.step(PieceId::Start, PieceParams::default().length(4));
         b.step(PieceId::Straight, PieceParams::default().length(2));
@@ -1559,6 +1583,7 @@ mod drive_tests {
     /// A lip is what makes a jump, not a separate piece.
     #[test]
     fn a_car_flying_off_a_lip_lands_on_the_far_side() {
+        crate::report_failure_where_it_happens();
         let mut b = ChainBuilder::new("crest");
         b.step(PieceId::Start, PieceParams::default().length(4));
         b.step(PieceId::Straight, PieceParams::default().length(6));
@@ -1615,6 +1640,7 @@ mod ground_tests {
     /// into the void and the only thing that could happen next was a teleport.
     #[test]
     fn leaving_the_road_lands_on_the_plain_rather_than_the_void() {
+        crate::report_failure_where_it_happens();
         let mut b = ChainBuilder::new("flat");
         b.step(PieceId::Start, PieceParams::default().length(4));
         b.step(PieceId::Straight, PieceParams::default().length(10));
@@ -1673,6 +1699,7 @@ mod ground_tests {
     /// The plain never cuts through the track, whatever the track's height.
     #[test]
     fn the_plain_sits_below_every_piece_of_road() {
+        crate::report_failure_where_it_happens();
         for doc in retrackt_format::builtin_tracks() {
             let world = TrackWorld::from_doc(&doc);
             // Drivable tops: the plain hangs off their lowest, so it is below

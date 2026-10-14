@@ -206,6 +206,7 @@ mod tests {
     /// can produce, so at least check it composes and comes out the depth it should.
     #[test]
     fn the_stick_composes_without_a_touch() {
+        crate::report_failure_where_it_happens();
         let layers = stick_layers(StickView {
             anchor: (100.0, 200.0),
             knob: (0.0, 0.0),
@@ -225,6 +226,7 @@ mod tests {
     /// to the right, at the top of the screen.
     #[test]
     fn the_stick_is_drawn_over_the_finger() {
+        crate::report_failure_where_it_happens();
         for (w, h) in [(800.0f32, 600.0f32), (360.0, 780.0)] {
             let _turn = WINDOW.lock().unwrap_or_else(|e| e.into_inner());
             set_window_container_size(w, h);
@@ -277,6 +279,7 @@ mod tests {
     /// written, and the numbers still looked plausible at a glance.
     #[test]
     fn the_bottom_band_never_overlaps_or_overflows() {
+        crate::report_failure_where_it_happens();
         let sizes = [
             (1600.0f32, 1000.0f32),
             (1280.0, 800.0),
@@ -382,6 +385,7 @@ mod tests {
     /// stick is at rest, which is the state the player sees most.
     #[test]
     fn the_ring_shows_around_a_resting_knob() {
+        crate::report_failure_where_it_happens();
         assert!(
             STICK_TRAVEL_DP + 4.0 > STICK_KNOB_DP / 2.0,
             "the ring is drawn inside the knob at rest and will never be seen"
@@ -392,6 +396,7 @@ mod tests {
     /// either overhangs its own rim or never looks fully deflected.
     #[test]
     fn a_fully_deflected_knob_fills_the_base() {
+        crate::report_failure_where_it_happens();
         assert_eq!(STICK_TRAVEL_DP + STICK_KNOB_DP / 2.0, STICK_BASE_DP / 2.0);
     }
 }

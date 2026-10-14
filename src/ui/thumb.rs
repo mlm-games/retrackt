@@ -210,12 +210,14 @@ mod tests {
 
     #[test]
     fn a_built_in_track_occupies_cells() {
+        crate::report_failure_where_it_happens();
         let plan = plan_of(&demo_track());
         assert!(plan.len() > 10, "a circuit is more than a few cells");
     }
 
     #[test]
     fn each_kind_of_piece_is_told_apart_by_colour() {
+        crate::report_failure_where_it_happens();
         // Road is what a track is mostly made of, so the question is whether
         // anything worth spotting is *not* that colour — not whether every piece
         // differs from every other. A straight is road, and cannot be told apart
@@ -238,6 +240,7 @@ mod tests {
 
     #[test]
     fn the_plan_spans_both_ends_of_the_demo_circuit() {
+        crate::report_failure_where_it_happens();
         let plan = plan_of(&demo_track());
         let xs: Vec<i16> = plan.keys().map(|(x, _)| *x).collect();
         let zs: Vec<i16> = plan.keys().map(|(_, z)| *z).collect();
@@ -247,12 +250,14 @@ mod tests {
 
     #[test]
     fn an_empty_track_has_no_thumbnail() {
+        crate::report_failure_where_it_happens();
         assert!(thumbnail(&TrackDocument::empty(), 64.0).is_none());
         assert!(plan_of(&TrackDocument::empty()).is_empty());
     }
 
     #[test]
     fn a_piece_is_findable_from_a_cell_it_occupies() {
+        crate::report_failure_where_it_happens();
         let doc = demo_track();
         let first = doc.pieces[0];
         let (x, z) = piece_plan(&doc, &first)[0];
@@ -261,11 +266,13 @@ mod tests {
 
     #[test]
     fn a_cell_nothing_occupies_names_no_piece() {
+        crate::report_failure_where_it_happens();
         assert_eq!(piece_at(&demo_track(), 300, 300), None);
     }
 
     #[test]
     fn two_pieces_on_one_cell_answer_the_same_way_every_time() {
+        crate::report_failure_where_it_happens();
         // Lowest uid, so the answer cannot depend on the order the file stores.
         let mut doc = demo_track();
         let shared = piece_plan(&doc, &doc.pieces[2])[0];
@@ -281,6 +288,7 @@ mod tests {
 
     #[test]
     fn the_summary_counts_pieces() {
+        crate::report_failure_where_it_happens();
         let doc = demo_track();
         assert_eq!(summary(&doc), format!("{} pieces", doc.pieces.len()));
     }

@@ -230,6 +230,7 @@ mod tests {
 
     #[test]
     fn a_cursor_near_an_open_exit_snaps_the_piece_onto_it() {
+        crate::report_failure_where_it_happens();
         let doc = straight_doc();
         // The open exit is one past the second piece's end.
         let open = exit_cell(&doc, doc.pieces.last().unwrap());
@@ -251,6 +252,7 @@ mod tests {
 
     #[test]
     fn snapping_turns_the_piece_to_face_its_neighbour() {
+        crate::report_failure_where_it_happens();
         let doc = turning_doc();
         let curve = doc
             .pieces
@@ -271,6 +273,7 @@ mod tests {
 
     #[test]
     fn nothing_in_reach_places_the_entry_on_the_cursor() {
+        crate::report_failure_where_it_happens();
         let doc = straight_doc();
         let p = placement_at(&doc, PieceId::Straight, [40, 0, 40], 1, 0, true);
         assert!(!p.snapped, "a cursor far from the road must not snap");
@@ -280,6 +283,7 @@ mod tests {
 
     #[test]
     fn a_snapped_piece_lands_its_entry_on_the_open_exit() {
+        crate::report_failure_where_it_happens();
         // The general property behind the anchor arithmetic: whatever the piece,
         // its entry port is what meets the port it snapped to.
         for id in [
@@ -313,6 +317,7 @@ mod tests {
 
     #[test]
     fn an_exit_already_taken_is_not_snapped_to() {
+        crate::report_failure_where_it_happens();
         let doc = straight_doc();
         // The first piece's exit is already met by the second piece's entry.
         let first_exit = exit_cell(&doc, &doc.pieces[0]);
@@ -322,6 +327,7 @@ mod tests {
 
     #[test]
     fn the_nearest_open_exit_wins_over_a_further_one() {
+        crate::report_failure_where_it_happens();
         // Three chained straights: open exits are the second's and the third's.
         let mut doc = straight_doc();
         let third = PieceInstance::new(
@@ -341,6 +347,7 @@ mod tests {
 
     #[test]
     fn the_cursor_starts_where_the_next_piece_would_have_gone() {
+        crate::report_failure_where_it_happens();
         let mut b = ChainBuilder::new("home");
         b.step(PieceId::Start, PieceParams::default().length(2));
         b.step(PieceId::Straight, PieceParams::default().length(2));
@@ -358,6 +365,7 @@ mod tests {
 
     #[test]
     fn an_unconnected_document_homes_on_the_newest_piece() {
+        crate::report_failure_where_it_happens();
         let mut doc = TrackDocument::empty();
         doc.pieces = vec![
             PieceInstance::new(PieceId::Straight, [0, 0, 0]).with_uid(PieceUid(1)),
@@ -370,11 +378,13 @@ mod tests {
 
     #[test]
     fn an_empty_document_homes_on_the_origin() {
+        crate::report_failure_where_it_happens();
         assert_eq!(cursor_home(&TrackDocument::empty()), [0, 0, 0]);
     }
 
     #[test]
     fn cursor_steps_saturate_instead_of_wrapping() {
+        crate::report_failure_where_it_happens();
         assert_eq!(step_cell([0, 0, 0], [0, 0, 1]), [0, 0, 1]);
         assert_eq!(step_cell([i16::MAX, 0, 0], [1, 0, 0]), [i16::MAX, 0, 0]);
         assert_eq!(step_cell([i16::MIN, 0, 0], [-1, 0, 0]), [i16::MIN, 0, 0]);
@@ -382,6 +392,7 @@ mod tests {
 
     #[test]
     fn a_piece_with_no_ports_lands_on_the_cursor_itself() {
+        crate::report_failure_where_it_happens();
         let doc = straight_doc();
         let p = placement_at(&doc, PieceId::Wall, [7, 0, 7], 4, 0, true);
         assert_eq!(p.anchor, [7, 0, 7], "a prop has no entry to align");
@@ -392,6 +403,7 @@ mod tests {
     /// not a reach for a nearby connector.
     #[test]
     fn snapping_off_places_the_piece_exactly_on_the_cursor() {
+        crate::report_failure_where_it_happens();
         let mut b = ChainBuilder::new("open");
         b.step(PieceId::Start, PieceParams::default().length(2));
         b.step(PieceId::Straight, PieceParams::default().length(2));
@@ -417,6 +429,7 @@ mod tests {
 
     #[test]
     fn an_armed_heading_is_used_when_nothing_is_joined_to() {
+        crate::report_failure_where_it_happens();
         let mut b = ChainBuilder::new("open");
         b.step(PieceId::Start, PieceParams::default().length(2));
         let doc = b.build();
@@ -446,6 +459,7 @@ mod tests {
     /// the armed heading, and it only happens while snapping is on.
     #[test]
     fn a_snapped_join_overrides_the_armed_heading() {
+        crate::report_failure_where_it_happens();
         let doc = turning_doc();
         let curve = doc
             .pieces
@@ -461,6 +475,7 @@ mod tests {
 
     #[test]
     fn exit_direction_follows_the_piece_own_yaw() {
+        crate::report_failure_where_it_happens();
         let doc = straight_doc();
         let mut inst = doc.pieces[0];
         assert_eq!(exit_direction(&doc, &inst), GridDir::PosZ);
@@ -470,6 +485,7 @@ mod tests {
 
     #[test]
     fn a_closed_circuit_offers_nowhere_to_snap_to() {
+        crate::report_failure_where_it_happens();
         // The demo circuit ends in a Finish, and by the rule in `open_exit_near` a
         // Finish is not an open port — so on a closed circuit every exit is spoken
         // for and a placement must report that it is not snapping. Claiming a snap
@@ -484,6 +500,7 @@ mod tests {
 
     #[test]
     fn the_tail_of_an_open_route_is_somewhere_to_build() {
+        crate::report_failure_where_it_happens();
         // The demo circuit with its Finish taken off the end: the piece that used
         // to feed it now has nothing leaving from it, which is exactly the open
         // port the editor homes the cursor on.
@@ -504,6 +521,7 @@ mod tests {
 
     #[test]
     fn a_finish_is_not_treated_as_an_open_port() {
+        crate::report_failure_where_it_happens();
         // `next_piece` ends the route at a Finish, so testing openness by it alone
         // would offer the end of the track as somewhere to build.
         let doc = retrackt_format::demo_track();
@@ -528,6 +546,7 @@ mod tests {
     /// turned, so a block does not change size when the piece is rotated.
     #[test]
     fn a_stamp_is_the_pieces_own_extent_turned_by_its_heading() {
+        crate::report_failure_where_it_happens();
         crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
         let mut checked = 0;
@@ -568,6 +587,7 @@ mod tests {
     /// a test that hard-codes the list goes stale the moment a piece is added.
     #[test]
     fn a_stamp_covers_a_piece_exactly_when_the_piece_owns_cells() {
+        crate::report_failure_where_it_happens();
         crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
         for def in catalog() {

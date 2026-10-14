@@ -553,6 +553,7 @@ mod tests {
 
     #[test]
     fn save_then_load_roundtrips_through_memory_storage() {
+        crate::report_failure_where_it_happens();
         let mgr = mem_manager();
         let mut data = SaveData {
             settings: Settings {
@@ -579,12 +580,14 @@ mod tests {
 
     #[test]
     fn boot_without_a_save_returns_defaults() {
+        crate::report_failure_where_it_happens();
         let mgr = mem_manager();
         assert_eq!(boot_with(&mgr), SaveData::default());
     }
 
     #[test]
     fn boot_falls_back_to_defaults_when_the_save_is_corrupt() {
+        crate::report_failure_where_it_happens();
         let mgr = mem_manager();
         mgr.storage()
             .write(&mgr.path(), b"((( definitely not ron")
@@ -598,6 +601,7 @@ mod tests {
 
     #[test]
     fn records_only_replace_strictly_faster_runs() {
+        crate::report_failure_where_it_happens();
         let mut records = Records::default();
         let fp = [1u8; 16];
         let tune = [2u8; 16];
@@ -617,6 +621,7 @@ mod tests {
 
     #[test]
     fn only_a_faster_run_repoints_a_record_at_its_own_tape() {
+        crate::report_failure_where_it_happens();
         let mut records = Records::default();
         let fp = [1u8; 16];
         let tune = [2u8; 16];
@@ -635,6 +640,7 @@ mod tests {
 
     #[test]
     fn a_record_under_other_tuning_is_a_different_record() {
+        crate::report_failure_where_it_happens();
         let mut records = Records::default();
         let fp = [1u8; 16];
         let tune = [2u8; 16];
@@ -660,6 +666,7 @@ mod tests {
 
     #[test]
     fn an_older_save_is_migrated_and_keeps_its_settings() {
+        crate::report_failure_where_it_happens();
         let mgr = mem_manager();
         // Built the way a version 1 save was written rather than typed by hand: a
         // fingerprint inside a tuple has no hand-writable RON spelling, and this
@@ -688,6 +695,7 @@ mod tests {
 
     #[test]
     fn a_newer_save_is_refused_and_boots_to_defaults() {
+        crate::report_failure_where_it_happens();
         let mgr = mem_manager();
         let new =
             b"(version: 99, settings: (master_volume: 0.1, music_volume: 0.1, sfx_volume: 0.1))";
@@ -701,6 +709,7 @@ mod tests {
 
     #[test]
     fn save_stamps_the_current_version_whatever_the_caller_holds() {
+        crate::report_failure_where_it_happens();
         let mgr = mem_manager();
         let mut data = SaveData {
             version: 0,
@@ -746,6 +755,7 @@ mod tests {
 
     #[test]
     fn a_ghost_tape_round_trips_through_memory_storage() {
+        crate::report_failure_where_it_happens();
         let storage = MemoryStorage::new();
         let dir = ghost_dir();
         let tape = sample_tape(7, 500);
@@ -763,6 +773,7 @@ mod tests {
 
     #[test]
     fn two_ghosts_of_the_same_name_get_distinct_files() {
+        crate::report_failure_where_it_happens();
         let storage = MemoryStorage::new();
         let dir = ghost_dir();
         let first =
@@ -777,6 +788,7 @@ mod tests {
 
     #[test]
     fn a_ghost_name_cannot_escape_the_ghost_directory() {
+        crate::report_failure_where_it_happens();
         let storage = MemoryStorage::new();
         let dir = ghost_dir();
         let saved = save_ghost_with(
@@ -795,6 +807,7 @@ mod tests {
 
     #[test]
     fn a_missing_or_corrupt_ghost_file_reads_as_none() {
+        crate::report_failure_where_it_happens();
         let storage = MemoryStorage::new();
         let dir = ghost_dir();
         assert!(load_ghost_with(storage.clone(), &dir, "never saved").is_none());
@@ -807,6 +820,7 @@ mod tests {
 
     #[test]
     fn a_tape_from_another_track_or_rate_is_refused_for_playback() {
+        crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
         let world = crate::sim::world::TrackWorld::from_doc(&doc);
         let track = retrackt_format::gameplay_fingerprint(&doc);
@@ -833,6 +847,7 @@ mod tests {
 
     #[test]
     fn the_library_drops_unplayable_and_missing_rows() {
+        crate::report_failure_where_it_happens();
         let mut library = GhostLibrary::default();
         library.insert(entry("keep", "keep", 1, 2, 100)).unwrap();
         library
@@ -859,6 +874,7 @@ mod tests {
 
     #[test]
     fn upsert_replaces_the_row_under_the_same_stem() {
+        crate::report_failure_where_it_happens();
         let mut library = GhostLibrary::default();
         library.insert(entry("first", "pb-1", 1, 2, 900)).unwrap();
         library
@@ -877,6 +893,7 @@ mod tests {
 
     #[test]
     fn the_personal_best_stem_is_derived_from_the_track_and_usable_as_a_filename() {
+        crate::report_failure_where_it_happens();
         let track = [0xabu8; 16];
         let stem = pb_stem(&track);
         assert_eq!(
@@ -890,6 +907,7 @@ mod tests {
 
     #[test]
     fn the_library_is_bounded_and_says_why() {
+        crate::report_failure_where_it_happens();
         let mut library = GhostLibrary::default();
         for n in 0..MAX_GHOSTS {
             library
@@ -911,6 +929,7 @@ mod tests {
 
     #[test]
     fn deleting_a_ghost_removes_it_from_the_save_round_trip() {
+        crate::report_failure_where_it_happens();
         let mgr = mem_manager();
         let mut data = SaveData::default();
         data.ghosts.insert(entry("two", "two", 1, 2, 100)).unwrap();
@@ -930,6 +949,7 @@ mod tests {
 
     #[test]
     fn a_version_2_save_loads_with_an_empty_ghost_library() {
+        crate::report_failure_where_it_happens();
         let mgr = mem_manager();
         let old = "(version: 2, settings: (master_volume: 0.5, music_volume: 0.25, \
                    sfx_volume: 0.75))";
@@ -948,6 +968,7 @@ mod tests {
 
     #[test]
     fn track_save_then_load_roundtrips() {
+        crate::report_failure_where_it_happens();
         let storage = MemoryStorage::new();
         let dir = track_dir();
         let mut doc = retrackt_format::demo_track();
@@ -960,6 +981,7 @@ mod tests {
 
     #[test]
     fn odd_track_names_round_trip_and_cannot_escape_the_track_dir() {
+        crate::report_failure_where_it_happens();
         let storage = MemoryStorage::new();
         let dir = track_dir();
         let mut doc = retrackt_format::demo_track();
@@ -977,6 +999,7 @@ mod tests {
 
     #[test]
     fn missing_corrupt_or_malformed_track_files_return_none() {
+        crate::report_failure_where_it_happens();
         let storage = MemoryStorage::new();
         let dir = track_dir();
         assert_eq!(load_track_with(storage.clone(), &dir, "never saved"), None);
@@ -994,6 +1017,7 @@ mod tests {
 
     #[test]
     fn track_files_from_another_format_version_are_refused() {
+        crate::report_failure_where_it_happens();
         let storage = MemoryStorage::new();
         let dir = track_dir();
         let track_ron = |format: u32| {

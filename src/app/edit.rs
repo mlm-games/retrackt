@@ -673,6 +673,7 @@ mod tests {
 
     #[test]
     fn one_finger_drags_the_view() {
+        crate::report_failure_where_it_happens();
         let mut g = EditorGesture::default();
         g.press(&down(1, PointerKind::Touch, 100.0, 100.0));
         let gesture = g.drag(&moved(1, PointerKind::Touch, 140.0, 130.0));
@@ -681,6 +682,7 @@ mod tests {
 
     #[test]
     fn two_fingers_turning_the_view_move_it_by_the_whole_drag() {
+        crate::report_failure_where_it_happens();
         let mut g = EditorGesture::default();
         g.press(&down(1, PointerKind::Touch, 100.0, 100.0));
         g.press(&down(2, PointerKind::Touch, 300.0, 100.0));
@@ -700,6 +702,7 @@ mod tests {
 
     #[test]
     fn spreading_two_fingers_zooms_by_the_change_and_never_twice() {
+        crate::report_failure_where_it_happens();
         let mut g = EditorGesture::default();
         g.press(&down(1, PointerKind::Touch, 100.0, 100.0));
         g.press(&down(2, PointerKind::Touch, 300.0, 100.0));
@@ -724,6 +727,7 @@ mod tests {
 
     #[test]
     fn one_finger_alone_pans_even_while_another_is_down() {
+        crate::report_failure_where_it_happens();
         let mut g = EditorGesture::default();
         g.press(&down(1, PointerKind::Touch, 100.0, 100.0));
         g.press(&down(2, PointerKind::Touch, 300.0, 100.0));
@@ -739,6 +743,7 @@ mod tests {
 
     #[test]
     fn the_right_button_pans_the_middle_button_turns() {
+        crate::report_failure_where_it_happens();
         for (button, want) in [
             (PointerButton::Secondary, Gesture::Pan(10.0, 0.0)),
             (PointerButton::Tertiary, Gesture::Orbit(10.0, 0.0)),
@@ -752,6 +757,7 @@ mod tests {
 
     #[test]
     fn the_left_button_drags_nothing_because_it_places() {
+        crate::report_failure_where_it_happens();
         let mut g = EditorGesture::default();
         g.press(&mouse_button(0, PointerButton::Primary));
         assert_eq!(g.drag(&moved(0, PointerKind::Mouse, 60.0, 60.0)), None);
@@ -759,6 +765,7 @@ mod tests {
 
     #[test]
     fn the_right_button_with_ctrl_turns_instead_of_panning() {
+        crate::report_failure_where_it_happens();
         let mut g = EditorGesture::default();
         g.press(&mouse_button(0, PointerButton::Secondary));
         let mut ev = moved(0, PointerKind::Mouse, 10.0, 0.0);
@@ -768,6 +775,7 @@ mod tests {
 
     #[test]
     fn a_press_that_stays_put_is_a_tap_and_one_that_moves_is_not() {
+        crate::report_failure_where_it_happens();
         let mut g = EditorGesture::default();
         g.press(&down(1, PointerKind::Touch, 100.0, 100.0));
         assert!(g.release(&up(1, PointerKind::Touch, 102.0, 103.0)));
@@ -783,6 +791,7 @@ mod tests {
 
     #[test]
     fn lifting_one_finger_leaves_the_other_dragging() {
+        crate::report_failure_where_it_happens();
         let mut g = EditorGesture::default();
         g.press(&down(1, PointerKind::Touch, 100.0, 100.0));
         g.press(&down(2, PointerKind::Touch, 300.0, 100.0));
@@ -797,6 +806,7 @@ mod tests {
 
     #[test]
     fn leaving_the_editor_forgets_every_pointer() {
+        crate::report_failure_where_it_happens();
         let mut g = EditorGesture::default();
         g.press(&down(1, PointerKind::Touch, 100.0, 100.0));
         g.release_all();
@@ -835,6 +845,7 @@ mod overlay_tests {
     /// control in the editor silently stops working.
     #[test]
     fn the_overlay_claims_the_whole_viewport_and_takes_the_wheel() {
+        crate::report_failure_where_it_happens();
         let queue = crate::app::state::ActionQueue::default();
         let overlay = gesture_overlay(
             EditorGesture::new_handle(),
@@ -863,6 +874,7 @@ mod overlay_tests {
 
     #[test]
     fn one_wheel_notch_zooms_and_shift_plus_a_wheel_edits_the_height() {
+        crate::report_failure_where_it_happens();
         let queue = crate::app::state::ActionQueue::default();
         // The wheel's sign is the platform's, negated on the way in: a notch
         // upwards arrives as a negative y. The factor is the viewport's own
@@ -887,6 +899,7 @@ mod overlay_tests {
 
     #[test]
     fn a_wheel_notch_too_small_to_mean_anything_is_left_alone() {
+        crate::report_failure_where_it_happens();
         let queue = crate::app::state::ActionQueue::default();
         let dither = Vec2 { x: 0.0, y: 0.2 };
         assert_eq!(
@@ -899,6 +912,7 @@ mod overlay_tests {
 
     #[test]
     fn the_palette_tool_measures_as_a_square_it_can_be_tapped() {
+        crate::report_failure_where_it_happens();
         // A tool smaller than the touch minimum is a tool that has to be hit.
         assert!(Dp(44.0) <= crate::ui::dims::tool_w());
     }

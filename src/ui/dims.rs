@@ -557,6 +557,7 @@ mod tests {
 
     #[test]
     fn a_selected_gate_shows_its_number_and_the_way_to_change_it() {
+        crate::report_failure_where_it_happens();
         // A checkpoint's order is the one edit that is not about its shape, and it
         // is the one that decides the run. The list reads each gate's number so the
         // order is visible without selecting anything, and the control that changes
@@ -623,6 +624,7 @@ mod tests {
 
     #[test]
     fn picking_a_category_swaps_the_shelf_under_the_strip() {
+        crate::report_failure_where_it_happens();
         // The strip is the only way to reach a piece that is not on the open
         // shelf, so switching categories has to change what is laid out: an
         // editor that ignored the tap would show one category forever.
@@ -685,6 +687,7 @@ mod tests {
 
     #[test]
     fn every_palette_category_is_reachable_and_shows_its_parts() {
+        crate::report_failure_where_it_happens();
         // The palette shows one category at a time, so what must hold is that no
         // piece is stranded: each category's tab is in the tree to switch to, and
         // the shelf on show carries every piece it is responsible for. A piece
@@ -737,6 +740,7 @@ mod tests {
 
     #[test]
     fn side_by_side_the_strip_is_a_column_beside_the_shelf() {
+        crate::report_failure_where_it_happens();
         // The palette is two halves of one tool, not a strip stacked over a shelf: a
         // category a player has chosen staying on screen as a row of tabs costs a
         // whole line of the shelf, which is a whole line of pieces.
@@ -790,6 +794,7 @@ mod tests {
 
     #[test]
     fn stacked_the_strip_lies_above_the_shelf() {
+        crate::report_failure_where_it_happens();
         // The other half of the same split: with no width for both, the strip goes
         // back above the shelf, so the fallback has to be checked too or a change to
         // the rule that picks between them would only ever be caught on a desktop.
@@ -825,6 +830,7 @@ mod tests {
 
     #[test]
     fn no_piece_name_is_clipped_at_any_width_the_palette_is_shown_at() {
+        crate::report_failure_where_it_happens();
         // A tile narrower than the name it carries has the name cut off, which is
         // worse than a shorter tile: the player sees two pieces they cannot tell
         // apart and no way to know which is which. Checked over every category at
@@ -851,6 +857,7 @@ mod tests {
 
     #[test]
     fn the_piece_list_grows_with_the_number_of_pieces() {
+        crate::report_failure_where_it_happens();
         // The editor's panels sit inside its own scroller, so they must not be
         // capped: a capped panel clips at the cap while the scroller measures the
         // column from those capped heights, so the surplus is painted inside the
@@ -874,6 +881,7 @@ mod tests {
 
     #[test]
     fn a_window_wide_but_short_stacks_and_gives_its_height_to_the_track() {
+        crate::report_failure_where_it_happens();
         // 800x360 dp is a phone held sideways: wide enough for two panes, and far
         // too short for the track between them to be more than a letterbox.
         let _turn = crate::ui::fit::tests::WINDOW
@@ -892,6 +900,7 @@ mod tests {
 
     #[test]
     fn no_width_the_editor_can_be_shown_at_asks_for_more_than_the_window_has() {
+        crate::report_failure_where_it_happens();
         // The old reserves asked 930 dp of a window holding 600: a 230 dp palette
         // and a 660 dp column, each reserving the other, plus a 40 dp gap. Ten dp of
         // that landed off the right edge, and the guard test for it only ran on the
@@ -917,6 +926,7 @@ mod tests {
 
     #[test]
     fn a_wider_window_never_leaves_less_track_visible() {
+        crate::report_failure_where_it_happens();
         // The floor is what the track is guaranteed, and widening the window adds to
         // it rather than being absorbed: the panel is capped, so everything past
         // that cap goes to the track.
@@ -938,6 +948,7 @@ mod tests {
 
     #[test]
     fn the_palette_gives_way_before_the_side_column_does() {
+        crate::report_failure_where_it_happens();
         // 960 dp is inside the band where the two panes still fit but the palette
         // has been squeezed: narrower than that and the editor stacks rather than
         // squeezing, which is the whole reason the band exists.
@@ -954,6 +965,7 @@ mod tests {
 
     #[test]
     fn one_rhythm_holds_across_the_breakpoint() {
+        crate::report_failure_where_it_happens();
         // A stacked desktop window and a wide one give a row the same width, so the
         // editor does not resize its whole interior when it changes shape.
         assert_eq!(at(900.0).content_w().value(), 440.0);
@@ -962,6 +974,7 @@ mod tests {
 
     #[test]
     fn the_piece_list_is_never_wider_than_the_panel_holding_it() {
+        crate::report_failure_where_it_happens();
         // It asked for 620 dp inside a panel whose content box is 440, which is a
         // horizontal scrollbar over a list that never needed to scroll sideways.
         for w in WIDTHS {
@@ -982,6 +995,7 @@ mod tests {
 
     #[test]
     fn a_piece_row_never_wants_more_than_the_row_it_sits_in() {
+        crate::report_failure_where_it_happens();
         // The identity label is the one unbounded thing in a piece row, and
         // unbounded it would hand the row a minimum width wider than the panel.
         for w in WIDTHS {
@@ -997,6 +1011,7 @@ mod tests {
 
     #[test]
     fn a_control_is_never_smaller_than_a_hand_can_hit() {
+        crate::report_failure_where_it_happens();
         // 44 dp is the touch minimum, and the material minimum is above it, so the
         // floor that binds is the library's. Height is the number that was 40.
         for w in WIDTHS {
@@ -1015,6 +1030,7 @@ mod tests {
 
     #[test]
     fn the_panel_scroller_is_never_taller_than_the_window() {
+        crate::report_failure_where_it_happens();
         // The row does not stretch its children, so a scroller given only
         // `fill_max_height` took its height from the content instead: 895 dp inside
         // a 576 dp window. A scroller taller than the window has no range to scroll
@@ -1032,6 +1048,7 @@ mod tests {
 
     #[test]
     fn the_stacked_editor_leaves_room_for_the_track_under_the_panels() {
+        crate::report_failure_where_it_happens();
         // A scroller that fills a stacked window owns the wheel over the whole
         // screen, so the viewport behind it can only be reached by scrolling to the
         // end of the panels. The panels must stop short of the window.
@@ -1091,6 +1108,7 @@ mod tests {
 
     #[test]
     fn the_track_settings_panel_says_where_the_run_begins_and_ends() {
+        crate::report_failure_where_it_happens();
         // The name is what the track is called everywhere else in the game, and the
         // start and finish are the two facts about a circuit a player checks before
         // asking whether the middle is any good. Without them the editor shows a
@@ -1136,6 +1154,7 @@ mod tests {
 
     #[test]
     fn the_tracks_on_offer_wait_to_be_asked_for() {
+        crate::report_failure_where_it_happens();
         // A button per track in the column's own width pushes everything below it
         // down as tracks are saved, until the Clear button needs a scrollbar of its
         // own to be reached. One button and a panel, opened on ask.
@@ -1161,6 +1180,7 @@ mod tests {
 
     #[test]
     fn a_tile_row_never_overflows_the_shelf_it_sits_in() {
+        crate::report_failure_where_it_happens();
         // A palette that scrolls sideways is a palette showing half a tile. The cause
         // was a tile width chosen on its own and a count inferred from it: 120 dp fits
         // a 160 dp shelf, so one fits, and the row put two there anyway. The width is
@@ -1187,6 +1207,7 @@ mod tests {
 
     #[test]
     fn the_key_reference_waits_to_be_asked_for() {
+        crate::report_failure_where_it_happens();
         // Nine rows of text about keys nobody reads while placing a piece, and open
         // they stood between the player and the list of pieces. The camera keys are
         // the ones that needed to be on the screen at all, so they have to be one
@@ -1224,6 +1245,7 @@ mod tests {
 
     #[test]
     fn the_selection_panel_is_empty_until_something_is_selected() {
+        crate::report_failure_where_it_happens();
         // The inspector is the whole point of selecting, so it must be about the
         // selection: actions for a selection that does not exist are controls that
         // would do nothing, which is the one thing a control must never be.
@@ -1249,6 +1271,7 @@ mod tests {
 
     #[test]
     fn the_piece_list_is_read_only_and_the_inspector_above_it_is_not() {
+        crate::report_failure_where_it_happens();
         // The list is read constantly and edited rarely, and a row carrying a
         // control for every value it has is a list whose rows cannot be scanned:
         // eleven controls in a row of forty dp leaves nothing to read. So a row is a
@@ -1303,6 +1326,7 @@ mod tests {
 
     #[test]
     fn the_piece_row_s_edit_band_is_one_line_at_every_width_that_holds_two_panes() {
+        crate::report_failure_where_it_happens();
         // Four controls' worth of width plus three gaps is the panel's content
         // width exactly. It used to be four 150 dp controls inside a 440 dp panel,
         // so the band wrapped the same ragged way at every size.

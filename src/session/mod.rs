@@ -233,6 +233,7 @@ mod tests {
 
     #[test]
     fn run_walks_gates_in_order_and_freezes_at_the_finish() {
+        crate::report_failure_where_it_happens();
         let w = spaced_world();
         let mut s = RaceSession::new();
         s.start(&w);
@@ -258,6 +259,7 @@ mod tests {
 
     #[test]
     fn a_gate_is_crossed_by_the_path_not_by_the_end_point() {
+        crate::report_failure_where_it_happens();
         let w = spaced_world();
         let mut s = RaceSession::new();
         s.start(&w);
@@ -276,6 +278,7 @@ mod tests {
 
     #[test]
     fn driving_back_through_a_gate_does_not_count_it() {
+        crate::report_failure_where_it_happens();
         let w = spaced_world();
         let mut s = RaceSession::new();
         s.start(&w);
@@ -297,6 +300,7 @@ mod tests {
 
     #[test]
     fn a_teleport_earns_nothing() {
+        crate::report_failure_where_it_happens();
         let w = spaced_world();
         let mut s = RaceSession::new();
         s.start(&w);
@@ -311,6 +315,7 @@ mod tests {
 
     #[test]
     fn a_teleported_tick_is_still_a_tick() {
+        crate::report_failure_where_it_happens();
         let w = spaced_world();
         let mut s = RaceSession::new();
         s.start(&w);
@@ -329,6 +334,7 @@ mod tests {
 
     #[test]
     fn a_teleported_tick_does_not_rewind_a_finished_run() {
+        crate::report_failure_where_it_happens();
         let w = spaced_world();
         let mut s = RaceSession::new();
         s.start(&w);
@@ -342,6 +348,7 @@ mod tests {
 
     #[test]
     fn recovery_is_the_last_gate_crossed_facing_the_way_the_track_runs() {
+        crate::report_failure_where_it_happens();
         let w = spaced_world();
         let mut s = RaceSession::new();
         s.start(&w);
@@ -377,6 +384,7 @@ mod tests {
 
     #[test]
     fn several_gates_in_one_tick_are_all_processed_in_order() {
+        crate::report_failure_where_it_happens();
         let mut w = TrackWorld::default();
         w.checkpoints = vec![gate(0.0, false), gate(1.0, false), gate(2.0, false)];
         w.finishes = vec![gate(3.0, true)];
@@ -397,6 +405,7 @@ mod tests {
 
     #[test]
     fn the_clock_counts_ticks_and_never_rewinds() {
+        crate::report_failure_where_it_happens();
         let w = spaced_world();
         let mut s = RaceSession::new();
         s.start(&w);
@@ -413,6 +422,7 @@ mod tests {
 
     #[test]
     fn identical_tick_sequences_produce_identical_runs() {
+        crate::report_failure_where_it_happens();
         let w = spaced_world();
         let path = [
             Vec3::new(10.0, 0.0, 0.0),
@@ -430,6 +440,7 @@ mod tests {
 
     #[test]
     fn a_builtin_track_is_walkable_to_the_finish() {
+        crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
         let w = TrackWorld::from_doc(&doc);
         let mut s = RaceSession::new();
@@ -445,6 +456,7 @@ mod tests {
 
     #[test]
     fn a_track_without_a_finish_ends_at_the_last_checkpoint() {
+        crate::report_failure_where_it_happens();
         let mut w = TrackWorld::default();
         w.spawn = Vec3::new(-5.0, 0.0, 0.0);
         w.checkpoints = vec![gate(10.0, false), gate(20.0, false)];
@@ -463,6 +475,7 @@ mod tests {
 
     #[test]
     fn several_finish_lines_all_end_the_run() {
+        crate::report_failure_where_it_happens();
         // A circuit that splits near the line has two ways home. The run ends at
         // either of them, and the one that is not reached costs nothing.
         let mut w = spaced_world();
@@ -495,6 +508,7 @@ mod tests {
 
     #[test]
     fn the_finish_line_counts_for_nothing_before_the_last_checkpoint() {
+        crate::report_failure_where_it_happens();
         // Driving straight over the line with a checkpoint still owed is taking
         // the short way round, not finishing: the run keeps going until the
         // gates before it have been crossed.
@@ -514,6 +528,7 @@ mod tests {
 
     #[test]
     fn a_runtime_shaped_replay_round_trips_through_the_tape_codec() {
+        crate::report_failure_where_it_happens();
         use retrackt_format::PackedInput;
         use retrackt_format::ReplayTape;
         use retrackt_format::decode_replay;
@@ -563,6 +578,7 @@ mod tests {
 
     #[test]
     fn a_tape_tick_preserves_reverse_throttle() {
+        crate::report_failure_where_it_happens();
         let v = game_utils_vehicle::VehicleInput {
             throttle: -1.0,
             ..game_utils_vehicle::VehicleInput::neutral()

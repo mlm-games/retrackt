@@ -188,6 +188,7 @@ mod tests {
     /// scrolling, so the scroll path is the part that was never exercised.
     #[test]
     fn a_long_library_wraps_its_rows_and_still_scrolls() {
+        crate::report_failure_where_it_happens();
         let sizes = [
             (1600.0f32, 1000.0f32),
             (1280.0, 800.0),

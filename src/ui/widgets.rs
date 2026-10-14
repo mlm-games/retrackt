@@ -449,6 +449,7 @@ mod tests {
     /// field inside it to have anything to fill.
     #[test]
     fn a_field_fills_the_panel_it_sits_in() {
+        crate::report_failure_where_it_happens();
         for (w, h) in [(1280.0f32, 800.0f32), (1024.0, 600.0)] {
             let _turn = WINDOW.lock().unwrap_or_else(|e| e.into_inner());
             set_window_container_size(w, h);

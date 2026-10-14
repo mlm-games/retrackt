@@ -162,6 +162,7 @@ mod tests {
 
     #[test]
     fn the_garage_offers_every_paint_and_none_elsewhere() {
+        crate::report_failure_where_it_happens();
         // A paint that cannot be picked is a paint nobody has, so the count of
         // swatches is the length of the palette at every size the garage shows.
         for (w, h) in [(360.0f32, 780.0), (1024.0, 768.0)] {
@@ -182,6 +183,7 @@ mod tests {
 
     #[test]
     fn the_garage_stays_inside_the_window() {
+        crate::report_failure_where_it_happens();
         // Drawn over the car, so the panel must not hang off a phone.
         for (w, h) in [(360.0f32, 780.0), (800.0, 360.0), (1280.0, 800.0)] {
             let (scene, _) = garage_at(w, h, 3);
@@ -203,6 +205,7 @@ mod tests {
 
     #[test]
     fn a_paint_out_of_range_falls_back_rather_than_panicking() {
+        crate::report_failure_where_it_happens();
         // A save can carry an index the palette no longer has.
         assert_eq!(
             crate::app::theme::car_paint(250),

@@ -699,6 +699,7 @@ mod tests {
 
     #[test]
     fn road_edges_read_as_concrete_and_marked_lines() {
+        crate::report_failure_where_it_happens();
         // The reference's barrier is poured concrete in two tones, with a white
         // line on the left of the road and a red one on the right. Grey barriers
         // and the two-colour edge lines are what make a road read as road work
@@ -738,6 +739,7 @@ mod tests {
 
     #[test]
     fn the_terrain_ring_stands_clear_of_the_track_and_inside_the_far_plane() {
+        crate::report_failure_where_it_happens();
         // A mountain built on top of the road would swallow it, and one past the
         // renderer's far plane would be clipped away, which looks exactly like
         // the feature never having been added. Both are checked against the real
@@ -792,6 +794,7 @@ mod tests {
 
     #[test]
     fn the_same_track_always_generates_the_same_range() {
+        crate::report_failure_where_it_happens();
         // Deterministic: a range that changed per load would make the background
         // of a saved ghost differ from the run it was recorded against.
         let doc = retrackt_format::demo_track();
@@ -806,6 +809,7 @@ mod tests {
 
     #[test]
     fn every_terrain_face_is_outward_and_unit() {
+        crate::report_failure_where_it_happens();
         let doc = retrackt_format::demo_track();
         let (_, bounds) = track::build_group(&doc);
         let group = mountain_group(bounds);
@@ -819,6 +823,7 @@ mod tests {
 
     #[test]
     fn the_plain_covers_every_axis_past_the_far_plane_from_anywhere() {
+        crate::report_failure_where_it_happens();
         // A quad laid out from a grid origin covers 3200 m forward of that
         // origin, whichever puts its edge a metre past the camera when the view
         // sits near the end of a cell. Checked from several positions, including
@@ -867,6 +872,7 @@ mod tests {
     /// open, which reads as a square hole in the ground beside the track.
     #[test]
     fn the_ground_leaves_no_hole_beside_a_non_square_track() {
+        crate::report_failure_where_it_happens();
         for doc in retrackt_format::builtin_tracks() {
             let (_, bounds) = track::build_group(&doc);
             let group = ground_group(bounds, &atmosphere(doc.environment, doc.sun_direction_deg));
@@ -915,6 +921,7 @@ mod tests {
     /// track ever saved looking subtly wrong the day this setting was added.
     #[test]
     fn a_track_that_names_no_environment_opens_in_the_sky_it_was_saved_under() {
+        crate::report_failure_where_it_happens();
         let sun = atmosphere(
             ENVIRONMENT_SUMMER,
             retrackt_format::DEFAULT_SUN_DIRECTION_DEG,
@@ -932,6 +939,7 @@ mod tests {
     /// editor would be offering a choice it cannot honour.
     #[test]
     fn every_environment_is_a_different_sky() {
+        crate::report_failure_where_it_happens();
         let horizons: Vec<[f32; 3]> = retrackt_format::ENVIRONMENTS
             .iter()
             .map(|(id, _)| atmosphere(*id, 0).horizon)

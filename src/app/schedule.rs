@@ -423,6 +423,7 @@ mod chain_tests {
 
     #[test]
     fn each_tick_takes_its_own_entry_and_the_tape_records_that_entry() {
+        crate::report_failure_where_it_happens();
         let mut input = InputRes::new();
         let idle = PackedInput::new(0.0, 0.0, 0.0, false, false, false);
         let boost = PackedInput::new(0.0, 1.0, 0.0, false, true, false);
@@ -446,6 +447,7 @@ mod chain_tests {
 
     #[test]
     fn chain_records_one_tape_tick_per_sim_tick_and_closes_at_the_finish() {
+        crate::report_failure_where_it_happens();
         let mut sim = repame_sim::Sim::new(crate::SIM_STEP);
         register(&mut sim);
         insert_resources(&mut sim.world);
@@ -554,6 +556,7 @@ mod chain_tests {
 
     #[test]
     fn a_ghost_replaying_a_tape_reproduces_the_recorded_run() {
+        crate::report_failure_where_it_happens();
         let doc = demo_track();
         let world = TrackWorld::from_doc(&doc);
         let mut tape = ReplayTape::new(
@@ -590,6 +593,7 @@ mod chain_tests {
 
     #[test]
     fn a_ghost_past_the_end_of_its_tape_holds_its_last_pose() {
+        crate::report_failure_where_it_happens();
         let doc = demo_track();
         let world = TrackWorld::from_doc(&doc);
         let mut tape = ReplayTape::new(
@@ -629,6 +633,7 @@ mod chain_tests {
 
     #[test]
     fn a_ghost_is_refused_a_tape_from_another_track_or_rate() {
+        crate::report_failure_where_it_happens();
         let doc = demo_track();
         let world = TrackWorld::from_doc(&doc);
         let track = gameplay_fingerprint(&doc);
@@ -700,6 +705,7 @@ mod chain_tests {
 
     #[test]
     fn a_fall_in_practice_returns_to_the_last_checkpoint() {
+        crate::report_failure_where_it_happens();
         let (mut sim, _world, recovery, crossed) = falling_sim(true);
         sim.tick();
 
@@ -722,6 +728,7 @@ mod chain_tests {
 
     #[test]
     fn asking_to_recover_does_the_same_thing_as_falling() {
+        crate::report_failure_where_it_happens();
         // The car is on the road this time: the request is the only difference, which
         // is the point of routing a button press through the fall's own path.
         let (mut sim, _world, recovery, _) = falling_sim(true);
@@ -742,6 +749,7 @@ mod chain_tests {
 
     #[test]
     fn a_recovery_request_is_ignored_outside_practice() {
+        crate::report_failure_where_it_happens();
         let (mut sim, _world, _recovery, _) = falling_sim(false);
         sim.world.resource_mut::<CarRes>().0.pos = Vec3::new(0.0, 0.0, 0.0);
         sim.world.resource_mut::<RecoverRes>().0 = true;
@@ -761,6 +769,7 @@ mod chain_tests {
     /// the last corner.
     #[test]
     fn a_fall_in_a_timed_run_recovers_at_the_last_checkpoint() {
+        crate::report_failure_where_it_happens();
         let (mut sim, world, recovery, crossed) = falling_sim(false);
         sim.tick();
 
@@ -786,6 +795,7 @@ mod chain_tests {
     /// Before any gate, the start line is the only place to go.
     #[test]
     fn a_fall_before_the_first_checkpoint_returns_to_the_spawn() {
+        crate::report_failure_where_it_happens();
         let doc = demo_track();
         let world = TrackWorld::from_doc(&doc);
         let mut sim = repame_sim::Sim::new(crate::SIM_STEP);
