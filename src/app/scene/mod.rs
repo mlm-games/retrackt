@@ -1,7 +1,7 @@
 mod car;
 mod track;
 
-use std::f32::consts::{FRAC_PI_2, TAU};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use glam::Vec3;
 use repame_view3d::{Frame3d, MeshGroup, SceneLight, ShadowDesc};
@@ -47,6 +47,7 @@ const HORIZON: u32 = 0xCFE6F7;
 const ZENITH: u32 = 0x4E9BE0;
 const GRASS_A: u32 = 0x69BD5F;
 const GRASS_B: u32 = 0x5BB052;
+use retrackt_format::{ENVIRONMENT_DESERT, ENVIRONMENT_SUMMER, ENVIRONMENT_WINTER};
 /// Inside the far plane, outside the ground ring: the dome always hides the
 /// world edge while the camera stays within the track.
 const SKY_RADIUS: f32 = 1900.0;
@@ -73,6 +74,90 @@ pub(super) fn lin(hex: u32) -> [f32; 3] {
         };
     }
     rgb
+}
+
+/// Everything a track's environment decides about how it is drawn.
+///
+/// One value derived in one place, because the sky, the ground and the light are
+/// otherwise three separate reads of the same document and drift apart the moment
+/// one of them grows a new knob.
+struct Atmosphere {
+    /// Which of the environments these colours belong to, so the meshes that bake
+    /// them in know when they are stale.
+    environment: u8,
+    horizon: [f32; 3],
+    zenith: [f32; 3],
+    ground_a: [f32; 3],
+    ground_b: [f32; 3],
+    ambient: [f32; 3],
+    /// Unit vector toward the sun.
+    sun: [f32; 3],
+    /// The colour the sun throws, which separates a desert afternoon from a
+    /// winter one as much as the sky above them does.
+    sun_color: [f32; 3],
+}
+
+/// The atmosphere a track is drawn in, from the environment it names and how far
+/// round the compass its sun sits.
+///
+/// Summer is the fallthrough rather than a listed arm: it is the value a
+/// document from before environments existed reads as, and it is the sky the
+/// renderer was first drawn for, so a track that has never heard of the setting
+/// opens looking exactly as it was saved. Elevation is per environment rather
+/// than per track, because what a summer noon and a winter noon share is where
+/// the sun is, not how high it hangs.
+fn atmosphere(environment: u8, sun_direction_deg: u16) -> Atmosphere {
+    let (mut at, elevation_deg) = match environment {
+        ENVIRONMENT_DESERT => (
+            Atmosphere {
+                environment,
+                horizon: lin(0xEBD3AE),
+                zenith: lin(0x5B93CE),
+                ground_a: lin(0xD8B978),
+                ground_b: lin(0xC9A868),
+                ambient: [0.40, 0.36, 0.32],
+                sun: [0.0; 3],
+                sun_color: [1.0, 0.94, 0.82],
+            },
+            62.0,
+        ),
+        ENVIRONMENT_WINTER => (
+            Atmosphere {
+                environment,
+                horizon: lin(0xDCE6EF),
+                zenith: lin(0x7FA6C9),
+                ground_a: lin(0xE8EEF4),
+                ground_b: lin(0xD6E0EA),
+                ambient: [0.46, 0.50, 0.58],
+                sun: [0.0; 3],
+                sun_color: [0.96, 0.97, 1.0],
+            },
+            27.0,
+        ),
+        _ => (
+            Atmosphere {
+                environment: ENVIRONMENT_SUMMER,
+                horizon: lin(HORIZON),
+                zenith: lin(ZENITH),
+                ground_a: lin(GRASS_A),
+                ground_b: lin(GRASS_B),
+                ambient: [0.34, 0.38, 0.47],
+                sun: [0.0; 3],
+                sun_color: [1.0, 0.97, 0.93],
+            },
+            51.0,
+        ),
+    };
+    // Wrapped rather than folded into the slider: a bearing of 360 is the same
+    // bearing as 0, and taking it modulo keeps `sin` and `cos` off the seam.
+    let bearing = f32::from(sun_direction_deg % 360) * (PI / 180.0);
+    let elevation = elevation_deg * (PI / 180.0);
+    at.sun = [
+        elevation.cos() * bearing.cos(),
+        elevation.sin(),
+        elevation.cos() * bearing.sin(),
+    ];
+    at
 }
 
 pub fn raw_mesh_to_group(mesh: &RawMesh, depth_test: bool) -> MeshGroup {
@@ -171,13 +256,13 @@ pub(super) fn push_obox(
     }
 }
 
-fn ground_group(bounds: ([f32; 3], [f32; 3])) -> MeshGroup {
+fn ground_group(bounds: ([f32; 3], [f32; 3]), at: &Atmosphere) -> MeshGroup {
     let mut group = MeshGroup {
         depth_test: true,
         ..MeshGroup::default()
     };
-    let a = lin(GRASS_A);
-    let b = lin(GRASS_B);
+    let a = at.ground_a;
+    let b = at.ground_b;
     let (lo, hi) = bounds;
     let centre = [(lo[0] + hi[0]) * 0.5, (lo[2] + hi[2]) * 0.5];
     // The *narrower* of the two extents, so the first frame starts inside the
@@ -301,7 +386,7 @@ fn plain_group(centre: Vec3) -> MeshGroup {
         [x0, y, z0 + r * 2.0],
         [x0 + r * 2.0, y, z0 + r * 2.0],
         [x0 + r * 2.0, y, z0],
-        lin(GRASS_A),
+        a,
         [0.0, 1.0, 0.0],
     );
     group
@@ -343,15 +428,25 @@ pub(super) struct SkyDome {
     /// `group` as built at the origin, and the same vertices un-translated.
     template: MeshGroup,
     offsets: Vec<[f32; 3]>,
+    /// How far each vertex sits between horizon and zenith, kept from the build
+    /// so recolouring does not have to work it out from the positions again.
+    heights: Vec<f32>,
+    /// The environment the tints are currently drawn for.
+    environment: u8,
 }
 
 impl SkyDome {
     pub(super) fn new() -> Self {
-        let horizon = lin(HORIZON);
-        let zenith = lin(ZENITH);
+        // Built in summer and recoloured by `set_atmosphere` if the track it ends
+        // up drawing is not, so the vertex colours are stated once, in the one
+        // place the environments are.
+        let at = atmosphere(ENVIRONMENT_SUMMER, 0);
+        let horizon = at.horizon;
+        let zenith = at.zenith;
         const LON: usize = 16;
         const LAT: usize = 14;
         let mut mesh = RawMesh::default();
+        let mut heights = Vec::new();
         let mut index = vec![0u32; (LAT + 1) * (LON + 1)];
         for iy in 0..=LAT {
             let elev = FRAC_PI_2 * (1.0 - 2.0 * iy as f32 / LAT as f32);
@@ -367,6 +462,7 @@ impl SkyDome {
                 index[iy * (LON + 1) + j] = mesh.positions.len() as u32;
                 mesh.positions.push((d * SKY_RADIUS).to_array());
                 mesh.colors.push(color);
+                heights.push(t);
             }
         }
         let at = |iy: usize, j: usize| index[iy * (LON + 1) + j];
@@ -395,7 +491,29 @@ impl SkyDome {
         Self {
             template: raw_mesh_to_group(&mesh, true),
             offsets,
+            heights,
+            environment: ENVIRONMENT_SUMMER,
         }
+    }
+
+    /// Recolour the dome for a new environment, and report whether it did.
+    ///
+    /// Only the tints move: the shape, and the heights they are mixed by, are the
+    /// same for every environment, so this is the whole of what a preset costs
+    /// and it costs nothing per frame once the preset is set.
+    pub(super) fn set_atmosphere(&mut self, at: &Atmosphere) -> bool {
+        if self.environment == at.environment {
+            return false;
+        }
+        for (color, &height) in self.template.colors.iter_mut().zip(&self.heights) {
+            *color = [
+                at.horizon[0] + (at.zenith[0] - at.horizon[0]) * height,
+                at.horizon[1] + (at.zenith[1] - at.horizon[1]) * height,
+                at.horizon[2] + (at.zenith[2] - at.horizon[2]) * height,
+            ];
+        }
+        self.environment = at.environment;
+        true
     }
 
     /// The dome moved to `centre`.
@@ -423,14 +541,26 @@ impl App {
         ghost: Option<&crate::sim::car::Car>,
         alpha: f32,
     ) -> Frame3d {
-        if self.track_mesh.is_none() {
+        let at = atmosphere(
+            self.data.track.environment,
+            self.data.track.sun_direction_deg,
+        );
+        // The ground and the dome hold their colours as vertex tints and are built
+        // once, so a change of environment puts both back through their builders.
+        // The track itself is only rebuilt when it is the thing that changed: the
+        // group is built alongside to get the bounds the ground is sized from, and
+        // thrown away when there was already a track mesh to keep.
+        let restyled = self.sky.set_atmosphere(&at);
+        if self.track_mesh.is_none() || restyled {
             let (track, bounds) = track::build_group(&self.data.track);
-            self.ground_mesh = Some(ground_group(bounds));
+            self.ground_mesh = Some(ground_group(bounds, &at));
             self.mountain_mesh = Some(mountain_group(bounds));
-            self.track_mesh = Some(track);
+            if self.track_mesh.is_none() {
+                self.track_mesh = Some(track);
+            }
         }
         let editing = self.data.screen == Screen::Editor;
-        let horizon = lin(HORIZON);
+        let horizon = at.horizon;
         let mut frame = Frame3d {
             // The editor frames the whole track and must not follow the car: the
             // car is parked at the spawn, and a chase camera would drag the view
@@ -442,10 +572,10 @@ impl App {
             },
             background: Some([horizon[0], horizon[1], horizon[2], 1.0]),
             light: SceneLight {
-                direction: [0.42, 0.78, 0.46],
-                color: [1.0, 0.97, 0.93],
+                direction: at.sun,
+                color: at.sun_color,
                 diffuse: 1.0,
-                ambient: [0.34, 0.38, 0.47],
+                ambient: at.ambient,
                 fog: 1.0,
                 fog_color: horizon,
                 // Far enough out that the horizon survives it. Closing it to
@@ -736,7 +866,7 @@ mod tests {
     fn the_ground_leaves_no_hole_beside_a_non_square_track() {
         for doc in retrackt_format::builtin_tracks() {
             let (_, bounds) = track::build_group(&doc);
-            let group = ground_group(bounds);
+            let group = ground_group(bounds, &atmosphere(doc.environment, doc.sun_direction_deg));
             let centre = [
                 (bounds.0[0] + bounds.1[0]) * 0.5,
                 (bounds.0[2] + bounds.1[2]) * 0.5,
@@ -772,6 +902,40 @@ mod tests {
                         doc.name, r
                     );
                 }
+            }
+        }
+    }
+
+    /// A track saved before a document could name an environment opens under the
+    /// sky it was saved with. The bearing is the one the light was hard-coded at,
+    /// so this is the difference between an old track looking unchanged and every
+    /// track ever saved looking subtly wrong the day this setting was added.
+    #[test]
+    fn a_track_that_names_no_environment_opens_in_the_sky_it_was_saved_under() {
+        let sun = atmosphere(
+            ENVIRONMENT_SUMMER,
+            retrackt_format::DEFAULT_SUN_DIRECTION_DEG,
+        )
+        .sun;
+        for (got, want) in sun.iter().zip([0.42, 0.78, 0.46]) {
+            assert!(
+                (got - want).abs() < 0.02,
+                "the default sun is {sun:?}, which is not the light tracks were saved under"
+            );
+        }
+    }
+
+    /// Two environments that draw the same sky are one environment twice, and the
+    /// editor would be offering a choice it cannot honour.
+    #[test]
+    fn every_environment_is_a_different_sky() {
+        let horizons: Vec<[f32; 3]> = retrackt_format::ENVIRONMENTS
+            .iter()
+            .map(|(id, _)| atmosphere(*id, 0).horizon)
+            .collect();
+        for (at, horizon) in horizons.iter().enumerate() {
+            for other in horizons.iter().skip(at + 1) {
+                assert_ne!(horizon, other, "two environments draw the same horizon");
             }
         }
     }

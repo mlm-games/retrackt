@@ -23,7 +23,11 @@ pub use piece::{
     rotate_local_xz,
 };
 pub use replay::{PackedInput, ReplayError, ReplayTape, decode_replay, encode_replay};
-pub use track::{FORMAT_VERSION, MAX_PIECES, PieceInstance, PieceUid, TrackDocument, TrackError};
+pub use track::{
+    DEFAULT_SUN_DIRECTION_DEG, ENVIRONMENT_DESERT, ENVIRONMENT_SUMMER, ENVIRONMENT_WINTER,
+    ENVIRONMENTS, FORMAT_VERSION, MAX_PIECES, PieceInstance, PieceUid, SUN_DIRECTION_STEP_DEG,
+    TrackDocument, TrackError, is_environment,
+};
 pub use validate::{Diagnostic, Severity, is_unraceable, validate};
 
 /// Half the drivable road width, in cells.

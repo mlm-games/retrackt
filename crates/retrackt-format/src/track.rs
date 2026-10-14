@@ -11,6 +11,37 @@ use crate::piece::{GridDir, PieceId, PieceParams, rotate_local_xz};
 /// changes. Share codes carry it so old tracks are rejected, not misread.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// The environments a track can be set in, as the numbers they travel as.
+///
+/// Numbers rather than names because the value is on the wire inside every share
+/// code: a name would make a code written by a version that adds a fourth
+/// environment fail to parse outright, where a number reads as an environment
+/// this version has never heard of and falls back.
+pub const ENVIRONMENT_SUMMER: u8 = 0;
+pub const ENVIRONMENT_DESERT: u8 = 1;
+pub const ENVIRONMENT_WINTER: u8 = 2;
+
+/// Every environment in the order the editor lists them, with its display name.
+pub const ENVIRONMENTS: [(u8, &str); 3] = [
+    (ENVIRONMENT_DESERT, "Desert"),
+    (ENVIRONMENT_SUMMER, "Summer"),
+    (ENVIRONMENT_WINTER, "Winter"),
+];
+
+/// Whether a document's number names an environment this version can draw.
+pub fn is_environment(value: u8) -> bool {
+    ENVIRONMENTS.iter().any(|(id, _)| *id == value)
+}
+
+/// The bearing the sun sat at before a track could say otherwise, which is where
+/// the sky was already drawn. A document from before the field existed opens
+/// looking exactly as it was saved.
+pub const DEFAULT_SUN_DIRECTION_DEG: u16 = 48;
+
+/// How far round the compass the sun can be taken, and how coarsely, matching the
+/// editor's own slider.
+pub const SUN_DIRECTION_STEP_DEG: u16 = 2;
+
 /// Ceiling on pieces in one document. Every piece builds a mesh, and the
 /// simulation builds a second triangle soup from it, so an unbounded document
 /// turns a small pasted or saved file into unbounded work at load.
@@ -95,6 +126,18 @@ pub struct TrackDocument {
     pub spawn_xyz: Option<[f32; 3]>,
     #[serde(default)]
     pub spawn_yaw_deg: f32,
+    /// Which of the environments the track is lit and sky-coloured for.
+    #[serde(default)]
+    pub environment: u8,
+    /// Compass bearing of the sun in degrees. Elevation belongs to the
+    /// environment rather than the track: what a summer noon and a winter noon
+    /// share is how far round the compass the sun is, not how high it hangs.
+    #[serde(default = "default_sun_direction_deg")]
+    pub sun_direction_deg: u16,
+}
+
+fn default_sun_direction_deg() -> u16 {
+    DEFAULT_SUN_DIRECTION_DEG
 }
 
 impl Default for TrackDocument {
@@ -113,6 +156,8 @@ impl TrackDocument {
             pieces: Vec::new(),
             spawn_xyz: None,
             spawn_yaw_deg: 0.0,
+            environment: ENVIRONMENT_SUMMER,
+            sun_direction_deg: DEFAULT_SUN_DIRECTION_DEG,
         }
     }
 
