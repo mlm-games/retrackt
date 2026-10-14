@@ -1085,7 +1085,7 @@ mod tests {
         data.track = b.build();
         let shown = labels(&editor_with(&data, 1280.0, 800.0));
         assert!(shown.iter().any(|t| t == "Track settings"), "{shown:?}");
-        for label in ["Start line", "Finish line", "Gates"] {
+        for label in ["AAA", "BBB", "CCC"] {
             assert!(
                 shown.iter().any(|t| t == label),
                 "track settings has no {label} row: {shown:?}"

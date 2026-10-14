@@ -945,9 +945,9 @@ fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
         "Track settings",
         dims::panel_w(),
         vec![
-            field_row("Start line", start),
-            field_row("Finish line", finish),
-            field_row("Gates", checkpoints.to_string()),
+            field_row("AAA", start),
+            field_row("BBB", finish),
+            field_row("CCC", checkpoints.to_string()),
         ],
     )
 }
