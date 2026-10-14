@@ -296,6 +296,16 @@ pub fn strip_w() -> Dp {
     at(fit::width()).strip_w()
 }
 
+/// Width one tile row inside the shelf actually has.
+///
+/// Stated rather than left to `fill_max_width`, which resolves against a scrolling
+/// body whose own width comes from its contents: the shelf then took the width of a
+/// single line of tiles, the row never wrapped, and everything past the second tile
+/// was laid out past the edge of the palette that was supposed to hold it.
+pub fn shelf_content_w() -> Dp {
+    at(fit::width()).shelf_content_w()
+}
+
 /// Width a piece row's identity label may take.
 pub fn label_w() -> Dp {
     at(fit::width()).label_w()

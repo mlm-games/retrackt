@@ -478,15 +478,23 @@ fn palette_list(armed: retrackt_format::PieceId, category: usize, actions: &Acti
     let tab = wrap(tabs.clone());
     let shelf = wrap(parts);
 
+    // Both wrapped rows are given the width they are to lay out in. Left to fill it,
+    // they measure against a scrolling body sized by its own contents, take the
+    // width of one line of tiles, and never wrap: the row puts every piece of a
+    // category on one line and lays out all but the first two past the edge of the
+    // palette holding them, where the panel's clip takes their names away.
     match dims::stacked() {
-        true => Column(Modifier::new().gap(dims::SPACE_ROW)).child([tab, shelf]),
+        true => Column(Modifier::new().gap(dims::SPACE_ROW)).child([
+            Box(Modifier::new().width(dims::palette_content_w())).child(tab),
+            Box(Modifier::new().width(dims::shelf_content_w())).child(shelf),
+        ]),
         false => Row(Modifier::new()
             .gap(dims::SPACE_ROW)
             .align_items(AlignItems::START))
         .child([
             Box(Modifier::new().width(dims::strip_w()))
                 .child(Column(Modifier::new().gap(dims::SPACE_ROW)).child(tabs)),
-            Box(Modifier::new().fill_max_width()).child(shelf),
+            Box(Modifier::new().width(dims::shelf_content_w())).child(shelf),
         ]),
     }
 }
