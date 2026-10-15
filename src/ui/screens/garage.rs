@@ -5,7 +5,7 @@
 //! a preference and is persisted like the volume: it rides with the game rather
 //! than with a track or a run.
 
-use repose_core::{Color, Modifier, View};
+use repose_core::{Modifier, View};
 use repose_ui::{Box, FlowRow, FlowRowConfig, Row, Text, TextStyle, ViewExt, ZStack};
 
 use crate::app::state::{ActionQueue, AppData, UiAct};
@@ -53,18 +53,18 @@ pub fn garage_ui(data: &AppData, actions: &ActionQueue) -> View {
         ],
     );
 
-    // Drawn over the car, so the swatch chosen is the car being driven rather
-    // than a chip beside a name.
-    ZStack(Modifier::new().fill_max_size()).child([
-        Box(Modifier::new().fill_max_size()).child(car_silhouette(data.car_paint)),
-        Box(Modifier::new().absolute().offset(
-            Some(theme::dp(20.0)),
-            None,
-            None,
-            Some(theme::dp(20.0)),
-        ))
-        .child(panel),
-    ])
+    // Over the car and not beside a name, so the swatch picked is visibly the car
+    // being driven. Nothing opaque goes in between: an earlier build filled the
+    // whole screen with the background colour and painted a schematic car on top
+    // of it, which is what the comment describes and the opposite of what it did —
+    // the garage was a black rectangle with two bands on it and no car in it.
+    ZStack(Modifier::new().fill_max_size()).child([Box(Modifier::new().absolute().offset(
+        Some(theme::dp(20.0)),
+        None,
+        None,
+        Some(theme::dp(20.0)),
+    ))
+    .child(panel)])
 }
 
 /// One paint swatch. Tapping it paints the car: there is no second gesture,
@@ -84,36 +84,6 @@ fn swatch(index: u8, hex: u32, selected: bool, actions: &ActionQueue) -> View {
             theme::dp(SWATCH / 2.0),
         )
         .on_click(pusher(actions, UiAct::SetCarPaint(index))))
-}
-
-/// The car in its paint, drawn as the two bands it is made of: body and canopy.
-/// Enough to judge a colour by, and no more.
-fn car_silhouette(paint: u8) -> View {
-    let body = theme::rgb(theme::car_paint(paint));
-    Box(Modifier::new()
-        .fill_max_size()
-        .background(theme::background()))
-    .child(
-        Row(Modifier::new()
-            .fill_max_size()
-            .align_items(repose_core::AlignItems::CENTER))
-        .child([Box(Modifier::new()
-            .width(theme::dp(220.0))
-            .height(theme::dp(90.0))
-            .background(body)
-            .border(theme::dp(2.0), Color::from_rgb(10, 12, 16), theme::dp(18.0))
-            .clip_rounded(theme::dp(18.0)))
-        .child(Box(Modifier::new()
-            .width(theme::dp(110.0))
-            .height(theme::dp(42.0))
-            .background(theme::rgb(0x1E2733))
-            .offset(
-                Some(theme::dp(48.0)),
-                None,
-                None,
-                Some(theme::dp(20.0)),
-            )))]),
-    )
 }
 
 #[cfg(test)]
