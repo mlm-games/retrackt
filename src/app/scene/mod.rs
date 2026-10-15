@@ -4,6 +4,7 @@ mod track;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use glam::Vec3;
+use repame_view3d::render::TonemapMethod;
 use repame_view3d::{Frame3d, MeshGroup, SceneLight, ShadowDesc};
 use retrackt_format::geometry::RawMesh;
 use retrackt_format::{ENVIRONMENT_DESERT, ENVIRONMENT_SUMMER, ENVIRONMENT_WINTER};
@@ -585,6 +586,7 @@ impl App {
                 fog_start: 700.0,
                 fog_end: 3000.0,
                 exposure: 1.0,
+                tonemap: TonemapMethod::Reinhard,
             },
             shadow: Some(ShadowDesc {
                 size: 2048,
