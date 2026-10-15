@@ -1134,7 +1134,17 @@ mod tests {
             retrackt_format::PieceParams::default(),
         );
         data.track = b.build();
+        // Set apart from the chain builder's own value so the assertion cannot be
+        // satisfied by the fixture rather than by the field. A text field's hint
+        // is not part of the laid out tree, so its value is the only thing there
+        // is to read back: if this string is on screen, a field bound to the
+        // document's author is on screen.
+        data.track.author = "K. Ito".into();
         let shown = labels(&editor_with(&data, 1280.0, 800.0));
+        assert!(
+            shown.iter().any(|t| t == "K. Ito"),
+            "track settings shows no field holding the track's author: {shown:?}"
+        );
         assert!(shown.iter().any(|t| t == "Track settings"), "{shown:?}");
         for label in ["Start line", "Finish line", "Checkpoints"] {
             assert!(
@@ -1145,9 +1155,6 @@ mod tests {
         // The two settings that decide how the track looks, and every environment
         // it can be looked at in. Without them the editor opens a circuit and
         // leaves it in whatever weather it happened to load.
-        // Who made the track is half of what a track is, and the reference asks
-        // for it in the same place it asks for the name.
-        assert!(shown.iter().any(|t| t == "Author"), "{shown:?}");
         assert!(shown.iter().any(|t| t == "Sun direction"), "{shown:?}");
         assert!(shown.iter().any(|t| t == "Allow overlap"), "{shown:?}");
         // The label says what the next click will do rather than what is set, so
