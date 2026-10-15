@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use repose_core::{AlignItems, Color, Modifier, View};
-use repose_ui::{Box, Column, Row, ViewExt};
+use repose_ui::{Box, Center, Column, Row, ViewExt};
 use retrackt_format::{PieceId, PieceUid, TrackDocument, piece::catalog_by_id};
 
 use crate::app::theme;
@@ -110,11 +110,16 @@ pub fn piece_icon(
 ) -> Option<View> {
     let shape = retrackt_format::piece_shape(id, params, cell);
     let tint = cell_color(id);
-    let plan: BTreeMap<Plan, Color> = shape
-        .occupied
-        .iter()
-        .map(|c| ((c[0], c[2]), tint))
-        .collect();
+    // Occupied cells first, because that is what the road runs through. A piece
+    // with none of them — a free-standing column, a sign — still covers ground, so
+    // it falls back to the cells it reserves. Falling back to nothing instead left
+    // the tile showing an empty square, which reads as a broken icon rather than as
+    // a piece that happens to own no road.
+    let owned: Vec<[i16; 3]> = match shape.occupied.is_empty() {
+        false => shape.occupied.clone(),
+        true => shape.reserve_cells().collect(),
+    };
+    let plan: BTreeMap<Plan, Color> = owned.into_iter().map(|c| ((c[0], c[2]), tint)).collect();
     if plan.is_empty() {
         return None;
     }
@@ -185,7 +190,10 @@ fn plan_grid(plan: BTreeMap<Plan, Color>, size: f32, tint: Option<Color>) -> Vie
         .background(theme::background())
         .border(theme::dp(1.0), theme::text_dim(), theme::dp(4.0))
         .clip_rounded(theme::dp(4.0)))
-    .child(Column(Modifier::new()).child(rows))
+    // Centred in both axes, and filling first so there is something to centre
+    // inside: a plan scaled to fit its box is still a dot hard against the top left
+    // of one, and a straight is a bar down its left edge.
+    .child(Center(Modifier::new().fill_max_size()).child(Column(Modifier::new()).child(rows)))
 }
 
 /// The piece covering a plan-view cell, if any. Lowest uid wins so two pieces
@@ -291,5 +299,31 @@ mod tests {
         crate::report_failure_where_it_happens();
         let doc = demo_track();
         assert_eq!(summary(&doc), format!("{} pieces", doc.pieces.len()));
+    }
+
+    /// Every piece on the palette has an icon to show.
+    ///
+    /// A tile whose icon comes back empty draws a blank square, and a blank square
+    /// in a row of shapes reads as a broken asset rather than as the piece that
+    /// happens to own no road. Checked across the whole catalogue rather than on
+    /// one piece, because it is the odd-shaped ones that are missing.
+    #[test]
+    fn every_piece_in_the_catalogue_has_an_icon() {
+        let mut missing = Vec::new();
+        for def in retrackt_format::catalog() {
+            let icon = piece_icon(
+                def.id,
+                &retrackt_format::PieceParams::default(),
+                retrackt_format::DEFAULT_CELL_SIZE,
+                44.0,
+            );
+            if icon.is_none() {
+                missing.push(def.id.label());
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "these pieces draw a blank tile: {missing:?}"
+        );
     }
 }
