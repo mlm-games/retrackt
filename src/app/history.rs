@@ -32,8 +32,17 @@ pub enum Edit {
         before: Vec<PieceInstance>,
         after: Vec<PieceInstance>,
     },
-    /// The document was renamed.
-    Renamed { before: String, after: String },
+    /// The document's name and author were changed together.
+    ///
+    /// One variant for both, because they are one question — who made this track —
+    /// and because a player who fixes a typo in either does not expect to have to
+    /// undo twice to get back to what they had.
+    Renamed {
+        before: String,
+        after: String,
+        author_before: String,
+        author_after: String,
+    },
     /// Several pieces placed as one action, filling a block.
     ///
     /// Its own variant rather than one `Added` per piece because the cells went
@@ -55,7 +64,14 @@ impl Edit {
             Edit::Removed { at, piece } => insert_at(doc, *at, *piece),
             Edit::Changed { uid, before, .. } => replace(doc, *uid, *before),
             Edit::Replaced { before, .. } => doc.pieces = before.clone(),
-            Edit::Renamed { before, .. } => doc.name = before.clone(),
+            Edit::Renamed {
+                before,
+                author_before,
+                ..
+            } => {
+                doc.name = before.clone();
+                doc.author = author_before.clone();
+            }
             Edit::Stamped { pieces } => {
                 for piece in pieces {
                     if let Some(at) = doc.pieces.iter().position(|p| p.uid == piece.uid) {
@@ -77,7 +93,14 @@ impl Edit {
             }
             Edit::Changed { uid, after, .. } => replace(doc, *uid, *after),
             Edit::Replaced { after, .. } => doc.pieces = after.clone(),
-            Edit::Renamed { after, .. } => doc.name = after.clone(),
+            Edit::Renamed {
+                after,
+                author_after,
+                ..
+            } => {
+                doc.name = after.clone();
+                doc.author = author_after.clone();
+            }
             Edit::Stamped { pieces } => {
                 for piece in pieces {
                     let at = doc.pieces.len();
@@ -327,6 +350,8 @@ mod tests {
         h.push(Edit::Renamed {
             before: before.clone(),
             after: "Renamed".into(),
+            author_before: doc.author.clone(),
+            author_after: doc.author.clone(),
         });
 
         h.undo(&mut doc).expect("an edit to undo");

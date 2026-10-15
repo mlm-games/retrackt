@@ -576,6 +576,7 @@ impl App {
             UiAct::AdjustSelection(kind, delta) => self.adjust_selection(kind, delta),
             UiAct::ToggleHelp => self.data.editor.show_help = !self.data.editor.show_help,
             UiAct::SetNameDraft(name) => self.data.editor.name_draft = name,
+            UiAct::SetAuthorDraft(name) => self.data.editor.author_draft = name,
             UiAct::RenameTrack => self.rename_track(),
             // A setting rather than an edit: both change how the track looks the
             // moment they are touched, which is the only way to judge either one,
@@ -1506,23 +1507,33 @@ impl App {
         self.track_changed();
     }
 
+    /// Commit both of the fields that say who made this track.
+    ///
+    /// One edit for both, because they are one question and a player fixing a typo
+    /// in either should not have to undo twice to get back to what they had.
     fn rename_track(&mut self) {
-        let wanted: String = self
-            .data
-            .editor
-            .name_draft
-            .trim()
-            .chars()
-            .take(MAX_NAME_CHARS)
-            .collect();
-        // A rename to the name already in hand is not an edit. Left in, it fills
-        // the bounded history with entries that undo nothing and push real ones out.
-        if wanted.is_empty() || wanted == self.data.track.name {
+        let trim_to =
+            |draft: &str| -> String { draft.trim().chars().take(MAX_NAME_CHARS).collect() };
+        let wanted = trim_to(&self.data.editor.name_draft);
+        let wanted_author = trim_to(&self.data.editor.author_draft);
+        // A commit that changes neither is not an edit. Left in, it fills the
+        // bounded history with entries that undo nothing and push real ones out.
+        if wanted.is_empty() {
+            return;
+        }
+        if wanted == self.data.track.name && wanted_author == self.data.track.author {
             return;
         }
         let before = std::mem::replace(&mut self.data.track.name, wanted);
-        let after = self.data.track.name.clone();
-        self.history.push(Edit::Renamed { before, after });
+        let author_before = std::mem::replace(&mut self.data.track.author, wanted_author);
+        self.history.push(Edit::Renamed {
+            before,
+            after: self.data.track.name.clone(),
+            author_before,
+            author_after: self.data.track.author.clone(),
+        });
+        self.data.editor.author_draft.clear();
+        self.data.editor.name_draft.clear();
         self.track_changed();
     }
 
@@ -2089,7 +2100,17 @@ fn describe_edit(edit: &Edit, verb: &str) -> String {
             before.len(),
             after.len()
         ),
-        Edit::Renamed { before, after } => format!("{verb} renaming {before} to {after}."),
+        Edit::Renamed {
+            before,
+            after,
+            author_before,
+            author_after,
+        } => match (before != after, author_before != author_after) {
+            (true, false) => format!("{verb} renaming {before} to {after}."),
+            (false, true) => format!("{verb} changing the author to {author_after}."),
+            (true, true) => format!("{verb} renaming {before} to {after} by {author_after}."),
+            (false, false) => format!("{verb} editing the track's details."),
+        },
         Edit::Stamped { pieces } => format!("{verb} filling a block of {} pieces.", pieces.len()),
     }
 }

@@ -132,6 +132,8 @@ pub enum UiAct {
     ToggleHelp,
     /// Record what has been typed into the track-name field.
     SetNameDraft(String),
+    /// Record what has been typed into the track-author field.
+    SetAuthorDraft(String),
     /// Give the track the name in the field, as one undoable edit.
     RenameTrack,
     /// Put the track in one of the environments it can be drawn in.
@@ -345,6 +347,7 @@ pub struct EditorData {
     /// one undo entry per letter, and would rename a track to "" halfway through
     /// clearing its name. The name moves when Rename is pressed.
     pub name_draft: String,
+    pub author_draft: String,
     /// Share-code field contents, so the draft survives leaving the editor.
     pub code_draft: String,
     /// The last code this track exported to, shown so it can be re-copied.
@@ -376,6 +379,7 @@ impl Default for EditorData {
             diagnostics: Vec::new(),
             code_draft: String::new(),
             name_draft: String::new(),
+            author_draft: String::new(),
             code_out: String::new(),
             thumbnails: true,
             hover: None,

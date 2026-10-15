@@ -611,15 +611,21 @@ mod tests {
         // passed in, not the order they sit in the file. Read as part of the row's
         // summary rather than as its own label: the row is one line, so its values
         // arrive joined rather than as a control strip.
-        assert!(texts.iter().any(|t| t.contains("gate 1")), "{texts:?}");
-        assert!(texts.iter().any(|t| t.contains("gate 2")), "{texts:?}");
+        assert!(texts.iter().any(|t| t.contains("order 1")), "{texts:?}");
+        assert!(texts.iter().any(|t| t.contains("order 2")), "{texts:?}");
         // The selected one is named, its order named with it, and the pair of
         // controls that moves it is on the same line.
         assert!(texts.contains(&"Checkpoint"), "{texts:?}");
         assert!(texts.contains(&"Gate"), "{texts:?}");
         assert!(texts.contains(&"2 of 2"), "{texts:?}");
-        assert!(texts.contains(&"-"), "a gate has to be movable: {texts:?}");
-        assert!(texts.contains(&"+"), "a gate has to be movable: {texts:?}");
+        assert!(
+            texts.contains(&"-"),
+            "a checkpoint has to be movable: {texts:?}"
+        );
+        assert!(
+            texts.contains(&"+"),
+            "a checkpoint has to be movable: {texts:?}"
+        );
     }
 
     #[test]
@@ -1130,7 +1136,7 @@ mod tests {
         data.track = b.build();
         let shown = labels(&editor_with(&data, 1280.0, 800.0));
         assert!(shown.iter().any(|t| t == "Track settings"), "{shown:?}");
-        for label in ["Start line", "Finish line", "Gates"] {
+        for label in ["Start line", "Finish line", "Checkpoints"] {
             assert!(
                 shown.iter().any(|t| t == label),
                 "track settings has no {label} row: {shown:?}"
@@ -1139,6 +1145,9 @@ mod tests {
         // The two settings that decide how the track looks, and every environment
         // it can be looked at in. Without them the editor opens a circuit and
         // leaves it in whatever weather it happened to load.
+        // Who made the track is half of what a track is, and the reference asks
+        // for it in the same place it asks for the name.
+        assert!(shown.iter().any(|t| t == "Author"), "{shown:?}");
         assert!(shown.iter().any(|t| t == "Sun direction"), "{shown:?}");
         assert!(shown.iter().any(|t| t == "Allow overlap"), "{shown:?}");
         // The label says what the next click will do rather than what is set, so

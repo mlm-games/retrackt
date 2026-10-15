@@ -616,9 +616,10 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
             .map(|i| i + 1)
             .unwrap_or(0)
     };
-    // The gate number of each checkpoint, from one walk of the sequence rather
-    // than one per row: the sequence is derived from the whole track, so asking
-    // for it per piece would make the list quadratic in the number of pieces.
+    // What order each checkpoint is passed in, from one walk of the sequence
+    // rather than one per row: the sequence is derived from the whole track, so
+    // asking for it per piece would make the list quadratic in the number of
+    // pieces.
     let gates: std::collections::HashMap<PieceUid, usize> = data
         .track
         .checkpoint_sequence()
@@ -655,7 +656,10 @@ fn piece_rows(data: &AppData, actions: &ActionQueue) -> Vec<View> {
                 bits.push("wide".into());
             }
             if retrackt_format::piece::catalog_by_id(piece.id).is_checkpoint {
-                bits.push(format!("gate {}", gates.get(&uid).copied().unwrap_or(0)));
+                // The reference calls this the checkpoint's order, and on a row
+                // that already says which piece it is, the order is the only
+                // number about it worth carrying.
+                bits.push(format!("order {}", gates.get(&uid).copied().unwrap_or(0)));
             }
 
             let mut face = Modifier::new()
@@ -951,7 +955,22 @@ fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
     if draft.borrow().text != shown_name {
         draft.borrow_mut().text = shown_name;
     }
-    let renamed = !data.editor.name_draft.is_empty() && data.editor.name_draft.trim() != track.name;
+    let author_draft: Rc<RefCell<TextFieldState>> =
+        remember_with_key("editor.author", || RefCell::new(TextFieldState::new()));
+    // Seeded from the document rather than left blank, so the field says who made
+    // the track instead of asking for it again every time it is opened.
+    let shown_author = match data.editor.author_draft.is_empty() {
+        true => track.author.clone(),
+        false => data.editor.author_draft.clone(),
+    };
+    if author_draft.borrow().text != shown_author {
+        author_draft.borrow_mut().text = shown_author;
+    }
+    // Either field counts, because either one on its own is a change worth making.
+    let renamed = (!data.editor.name_draft.is_empty()
+        && data.editor.name_draft.trim() != track.name)
+        || (!data.editor.author_draft.is_empty()
+            && data.editor.author_draft.trim() != track.author);
 
     list_panel_w(
         "Track settings",
@@ -971,9 +990,22 @@ fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
                         ..TextFieldConfig::default()
                     },
                 ),
+                BasicTextField(
+                    author_draft,
+                    Modifier::new().fill_max_width().min_height(dims::CTRL_H),
+                    "Author",
+                    TextFieldConfig {
+                        line_limits: TextFieldLineLimits::SingleLine,
+                        on_change: Some(Rc::new({
+                            let queue = actions.clone();
+                            move |text: String| push(&queue, UiAct::SetAuthorDraft(text))
+                        }) as Rc<dyn Fn(String)>),
+                        ..TextFieldConfig::default()
+                    },
+                ),
                 ctrl_row(vec![match renamed {
-                    true => ctrl_on("Rename", pusher(actions, UiAct::RenameTrack)),
-                    false => ctrl_off("Rename"),
+                    true => ctrl_on("Apply", pusher(actions, UiAct::RenameTrack)),
+                    false => ctrl_off("Apply"),
                 }]),
             ]),
             // Which of the environments, and where the sun is. Both show their
@@ -1020,7 +1052,7 @@ fn track_settings_panel(data: &AppData, actions: &ActionQueue) -> View {
             }]),
             field_row("Start line", start),
             field_row("Finish line", finish),
-            field_row("Gates", checkpoints.to_string()),
+            field_row("Checkpoints", checkpoints.to_string()),
         ],
     )
 }
