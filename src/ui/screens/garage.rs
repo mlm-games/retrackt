@@ -186,9 +186,10 @@ mod tests {
         crate::report_failure_where_it_happens();
         // The trim is persisted apart from the paint, so a save can name a trim
         // the palette no longer has without taking the paint down with it.
-        let _turn = crate::ui::fit::tests::WINDOW
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        //
+        // `garage_at` takes the window lock itself: taking it here as well would
+        // be a second lock of a mutex that is not reentrant, which hangs the
+        // whole test binary rather than this one test.
         let mut data = AppData::default();
         data.settings.car_paint = 2;
         data.settings.car_trim = 250;
