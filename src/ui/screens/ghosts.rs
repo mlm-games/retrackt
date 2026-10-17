@@ -55,22 +55,33 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
             });
             let action_count = if playable { 4 } else { 2 };
 
+            // A wrapping row, not a plain one. Four buttons at their comfortable
+            // width are wider together than the panel is, and the row outside
+            // this one cannot help: it wraps whole children, and a plain row is
+            // one child, so the last button simply left the panel.
             let actions_row = if playable {
-                Row(Modifier::new().gap(theme::dp(8.0)))
-                    .child(ghost_btn(
+                FlowRow(
+                    Modifier::new().gap(theme::dp(8.0)),
+                    FlowRowConfig::default(),
+                )
+                .child(vec![
+                    ghost_btn(
                         "Race",
                         pusher(actions, UiAct::RaceGhost(entry.file.clone())),
-                    ))
-                    .child(ghost_btn(
+                    ),
+                    ghost_btn(
                         "Watch",
                         pusher(actions, UiAct::WatchGhost(entry.file.clone())),
-                    ))
-                    .child(export)
-                    .child(remove)
+                    ),
+                    export,
+                    remove,
+                ])
             } else {
-                Row(Modifier::new().gap(theme::dp(8.0)))
-                    .child(export)
-                    .child(remove)
+                FlowRow(
+                    Modifier::new().gap(theme::dp(8.0)),
+                    FlowRowConfig::default(),
+                )
+                .child(vec![export, remove])
             };
 
             rows.push(
