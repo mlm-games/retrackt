@@ -27,10 +27,73 @@ pub struct Settings {
     /// a car that forgets its colour between runs forgets the choice.
     #[serde(default)]
     pub car_paint: u8,
+    /// Trim the car is built in, by index into the garage trim palette.
+    #[serde(default = "default_trim")]
+    pub car_trim: u8,
+    /// Index into [`UNIT_NAMES`].
+    #[serde(default)]
+    pub units: u8,
+    #[serde(default = "default_true")]
+    pub speedometer: bool,
+    #[serde(default = "default_true")]
+    pub timer: bool,
+    /// Index into [`QUALITY_NAMES`].
+    #[serde(default = "default_quality")]
+    pub quality: u8,
+    #[serde(default = "default_true")]
+    pub shadows: bool,
+    #[serde(default = "default_true")]
+    pub fog: bool,
+    /// Multiplier on the steering the driver's input asks for. 1.0 is the
+    /// tuning the car was balanced at, so this is a preference rather than a
+    /// difficulty: a car that turns more than its physics allow is a different
+    /// car, and records set with one are not comparable with the other.
+    #[serde(default = "default_steering")]
+    pub steering: f32,
+}
+
+/// Units for every speed the game prints. Metric first: it is the default the
+/// records were set under, and the index is what is persisted.
+pub const UNIT_NAMES: [&str; 2] = ["Metric", "Imperial"];
+
+/// Graphics presets in ascending cost. The index is what is persisted.
+pub const QUALITY_NAMES: [&str; 4] = ["Low", "Medium", "High", "Ultra"];
+
+pub fn is_units(v: u8) -> bool {
+    (v as usize) < UNIT_NAMES.len()
+}
+
+pub fn is_quality(v: u8) -> bool {
+    (v as usize) < QUALITY_NAMES.len()
+}
+
+/// Speed in the player's chosen units, and the suffix to print after it.
+pub fn speed_in_units(kmh: f32, units: u8) -> (f32, &'static str) {
+    if units == 1 {
+        (kmh * 0.621_371, " mph")
+    } else {
+        (kmh, " km/h")
+    }
 }
 
 fn default_thumbnails() -> bool {
     true
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_trim() -> u8 {
+    crate::sim::car::DEFAULT_TRIM
+}
+
+fn default_quality() -> u8 {
+    2
+}
+
+fn default_steering() -> f32 {
+    1.0
 }
 
 impl Default for Settings {
@@ -42,6 +105,14 @@ impl Default for Settings {
             thumbnails: default_thumbnails(),
             practice: false,
             car_paint: 0,
+            car_trim: default_trim(),
+            units: 0,
+            speedometer: default_true(),
+            timer: default_true(),
+            quality: default_quality(),
+            shadows: default_true(),
+            fog: default_true(),
+            steering: default_steering(),
         }
     }
 }

@@ -169,11 +169,12 @@ pub fn title_ui(data: &AppData, actions: &ActionQueue) -> View {
         ))
         .child(ghost_btn("Ghosts", pusher(actions, UiAct::OpenGhosts)))
         .child(ghost_btn("Garage", pusher(actions, UiAct::OpenGarage)))
+        .child(ghost_btn("Options", pusher(actions, UiAct::OpenSettings)))
         .child(
             Row(Modifier::new()
                 .gap(theme::dp(8.0))
                 .align_items(AlignItems::CENTER))
-            .child(practice_toggle_chip(data.practice, actions))
+            .child(practice_toggle_chip(data.settings.practice, actions))
             .child(thumbnail_toggle(thumbs, actions)),
         )
         .child(Box(Modifier::new().height(theme::dp(6.0))).child(Spacer()))

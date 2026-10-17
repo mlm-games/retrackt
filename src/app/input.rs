@@ -464,10 +464,15 @@ impl InputState {
 
     /// Quantised form of this frame's intent: the value the simulation consumes
     /// and the tape stores, so neither can drift from the other.
-    pub fn packed(&self) -> PackedInput {
+    /// This frame's controls as one packed entry.
+    ///
+    /// `steer_scale` is the player's steering sensitivity, applied here rather
+    /// than in the physics: it is a preference about the input, not a change to
+    /// the car, and the step stays the one the tuning was balanced at.
+    pub fn packed(&self, steer_scale: f32) -> PackedInput {
         let v = self.vehicle;
         PackedInput::new(
-            v.steer,
+            (v.steer * steer_scale).clamp(-1.0, 1.0),
             v.throttle,
             v.brake,
             v.handbrake > 0.0,

@@ -150,8 +150,7 @@ impl App {
         let data = state::AppData {
             ghosts: save.ghosts.all().to_vec(),
             ghost_draft: "My ghost".into(),
-            practice: save.settings.practice,
-            car_paint: save.settings.car_paint,
+            settings: save.settings.clone(),
             editor: state::EditorData {
                 thumbnails: save.settings.thumbnails,
                 ..state::EditorData::default()
@@ -204,7 +203,7 @@ impl App {
         self.data.stick = self.input.stick_view();
         // Queued for every tick this frame could run, so a hitch that catches up
         // several ticks still gives each one its own entry to consume.
-        let packed = self.input.packed();
+        let packed = self.input.packed(self.data.settings.steering);
         let catchup = self.sim.max_steps as usize;
         self.sim
             .world
@@ -305,6 +304,12 @@ impl App {
                     match screen {
                         Screen::Ghosts => self.apply_action(UiAct::CloseGhosts),
                         Screen::Garage => self.apply_action(UiAct::CloseGarage),
+                        Screen::Settings => self.apply_action(UiAct::CloseSettings),
+                        // Escape holds a race rather than throwing it away. It is
+                        // the key a player presses to stop, and a key that ended
+                        // the run would put the pause menu out of reach for the
+                        // one input that most obviously means "pause".
+                        Screen::Race => self.apply_action(UiAct::TogglePause),
                         _ => self.leave_run(),
                     }
                 }
@@ -447,11 +452,7 @@ impl App {
             // Applies from the next race, not this one: a run in progress must not
             // switch its own rules halfway. `start_race` pushes the resource, and
             // `finish_race` reads the flag the run started with.
-            UiAct::SetPractice(on) => {
-                self.data.practice = on;
-                self.save.settings.practice = on;
-                let _ = crate::save::save(&self.save);
-            }
+            UiAct::SetPractice(on) => self.set_option(|s| s.practice = on),
             UiAct::WatchGhost(file) => self.watch_ghost(&file),
             UiAct::CloseReplay => self.close_replay(),
             UiAct::ReplayPlayPause => self.replay_play_pause(),
@@ -490,10 +491,33 @@ impl App {
             // between runs forgot a choice the player made once.
             UiAct::SetCarPaint(index) => {
                 let clamped = index.min(theme::CAR_PAINTS.len() as u8 - 1);
-                self.data.car_paint = clamped;
-                self.save.settings.car_paint = clamped;
-                let _ = crate::save::save(&self.save);
+                self.set_option(|s| s.car_paint = clamped);
             }
+            UiAct::SetCarTrim(index) => {
+                let clamped = index.min(theme::CAR_TRIMS.len() as u8 - 1);
+                self.set_option(|s| s.car_trim = clamped);
+            }
+            UiAct::OpenSettings => {
+                self.data.settings_return = self.data.screen;
+                self.data.screen = Screen::Settings;
+            }
+            UiAct::CloseSettings => self.data.screen = self.data.settings_return,
+            UiAct::SetUnits(v) => {
+                self.set_option(|s| s.units = if crate::save::is_units(v) { v } else { 0 })
+            }
+            UiAct::SetSpeedometer(on) => self.set_option(|s| s.speedometer = on),
+            UiAct::SetTimer(on) => self.set_option(|s| s.timer = on),
+            UiAct::SetQuality(v) => {
+                self.set_option(|s| s.quality = if crate::save::is_quality(v) { v } else { 2 })
+            }
+            UiAct::SetShadows(on) => self.set_option(|s| s.shadows = on),
+            UiAct::SetFog(on) => self.set_option(|s| s.fog = on),
+            UiAct::SetMasterVolume(v) => self.set_option(|s| s.master_volume = v.clamp(0.0, 1.0)),
+            UiAct::SetMusicVolume(v) => self.set_option(|s| s.music_volume = v.clamp(0.0, 1.0)),
+            UiAct::SetSfxVolume(v) => self.set_option(|s| s.sfx_volume = v.clamp(0.0, 1.0)),
+            UiAct::SetSteering(v) => self.set_option(|s| s.steering = v.clamp(0.5, 1.5)),
+            UiAct::TogglePause => self.toggle_pause(),
+            UiAct::ResetToStart => self.reset_to_start(),
             UiAct::RaceGhost(file) => self.race_ghost(&file),
             UiAct::SaveGhost(name) => self.save_ghost(&name),
             UiAct::SetGhostDraft(name) => self.data.ghost_draft = name,
@@ -624,6 +648,41 @@ impl App {
     /// Start (or restart) a run. Returns false when the track cannot be raced or
     /// has no drivable spawn; nothing is reset then, and `data.notice` explains
     /// the rejection.
+    /// Apply one option and write it out. Every option goes through here, so a
+    /// new one cannot be added to the screen and quietly not persisted.
+    fn set_option(&mut self, edit: impl FnOnce(&mut crate::save::Settings)) {
+        edit(&mut self.data.settings);
+        self.save.settings = self.data.settings.clone();
+        let _ = crate::save::save(&self.save);
+    }
+
+    /// Whether the race is held. Only a live race is: the editor and the replay
+    /// viewer keep clocks of their own, and the results screen has no clock.
+    pub fn paused(&self) -> bool {
+        self.data.paused && self.data.screen == Screen::Race
+    }
+
+    /// Hold the race or let it go.
+    ///
+    /// The clock is stopped in the simulation rather than by skipping this
+    /// loop's call to it, so nothing banks wall-clock time while the race is
+    /// held and resuming does not fire a burst of catch-up ticks.
+    fn toggle_pause(&mut self) {
+        if self.data.screen != Screen::Race {
+            return;
+        }
+        self.data.paused = !self.data.paused;
+        self.sim.time_scale = if self.data.paused { 0.0 } else { 1.0 };
+    }
+
+    /// Let the clock go and take the race from the start line again, whether or
+    /// not it was held.
+    fn reset_to_start(&mut self) {
+        self.data.paused = false;
+        self.sim.time_scale = 1.0;
+        self.start_race();
+    }
+
     fn start_race(&mut self) -> bool {
         // Checked here as well as in the editor: a track can reach this point
         // having been edited into an unraceable state, and a run that starts and
@@ -643,7 +702,8 @@ impl App {
             return false;
         }
         self.data.notice = None;
-        let car = Car::at_spawn(world.spawn, world.spawn_yaw, self.data.car_paint);
+        let car = Car::at_spawn(world.spawn, world.spawn_yaw, self.data.settings.car_paint)
+            .with_trim(self.data.settings.car_trim);
         {
             let mut session = self.sim.world.resource_mut::<SessionRes>();
             session.0.start(&world);
@@ -674,7 +734,7 @@ impl App {
         // cannot start under the rules of the one before it.
         self.sim
             .world
-            .insert_resource(PracticeRes(self.data.practice));
+            .insert_resource(PracticeRes(self.data.settings.practice));
         self.sim.world.insert_resource(RecoverRes(false));
         self.refresh_best();
         self.prev_car = None;
@@ -753,6 +813,10 @@ impl App {
     /// The record is written even when the tape could not be, so a storage failure
     /// costs the player the ghost rather than the time.
     fn finish_race(&mut self, result: crate::session::result::RaceResult) {
+        // A finished run is not a held one: the result stands whatever happens
+        // to the clock, and the results screen has no clock to show.
+        self.data.paused = false;
+        self.sim.time_scale = 1.0;
         let (track, physics) = (result.track_fingerprint, result.physics_fingerprint);
         // The tape is only written once the run is known to be the record. Both
         // share the personal-best stem, so writing first would overwrite the ghost
@@ -763,7 +827,7 @@ impl App {
             .records
             .get(&track, &physics)
             .is_none_or(|best| result.total_ticks < best);
-        if !self.data.practice && is_record {
+        if !self.data.settings.practice && is_record {
             let mut stem = None;
             if let Some(tape) = result.replay.as_ref() {
                 match crate::save::save_pb_ghost(tape, "Personal best") {
@@ -810,7 +874,7 @@ impl App {
     /// and a fall cannot differ in whether the gate history is cleared or the clock
     /// keeps running — recovering is a way out of a mistake, not a way past the road.
     fn recover_to_checkpoint(&mut self) {
-        if !self.data.practice || self.data.screen != Screen::Race {
+        if !self.data.settings.practice || self.data.screen != Screen::Race {
             return;
         }
         if self
@@ -1124,10 +1188,15 @@ impl App {
                 | Screen::Replay
                 | Screen::Ghosts
                 | Screen::Garage
+                | Screen::Settings
         )
     }
 
     fn leave_run(&mut self) {
+        // A run that ends takes the hold with it: the clock belongs to the run,
+        // and leaving it stopped would stop the next one from ever starting.
+        self.data.paused = false;
+        self.sim.time_scale = 1.0;
         self.sim.world.insert_resource(ActiveRes(false));
         self.sim.world.insert_resource(FinishedRes(false));
         // A recovery request that outlived its run must not fire on the next one.
@@ -1202,7 +1271,8 @@ impl App {
         self.data.editor.can_undo = self.history.can_undo();
         self.data.editor.can_redo = self.history.can_redo();
         let world = TrackWorld::from_doc(&self.data.track);
-        let car = Car::at_spawn(world.spawn, world.spawn_yaw, self.data.car_paint);
+        let car = Car::at_spawn(world.spawn, world.spawn_yaw, self.data.settings.car_paint)
+            .with_trim(self.data.settings.car_trim);
         {
             let mut session = self.sim.world.resource_mut::<SessionRes>();
             session.0.start(&world);

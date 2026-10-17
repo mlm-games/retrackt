@@ -19,7 +19,7 @@ pub fn results_ui(data: &AppData, actions: &ActionQueue) -> View {
     match &data.last_result {
         Some(result) => {
             // A practice run records nothing, so it cannot set one.
-            let new_record = !data.practice
+            let new_record = !data.settings.practice
                 && match data.best {
                     Some(best) => result.total_ticks < best,
                     None => true,
@@ -60,7 +60,7 @@ pub fn results_ui(data: &AppData, actions: &ActionQueue) -> View {
 
     // A practice run records nothing, so offering to keep its tape would name the
     // one run that is not a record.
-    if !data.practice
+    if !data.settings.practice
         && data
             .last_result
             .as_ref()
@@ -68,7 +68,7 @@ pub fn results_ui(data: &AppData, actions: &ActionQueue) -> View {
     {
         children.push(ghost_save_row(data, actions));
     }
-    if data.practice {
+    if data.settings.practice {
         children.push(
             Text("Practice: not recorded, and falls return to the last checkpoint")
                 .size(theme::sp(14.0))
@@ -91,7 +91,7 @@ pub fn results_ui(data: &AppData, actions: &ActionQueue) -> View {
         )
         .child([
             menu_btn("Restart", pusher(actions, UiAct::Restart)),
-            practice_toggle(data.practice, actions),
+            practice_toggle(data.settings.practice, actions),
         ])
         .child([
             ghost_btn("Track Editor", pusher(actions, UiAct::OpenEditor)),

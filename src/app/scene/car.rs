@@ -11,9 +11,7 @@ use super::{lin, push_lit, push_obox, push_tri_lit, raw_mesh_to_group};
 const GLASS: u32 = 0x1E2733;
 const DARK: u32 = 0x23272E;
 const UNDER: u32 = 0x1A1D23;
-const STRIPE: u32 = 0xF2F4F7;
 const TIRE: u32 = 0x14161A;
-const RIM: u32 = 0xC6CBD3;
 const HEAD: u32 = 0xEDEFF2;
 const TAIL: u32 = 0xC2261C;
 
@@ -34,7 +32,7 @@ pub(super) fn groups(car: &Car) -> (MeshGroup, MeshGroup, MeshGroup) {
     let body_m = body_matrix(car);
 
     let mut shell = RawMesh::default();
-    bodywork(&mut shell, car.paint);
+    bodywork(&mut shell, car.paint, car.trim);
     wheels(&mut shell, car);
     let mut body = raw_mesh_to_group(&shell.transformed(body_m, [1.0; 3]), true);
     body.material.roughness = 0.5;
@@ -53,7 +51,7 @@ pub(super) fn groups(car: &Car) -> (MeshGroup, MeshGroup, MeshGroup) {
 /// and a pair of lit headlights reads as a rival on the road.
 pub(super) fn ghost_group(car: &Car) -> MeshGroup {
     let mut shell = RawMesh::default();
-    bodywork(&mut shell, car.paint);
+    bodywork(&mut shell, car.paint, car.trim);
     wheels(&mut shell, car);
     let mut group = raw_mesh_to_group(&shell.transformed(body_matrix(car), [1.0; 3]), true);
     // One flat albedo, not the car's own paint: the shell reads as a solid
@@ -73,14 +71,14 @@ pub(super) fn ghost_group(car: &Car) -> MeshGroup {
 
 /// Everything in body space: +Z forward, +Y up, origin at the car centre,
 /// which itself rides a height above the road.
-fn bodywork(m: &mut RawMesh, paint: u8) {
+fn bodywork(m: &mut RawMesh, paint: u8, trim: u8) {
     let (hx, y0, y1, zf, zr) = (0.80, -0.45, 0.08, 1.32, -1.30);
     let v = Vec3::new;
     let body = lin(crate::app::theme::car_paint(paint));
     let under = lin(UNDER);
     let glass = lin(GLASS);
     let dark = lin(DARK);
-    let stripe = lin(STRIPE);
+    let stripe = lin(crate::app::theme::car_trim(trim));
 
     push_lit(
         m,
@@ -233,7 +231,7 @@ fn bodywork(m: &mut RawMesh, paint: u8) {
 fn wheels(m: &mut RawMesh, car: &Car) {
     let droop = if car.grounded { 0.0 } else { 0.08 };
     let tire = lin(TIRE);
-    let rim = lin(RIM);
+    let rim = lin(crate::app::theme::car_trim(car.trim));
     for i in 0..4 {
         let lift = 0.9 * car.compression[i].clamp(0.0, 1.0);
         let y = -RIDE + WHEEL_R + lift - droop;

@@ -12,13 +12,10 @@ fn ghost_ink() -> repose_core::Color {
     repose_core::Color::from_rgb(90, 178, 232)
 }
 
-pub fn race_hud(data: &AppData) -> View {
-    let time = fmt_ticks(data.race_ticks);
-    let speed = data.speed_kmh;
-    let checkpoint = data.checkpoint;
-    let checkpoint_count = data.checkpoint_count;
-
-    let left = Column(
+/// The top-left card's own geometry: it sits in the corner at the window's
+/// chrome inset, over whatever the track is doing behind it.
+fn top_left(children: Vec<View>) -> View {
+    Column(
         Modifier::new()
             .absolute()
             .offset(
@@ -33,18 +30,56 @@ pub fn race_hud(data: &AppData) -> View {
             .clip_rounded(theme::dp(8.0))
             .hit_passthrough(),
     )
-    .child(
-        Text(time)
-            .size(theme::sp(36.0 * fit::type_scale()))
-            .color(theme::text())
-            .single_line(),
+    .child(children)
+}
+
+fn top_right(children: Vec<View>) -> View {
+    Column(
+        Modifier::new()
+            .absolute()
+            .offset(
+                None,
+                Some(theme::dp(fit::chrome_inset())),
+                Some(theme::dp(fit::chrome_inset())),
+                None,
+            )
+            .gap(theme::dp(4.0))
+            .padding(theme::dp(12.0))
+            .background(theme::background().with_alpha_f32(0.55))
+            .clip_rounded(theme::dp(8.0))
+            .align_items(AlignItems::END)
+            .hit_passthrough(),
     )
-    .child(
-        Text(format!("{speed:.0} km/h"))
-            .size(theme::sp(22.0 * fit::type_scale()))
-            .color(theme::accent())
-            .single_line(),
-    );
+    .child(children)
+}
+
+pub fn race_hud(data: &AppData) -> View {
+    let settings = &data.settings;
+    let checkpoint = data.checkpoint;
+    let checkpoint_count = data.checkpoint_count;
+
+    // The clock and the speedometer are the two readouts a driver can turn off,
+    // and both live in the same card. The card goes with them rather than
+    // staying as an empty box: a HUD that hides things by drawing a frame
+    // around nothing still covers the corner of the track it sits on.
+    let mut left_children: Vec<View> = Vec::new();
+    if settings.timer {
+        left_children.push(
+            Text(fmt_ticks(data.race_ticks))
+                .size(theme::sp(36.0 * fit::type_scale()))
+                .color(theme::text())
+                .single_line(),
+        );
+    }
+    if settings.speedometer {
+        let (value, unit) = crate::save::speed_in_units(data.speed_kmh, settings.units);
+        left_children.push(
+            Text(format!("{value:.0}{unit}"))
+                .size(theme::sp(22.0 * fit::type_scale()))
+                .color(theme::accent())
+                .single_line(),
+        );
+    }
 
     let mut right_children = vec![
         Text(format!("CP {checkpoint} / {checkpoint_count}"))
@@ -90,7 +125,7 @@ pub fn race_hud(data: &AppData) -> View {
         );
     }
 
-    if data.practice {
+    if settings.practice {
         right_children.push(
             Text("PRACTICE")
                 .size(theme::sp(14.0))
@@ -99,23 +134,11 @@ pub fn race_hud(data: &AppData) -> View {
         );
     }
 
-    let right = Column(
-        Modifier::new()
-            .absolute()
-            .offset(
-                None,
-                Some(theme::dp(fit::chrome_inset())),
-                Some(theme::dp(fit::chrome_inset())),
-                None,
-            )
-            .gap(theme::dp(4.0))
-            .padding(theme::dp(12.0))
-            .background(theme::background().with_alpha_f32(0.55))
-            .clip_rounded(theme::dp(8.0))
-            .align_items(AlignItems::END)
-            .hit_passthrough(),
-    )
-    .child(right_children);
+    let mut children: Vec<View> = Vec::new();
+    if !left_children.is_empty() {
+        children.push(top_left(left_children));
+    }
+    children.push(top_right(right_children));
 
-    ZStack(Modifier::new().fill_max_size().hit_passthrough()).child([left, right])
+    ZStack(Modifier::new().fill_max_size().hit_passthrough()).child(children)
 }

@@ -71,6 +71,24 @@ pub fn car_paint(index: u8) -> u32 {
         .unwrap_or(CAR_PAINTS[0])
 }
 
+/// Trims the garage offers for the car's accents and rims, by index. First is
+/// the car as it ships.
+pub const CAR_TRIMS: [u32; 6] = [
+    0xC6CBD3, // silver
+    0x2A2F38, // graphite
+    0xF2F4F7, // pearl
+    0xD9A441, // brass
+    0xC2261C, // scarlet
+    0x1E2733, // midnight
+];
+
+pub fn car_trim(index: u8) -> u32 {
+    CAR_TRIMS
+        .get(index as usize)
+        .copied()
+        .unwrap_or(CAR_TRIMS[0])
+}
+
 pub fn danger() -> Color {
     Color::from_rgb(224, 72, 72)
 }

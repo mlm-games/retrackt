@@ -20,8 +20,26 @@ const SWATCH: f32 = 40.0;
 pub fn garage_ui(data: &AppData, actions: &ActionQueue) -> View {
     let mut swatches: Vec<View> = Vec::new();
     for (index, hex) in theme::CAR_PAINTS.iter().enumerate() {
-        let selected = data.car_paint == index as u8;
-        swatches.push(swatch(index as u8, *hex, selected, actions));
+        let selected = data.settings.car_paint == index as u8;
+        swatches.push(swatch(
+            *hex,
+            selected,
+            UiAct::SetCarPaint(index as u8),
+            actions,
+        ));
+    }
+
+    // The trim is the car's second colour rather than a second car: it is the
+    // accents and the rims, and it is picked the same way for the same reason.
+    let mut trims: Vec<View> = Vec::new();
+    for (index, hex) in theme::CAR_TRIMS.iter().enumerate() {
+        let selected = data.settings.car_trim == index as u8;
+        trims.push(swatch(
+            *hex,
+            selected,
+            UiAct::SetCarTrim(index as u8),
+            actions,
+        ));
     }
 
     let panel = list_panel_w(
@@ -40,6 +58,18 @@ pub fn garage_ui(data: &AppData, actions: &ActionQueue) -> View {
                 },
             )
             .child(swatches),
+            Text("Trim and rims")
+                .size(theme::sp(13.0))
+                .color(theme::text_dim())
+                .single_line(),
+            FlowRow(
+                Modifier::new().gap(theme::dp(10.0)).fill_max_width(),
+                FlowRowConfig {
+                    balanced: true,
+                    ..FlowRowConfig::default()
+                },
+            )
+            .child(trims),
             Text("The car you build your next race in.")
                 .size(theme::sp(12.0))
                 .color(theme::text_dim())
@@ -69,7 +99,7 @@ pub fn garage_ui(data: &AppData, actions: &ActionQueue) -> View {
 
 /// One paint swatch. Tapping it paints the car: there is no second gesture,
 /// because a palette that armed a colour would need one.
-fn swatch(index: u8, hex: u32, selected: bool, actions: &ActionQueue) -> View {
+fn swatch(hex: u32, selected: bool, act: UiAct, actions: &ActionQueue) -> View {
     Box(Modifier::new()
         .width(theme::dp(SWATCH))
         .height(theme::dp(SWATCH))
@@ -83,7 +113,7 @@ fn swatch(index: u8, hex: u32, selected: bool, actions: &ActionQueue) -> View {
             },
             theme::dp(SWATCH / 2.0),
         )
-        .on_click(pusher(actions, UiAct::SetCarPaint(index))))
+        .on_click(pusher(actions, act)))
 }
 
 #[cfg(test)]
@@ -105,7 +135,7 @@ mod tests {
         let actions: ActionQueue = Rc::new(RefCell::new(Vec::new()));
         let mut data = AppData::default();
         data.screen = crate::app::state::Screen::Garage;
-        data.car_paint = paint;
+        data.settings.car_paint = paint;
         let view = crate::ui::screens::garage::garage_ui(&data, &actions);
         let (scene, _, _) = repose_ui::layout_and_paint(
             &view,
@@ -134,14 +164,14 @@ mod tests {
     fn the_garage_offers_every_paint_and_none_elsewhere() {
         crate::report_failure_where_it_happens();
         // A paint that cannot be picked is a paint nobody has, so the count of
-        // swatches is the length of the palette at every size the garage shows.
+        // swatches is the length of both palettes at every size the garage shows.
         for (w, h) in [(360.0f32, 780.0), (1024.0, 768.0)] {
             let (scene, _) = garage_at(w, h, 0);
             let rects = swatch_rects(&scene);
             assert_eq!(
                 rects.len(),
-                crate::app::theme::CAR_PAINTS.len(),
-                "{w}x{h}: one swatch per paint"
+                crate::app::theme::CAR_PAINTS.len() + crate::app::theme::CAR_TRIMS.len(),
+                "{w}x{h}: one swatch per paint and per trim"
             );
             // They lay out side by side, not stacked: a wall of swatches on a
             // phone is a wall to scroll, and the palette never overflows.
@@ -149,6 +179,26 @@ mod tests {
             let rows = ys.iter().filter(|y| **y == ys[0]).count();
             assert!(rows >= 2, "{w}x{h}: swatches do not flow, {rows} per row");
         }
+    }
+
+    #[test]
+    fn the_garage_offers_a_trim_of_its_own() {
+        crate::report_failure_where_it_happens();
+        // The trim is persisted apart from the paint, so a save can name a trim
+        // the palette no longer has without taking the paint down with it.
+        let _turn = crate::ui::fit::tests::WINDOW
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut data = AppData::default();
+        data.settings.car_paint = 2;
+        data.settings.car_trim = 250;
+        assert_eq!(data.settings.car_paint, 2);
+        assert_eq!(
+            crate::app::theme::car_trim(data.settings.car_trim),
+            crate::app::theme::CAR_TRIMS[0]
+        );
+        let (scene, _) = garage_at(1024.0, 768.0, 2);
+        assert!(!scene.nodes.is_empty(), "the garage must still draw");
     }
 
     #[test]

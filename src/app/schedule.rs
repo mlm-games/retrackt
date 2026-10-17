@@ -298,10 +298,11 @@ fn recover_to_checkpoint(
     let Some((pos, yaw)) = session.0.recovery() else {
         return;
     };
-    // The paint survives a recovery: the car that comes back is the same car,
-    // not a fresh one in a different colour.
+    // The paint and trim survive a recovery: the car that comes back is the
+    // same car, not a fresh one in different colours.
     let paint = car.0.paint;
-    car.0 = Car::at_spawn(pos, yaw, paint);
+    let trim = car.0.trim;
+    car.0 = Car::at_spawn(pos, yaw, paint).with_trim(trim);
     // Re-set rather than carried: `step_vehicle` built the next tick's car from the
     // spawn, and the runtime clears this flag when it draws, so it only ever means
     // "the car jumped this tick".
@@ -339,7 +340,8 @@ fn advance_session(
             .recovery()
             .unwrap_or((world.0.spawn, world.0.spawn_yaw));
         let paint = car.0.paint;
-        car.0 = crate::sim::car::Car::at_spawn(pos, yaw, paint);
+        let trim = car.0.trim;
+        car.0 = crate::sim::car::Car::at_spawn(pos, yaw, paint).with_trim(trim);
         session.0.tick_teleported(car.0.pos);
         return;
     }

@@ -15,8 +15,10 @@ pub enum Screen {
     Ghosts,
     /// A kept tape being watched, with the playhead and speed under it.
     Replay,
-    /// The garage: the car's paint, chosen from a set of swatches.
+    /// The garage: the car's paint and trim, and the screens behind it.
     Garage,
+    /// The options: volumes, units, the HUD, graphics and controls.
+    Settings,
 }
 
 /// Which copy of a track a menu row refers to. Built-ins and saved files share
@@ -162,6 +164,31 @@ pub enum UiAct {
     CloseGarage,
     /// Paint the car `index` places along the garage palette.
     SetCarPaint(u8),
+    /// Trim the car `index` places along the garage trim palette.
+    SetCarTrim(u8),
+    /// Open the options from wherever they were asked for.
+    OpenSettings,
+    /// Leave the options, returning to `settings_return`.
+    CloseSettings,
+    /// Index into [`crate::save::UNIT_NAMES`].
+    SetUnits(u8),
+    SetSpeedometer(bool),
+    SetTimer(bool),
+    /// Index into [`crate::save::QUALITY_NAMES`].
+    SetQuality(u8),
+    SetShadows(bool),
+    SetFog(bool),
+    SetMasterVolume(f32),
+    SetMusicVolume(f32),
+    SetSfxVolume(f32),
+    /// Multiplier on the steering the driver's input asks for.
+    SetSteering(f32),
+    /// Hold or release the race. A race that has finished is not pausable:
+    /// there is nothing left to hold.
+    TogglePause,
+    /// Put the car back on the start line, keeping the clock's own restart
+    /// semantics. Reached from the pause panel.
+    ResetToStart,
     /// Watch a kept tape by its library file stem.
     WatchGhost(String),
     /// Leave the viewer, returning to the screen it was opened from.
@@ -259,14 +286,16 @@ pub struct AppData {
     /// Best recorded time on the current track under the current vehicle
     /// tuning, in simulated ticks.
     pub best: Option<u32>,
-    /// Body paint the car is built in, by index into the garage palette. Mirrors
-    /// the persisted setting, and changes take the next race rather than the car
-    /// already on the road: a repaint mid-run would be a car changing colour
-    /// under its driver.
-    pub car_paint: u8,
-    /// Whether races start in practice: a fall returns to the last checkpoint
-    /// rather than the start line, and finishing records nothing.
-    pub practice: bool,
+    /// Every persisted option, and the single source the screens read. The
+    /// same record the save file holds rather than a copy, so an option cannot
+    /// read one way in the UI and another way after a restart.
+    pub settings: crate::save::Settings,
+    /// Whether the race is held. The simulation does not advance while it is,
+    /// so this is the whole of a pause: nothing else has to remember where the
+    /// car was.
+    pub paused: bool,
+    /// Where the options screen was opened from, so closing returns there.
+    pub settings_return: Screen,
     /// Live race readout, refreshed by the runtime every frame for the HUD.
     pub race_ticks: u32,
     /// Speed of the car on screen, which during playback is the tape's.

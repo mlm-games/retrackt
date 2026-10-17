@@ -1,16 +1,18 @@
 use repose_core::{Color, Dp, Modifier, Px, View, px_to_dp};
-use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Spacer, Text, TextStyle, ViewExt, ZStack};
+use repose_ui::{
+    Box, Center, Column, FlowRow, FlowRowConfig, Spacer, Text, TextStyle, ViewExt, ZStack,
+};
 
 use crate::app::input::{STICK_BASE_DP, STICK_KNOB_DP, STICK_TRAVEL_DP};
 use crate::app::state::{ActionQueue, AppData, StickView, UiAct};
 use crate::app::theme;
 use crate::ui::fit;
 use crate::ui::hud::race_hud;
-use crate::ui::widgets::{accent_btn, controls_hint, ghost_btn, pusher};
+use crate::ui::widgets::{accent_btn, controls_hint, ghost_btn, menu_btn, panel, pusher};
 
 pub fn race_ui(data: &AppData, actions: &ActionQueue, viewport: View) -> View {
     let mut controls_row = vec![ghost_btn("Restart", pusher(actions, UiAct::Restart))];
-    if data.practice {
+    if data.settings.practice {
         controls_row.push(accent_btn(
             "Checkpoint",
             pusher(actions, UiAct::RecoverToCheckpoint),
@@ -32,7 +34,7 @@ pub fn race_ui(data: &AppData, actions: &ActionQueue, viewport: View) -> View {
     .child(controls_row);
 
     let mut hints = controls_hint();
-    if data.practice {
+    if data.settings.practice {
         hints = Column(Modifier::new().gap(theme::dp(4.0)))
             .child(hints)
             .child(
@@ -102,11 +104,36 @@ pub fn race_ui(data: &AppData, actions: &ActionQueue, viewport: View) -> View {
     };
 
     let mut children = vec![viewport, race_hud(data)];
-    children.extend(bottom);
-    if let Some(stick) = data.stick {
-        children.push(stick_view(stick));
+    if data.paused {
+        // The race's own controls are replaced rather than covered. Every one of
+        // them acts on a race that is standing still, and the panel below is the
+        // same set of actions with the clock stopped — leaving both on screen is
+        // two rows of buttons saying different things about the same run.
+        children.push(Box(Modifier::new()
+            .fill_max_size()
+            .background(theme::background().with_alpha_f32(0.62))
+            .input_blocker()));
+        children.push(pause_panel(actions));
+    } else {
+        children.extend(bottom);
+        if let Some(stick) = data.stick {
+            children.push(stick_view(stick));
+        }
     }
     ZStack(Modifier::new().fill_max_size()).child(children)
+}
+
+/// What a held race puts on screen.
+fn pause_panel(actions: &ActionQueue) -> View {
+    Center(Modifier::new().fill_max_size()).child(panel(
+        "Paused",
+        vec![
+            menu_btn("Continue", pusher(actions, UiAct::TogglePause)),
+            ghost_btn("Restart", pusher(actions, UiAct::ResetToStart)),
+            ghost_btn("Options", pusher(actions, UiAct::OpenSettings)),
+            ghost_btn("Quit to Title", pusher(actions, UiAct::RaceAbandoned)),
+        ],
+    ))
 }
 
 /// The touch stick: a base the knob travels inside, and the knob.
@@ -294,7 +321,7 @@ mod tests {
             set_window_size_class_default(calculate_window_size_class(w as u32, h as u32, 1.0));
             // Practice adds the third button, which is the widest the row gets.
             let mut data = AppData::default();
-            data.practice = true;
+            data.settings.practice = true;
             let (scene, hits, _) = layout_and_paint(
                 &race_ui(&data, &queue(), Spacer()),
                 (w as u32, h as u32),

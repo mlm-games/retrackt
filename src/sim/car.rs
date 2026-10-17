@@ -10,6 +10,9 @@ use glam::{Mat3, Mat4, Quat, Vec3};
 
 use super::world::TrackWorld;
 
+/// Trim the car ships in, by index into the garage trim palette.
+pub const DEFAULT_TRIM: u8 = 0;
+
 /// Tuning for the arcade car. Every value is a per-second rate or a
 /// speed limit, so it reads independently of the simulation rate.
 #[derive(Clone, Copy, Debug)]
@@ -186,6 +189,9 @@ pub struct Car {
     /// simulated: it is the one thing about the car the player picks, and it
     /// rides with the car so a ghost and a live car are built the same way.
     pub paint: u8,
+    /// Trim paint, by index into the garage trim palette. Cosmetic, and carried
+    /// for the same reason as `paint`.
+    pub trim: u8,
     /// Set when the kill-height teleport fires; the runtime reads and clears it,
     /// so a respawn inside a multi-tick frame still reports. Not reset per step.
     pub respawned: bool,
@@ -209,7 +215,16 @@ impl Car {
             landed_hard: false,
             respawned: false,
             paint,
+            trim: DEFAULT_TRIM,
         }
+    }
+
+    /// The same car in a different trim. A builder rather than a fourth
+    /// parameter: trim is cosmetic and every simulation test spawns the shipping
+    /// car, so the parameter would be `DEFAULT_TRIM` at all of them.
+    pub fn with_trim(mut self, trim: u8) -> Self {
+        self.trim = trim;
+        self
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -281,6 +296,7 @@ impl Car {
             // The car being drawn is the car that exists now: a paint that
             // changed between ticks is not a blend the eye can resolve.
             paint: curr.paint,
+            trim: curr.trim,
         }
     }
 }

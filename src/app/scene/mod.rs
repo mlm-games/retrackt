@@ -257,6 +257,19 @@ pub(super) fn push_obox(
     }
 }
 
+/// Shadow map edge, in texels, for one graphics preset.
+///
+/// The steps are doublings: a shadow map's cost is quadratic in its edge, so a
+/// middle step is a setting nobody can see the difference of.
+fn shadow_map_size(quality: u8) -> u32 {
+    match quality {
+        0 => 512,
+        1 => 1024,
+        3 => 4096,
+        _ => 2048,
+    }
+}
+
 fn ground_group(bounds: ([f32; 3], [f32; 3]), at: &Atmosphere) -> MeshGroup {
     let mut group = MeshGroup {
         depth_test: true,
@@ -577,7 +590,7 @@ impl App {
                 color: at.sun_color,
                 diffuse: 1.0,
                 ambient: at.ambient,
-                fog: 1.0,
+                fog: if self.data.settings.fog { 1.0 } else { 0.0 },
                 fog_color: horizon,
                 // Far enough out that the horizon survives it. Closing it to
                 // the near field dissolved everything past a few hundred metres
@@ -588,8 +601,8 @@ impl App {
                 exposure: 1.0,
                 tonemap: TonemapMethod::Reinhard,
             },
-            shadow: Some(ShadowDesc {
-                size: 2048,
+            shadow: self.data.settings.shadows.then(|| ShadowDesc {
+                size: shadow_map_size(self.data.settings.quality),
                 bias: 0.0035,
                 strength: 0.8,
             }),
