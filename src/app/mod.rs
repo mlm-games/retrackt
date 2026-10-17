@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod camera;
 pub mod edit;
 pub mod history;
@@ -48,6 +49,7 @@ pub struct App {
     /// Car pose at the previous frame, blended with the current one by
     /// `Sim::alpha`. `None` after a teleport, where there is nothing to blend
     /// from. The simulation keeps no history of its own.
+    sound: audio::Sound,
     prev_car: Option<Car>,
     /// Same history for the ghost car. Separate from `prev_car` because the two
     /// are only ever blended against themselves: pairing a ghost pose with a
@@ -167,6 +169,7 @@ impl App {
             mountain_mesh: None,
             track_mesh: None,
             sky: scene::SkyDome::new(),
+            sound: audio::Sound::new(),
             prev_car: None,
             prev_ghost: None,
             last: Instant::now(),
@@ -396,6 +399,28 @@ impl App {
                 split_delta(session.0.splits(), self.data.ghost_splits.as_deref());
         }
 
+        // Sound follows the same readout the HUD shows, so the engine belongs to
+        // the car on screen — which during a playback is the tape's car rather
+        // than the one parked at the spawn.
+        //
+        // The wall-clock delta, not the physics one: the engine is heard rather
+        // than simulated, and a tape at quarter speed is a car being watched, so
+        // its engine should not drop an octave with it.
+        self.sound.set_levels(
+            self.data.settings.master_volume,
+            self.data.settings.music_volume,
+            self.data.settings.sfx_volume,
+        );
+        self.sound.update(
+            frame.as_secs_f32(),
+            followed.speed_kmh(),
+            self.data.screen == Screen::Race
+                && !self.data.paused
+                && self.sim.world.resource::<ActiveRes>().0,
+            self.data.checkpoint,
+            !followed.grounded,
+        );
+
         // Eased toward the current tick, not the drawn one: `to_orbit` applies
         // `alpha` itself, so blending here as well would put the view a frame
         // behind the car it is following.
@@ -435,6 +460,13 @@ impl App {
     }
 
     fn apply_action(&mut self, act: UiAct) {
+        // A tap on the chrome answers with a click. Everything else the game
+        // does is a consequence of driving, and the clicks are only for the
+        // controls: a sound on every action would put one under every checkpoint
+        // and every collision as well.
+        if is_menu_act(&act) {
+            self.sound.click();
+        }
         match act {
             UiAct::StartRace | UiAct::Restart => {
                 self.start_race();
@@ -817,6 +849,7 @@ impl App {
         // to the clock, and the results screen has no clock to show.
         self.data.paused = false;
         self.sim.time_scale = 1.0;
+        self.sound.finish();
         let (track, physics) = (result.track_fingerprint, result.physics_fingerprint);
         // The tape is only written once the run is known to be the record. Both
         // share the personal-best stem, so writing first would overwrite the ghost
@@ -1197,6 +1230,9 @@ impl App {
         // and leaving it stopped would stop the next one from ever starting.
         self.data.paused = false;
         self.sim.time_scale = 1.0;
+        // The engine stops with the run rather than idling under the menu the
+        // player left it to.
+        self.sound.silence();
         self.sim.world.insert_resource(ActiveRes(false));
         self.sim.world.insert_resource(FinishedRes(false));
         // A recovery request that outlived its run must not fire on the next one.
@@ -2226,6 +2262,28 @@ fn ensure_fonts() {
 
 #[cfg(not(target_os = "android"))]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
+/// Which actions are a press on the chrome rather than a consequence of driving.
+fn is_menu_act(act: &UiAct) -> bool {
+    matches!(
+        act,
+        UiAct::StartRace
+            | UiAct::Restart
+            | UiAct::ResetToStart
+            | UiAct::TogglePause
+            | UiAct::OpenEditor
+            | UiAct::CloseEditor
+            | UiAct::OpenSettings
+            | UiAct::CloseSettings
+            | UiAct::OpenGarage
+            | UiAct::CloseGarage
+            | UiAct::OpenGhosts
+            | UiAct::CloseGhosts
+            | UiAct::SaveTrack
+            | UiAct::Undo
+            | UiAct::Redo
+    )
+}
+
 pub fn run() {
     let mut app = App::new();
     #[cfg(not(target_arch = "wasm32"))]
