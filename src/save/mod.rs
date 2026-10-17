@@ -44,6 +44,10 @@ pub struct Settings {
     pub shadows: bool,
     #[serde(default = "default_true")]
     pub fog: bool,
+    #[serde(default = "default_true")]
+    pub particles: bool,
+    #[serde(default = "default_true")]
+    pub skidmarks: bool,
     /// Multiplier on the steering the driver's input asks for. 1.0 is the
     /// tuning the car was balanced at, so this is a preference rather than a
     /// difficulty: a car that turns more than its physics allow is a different
@@ -112,6 +116,8 @@ impl Default for Settings {
             quality: default_quality(),
             shadows: default_true(),
             fog: default_true(),
+            particles: default_true(),
+            skidmarks: default_true(),
             steering: default_steering(),
         }
     }

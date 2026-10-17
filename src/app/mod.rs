@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod camera;
 pub mod edit;
+pub mod fx;
 pub mod history;
 pub mod input;
 pub mod placement;
@@ -149,6 +150,8 @@ impl App {
         sim.max_steps = MAX_CATCHUP_TICKS;
         schedule::register(&mut sim);
         schedule::insert_resources(&mut sim.world);
+        sim.world.insert_resource(fx::FxRes::default());
+        fx::register(&mut sim);
         let data = state::AppData {
             ghosts: save.ghosts.all().to_vec(),
             ghost_draft: "My ghost".into(),
@@ -426,7 +429,19 @@ impl App {
         // behind the car it is following.
         self.cam.update(dt.as_secs_f32(), &followed);
 
-        let frame = self.build_frame(&draw_car, draw_ghost.as_ref(), alpha);
+        // Billboards face the eye that is drawing them, so the eye is resolved
+        // here, from the same camera `build_frame` will build the frame with.
+        let eye = match self.data.screen == Screen::Editor {
+            true => self.editor_cam.eye(),
+            false => self.cam.to_orbit(alpha).eye(),
+        };
+        {
+            let mut fx = self.sim.world.resource_mut::<fx::FxRes>();
+            fx.marks = self.data.settings.skidmarks;
+            fx.dust = self.data.settings.particles;
+        }
+        let effects = fx::groups(&mut self.sim.world, eye);
+        let frame = self.build_frame(&draw_car, draw_ghost.as_ref(), alpha, effects);
         let viewport = self.viewport(frame);
         crate::ui::root_view(&self.data, &self.data.actions, viewport)
     }
@@ -544,6 +559,8 @@ impl App {
             }
             UiAct::SetShadows(on) => self.set_option(|s| s.shadows = on),
             UiAct::SetFog(on) => self.set_option(|s| s.fog = on),
+            UiAct::SetParticles(on) => self.set_option(|s| s.particles = on),
+            UiAct::SetSkidmarks(on) => self.set_option(|s| s.skidmarks = on),
             UiAct::SetMasterVolume(v) => self.set_option(|s| s.master_volume = v.clamp(0.0, 1.0)),
             UiAct::SetMusicVolume(v) => self.set_option(|s| s.music_volume = v.clamp(0.0, 1.0)),
             UiAct::SetSfxVolume(v) => self.set_option(|s| s.sfx_volume = v.clamp(0.0, 1.0)),

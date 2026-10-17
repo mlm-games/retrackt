@@ -554,6 +554,7 @@ impl App {
         car: &crate::sim::car::Car,
         ghost: Option<&crate::sim::car::Car>,
         alpha: f32,
+        fx: Vec<MeshGroup>,
     ) -> Frame3d {
         let at = atmosphere(
             self.data.track.environment,
@@ -647,6 +648,13 @@ impl App {
             frame.push(body);
             frame.push(head);
             frame.push(tail);
+        }
+        // Marks and dust go in last so they are built against the camera this
+        // frame ends up with. Order decides nothing about what draws over what:
+        // both are transparent, and the renderer blends them back to front on
+        // its own.
+        for group in fx {
+            frame.push(group);
         }
         frame
     }

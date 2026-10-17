@@ -178,6 +178,8 @@ pub enum UiAct {
     SetQuality(u8),
     SetShadows(bool),
     SetFog(bool),
+    SetParticles(bool),
+    SetSkidmarks(bool),
     SetMasterVolume(f32),
     SetMusicVolume(f32),
     SetSfxVolume(f32),

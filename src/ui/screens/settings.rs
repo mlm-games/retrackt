@@ -57,6 +57,8 @@ pub fn settings_ui(data: &AppData, actions: &ActionQueue) -> View {
         ),
         toggle_row("Shadows", s.shadows, UiAct::SetShadows, actions),
         toggle_row("Fog", s.fog, UiAct::SetFog, actions),
+        toggle_row("Particles", s.particles, UiAct::SetParticles, actions),
+        toggle_row("Skidmarks", s.skidmarks, UiAct::SetSkidmarks, actions),
         heading("Audio"),
         slider_row(
             "Master",
