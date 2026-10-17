@@ -51,6 +51,10 @@ pub struct Settings {
     /// Index into [`QUALITY_NAMES`].
     #[serde(default = "default_quality")]
     pub quality: u8,
+    /// Borderless fullscreen. Applied by the runner when it changes rather than
+    /// held as a window state here: the window is the shell's.
+    #[serde(default)]
+    pub fullscreen: bool,
     #[serde(default = "default_true")]
     pub shadows: bool,
     #[serde(default = "default_true")]
@@ -130,6 +134,7 @@ impl Default for Settings {
             speedometer: default_true(),
             timer: default_true(),
             quality: default_quality(),
+            fullscreen: false,
             shadows: default_true(),
             fog: default_true(),
             clouds: default_true(),

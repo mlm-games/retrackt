@@ -183,6 +183,7 @@ pub enum UiAct {
     SetShadows(bool),
     SetFog(bool),
     SetClouds(bool),
+    SetFullscreen(bool),
     SetParticles(bool),
     SetSkidmarks(bool),
     SetSound(bool),

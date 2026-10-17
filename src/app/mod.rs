@@ -83,6 +83,11 @@ pub struct App {
     /// Whether Shift was held on the last frame, for the scroll handler that
     /// cannot ask the runtime itself.
     editor_shift: std::rc::Rc<std::cell::Cell<bool>>,
+    /// The fullscreen the runner was last asked for, so a change is asked once
+    /// rather than asserted every frame. A window the player resized
+    /// themselves is not fought over: nothing here re-asks until the option
+    /// moves.
+    applied_fullscreen: bool,
 }
 
 /// Editor state to come back to after a playtest.
@@ -186,6 +191,7 @@ impl App {
             editor_hover: edit::EditorHover::default(),
             editor_pick: edit::PickBoxes::default(),
             editor_shift: std::rc::Rc::new(std::cell::Cell::new(false)),
+            applied_fullscreen: false,
         };
         app.set_track(demo_track());
         app
@@ -202,6 +208,14 @@ impl App {
         self.last = now;
 
         self.drain_actions();
+
+        // The window is asked once per change. The runner consumes the request,
+        // so asserting it every frame would say nothing and would fight a
+        // player who left fullscreen with the window's own controls.
+        if self.applied_fullscreen != self.data.settings.fullscreen {
+            self.applied_fullscreen = self.data.settings.fullscreen;
+            sched.request_fullscreen(self.applied_fullscreen);
+        }
 
         let car = self.sim.world.resource::<CarRes>().0;
         self.input.forward_speed = car.forward_speed();
@@ -579,6 +593,7 @@ impl App {
             UiAct::SetShadows(on) => self.set_option(|s| s.shadows = on),
             UiAct::SetFog(on) => self.set_option(|s| s.fog = on),
             UiAct::SetClouds(on) => self.set_option(|s| s.clouds = on),
+            UiAct::SetFullscreen(on) => self.set_option(|s| s.fullscreen = on),
             UiAct::SetParticles(on) => self.set_option(|s| s.particles = on),
             UiAct::SetSkidmarks(on) => self.set_option(|s| s.skidmarks = on),
             UiAct::SetSound(on) => self.set_option(|s| s.sound = on),

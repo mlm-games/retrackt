@@ -89,6 +89,8 @@ pub fn settings_ui(data: &AppData, actions: &ActionQueue) -> View {
             actions,
             pct,
         ),
+        heading("Display"),
+        toggle_row("Fullscreen", s.fullscreen, UiAct::SetFullscreen, actions),
         Box(Modifier::new().height(theme::dp(8.0))),
         outlined_at(
             "Back",
