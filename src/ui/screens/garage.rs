@@ -11,7 +11,8 @@ use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Text, TextStyle, ViewExt, Z
 
 use crate::app::state::{ActionQueue, AppData, UiAct};
 use crate::app::theme;
-use crate::ui::widgets::{choice_chip, list_panel_w, outlined_at, panel_height, pusher};
+use crate::ui::fit;
+use crate::ui::widgets::{choice_chip, list_panel_w, outlined_at, pusher};
 use repose_material::material3::ButtonConfig;
 
 /// Size of one paint swatch, and the body colour it shows.
@@ -88,31 +89,33 @@ pub fn garage_ui(data: &AppData, actions: &ActionQueue) -> View {
             .size(theme::sp(12.0))
             .color(theme::text_dim())
             .single_line(),
+        Box(Modifier::new().height(theme::dp(8.0))),
+        outlined_at(
+            "Back",
+            theme::dp(120.0),
+            ButtonConfig::default(),
+            pusher(actions, UiAct::CloseGarage),
+        ),
     ]);
 
+    // Capped and scrolled. The garage has grown past a landscape phone, and
+    // this panel is not inside a scroller of its own: uncapped it hangs its own
+    // Back button past the bottom of the window, where nothing can reach it.
+    //
+    // The cap is measured against the window rather than taken from
+    // `panel_height`, which is a panel's share of the window with none of the
+    // panel's own padding, its title or the corner it is placed in taken out.
+    // At 360 dp tall that difference is a Back button below the screen.
+    let cap = (fit::height() - 96.0).max(120.0);
     let panel = list_panel_w(
         "Garage",
         theme::dp(340.0),
         vec![
-            // Capped and scrolled. The garage has grown past a landscape
-            // phone, and this panel is not inside a scroller of its own: left
-            // uncapped it hangs its own Back button past the bottom of the
-            // window, where nothing can reach it.
-            Box(Modifier::new()
-                .input_blocker()
-                .max_height(panel_height())
-                .fill_max_width())
-            .child(ScrollArea(
-                Modifier::new().fill_max_width(),
+            Box(Modifier::new().input_blocker().fill_max_width()).child(ScrollArea(
+                Modifier::new().fill_max_width().max_height(theme::dp(cap)),
                 remember_scroll_state("garage.body"),
                 body,
             )),
-            outlined_at(
-                "Back",
-                theme::dp(120.0),
-                ButtonConfig::default(),
-                pusher(actions, UiAct::CloseGarage),
-            ),
         ],
     );
 
@@ -260,9 +263,15 @@ mod tests {
     fn the_garage_stays_inside_the_window() {
         crate::report_failure_where_it_happens();
         // Drawn over the car, so the panel must not hang off a phone.
+        //
+        // The panel scrolls, so its *content* runs past the bottom on purpose:
+        // measuring every node would measure what has been scrolled out of
+        // sight, which is content the window is not meant to hold. The panel's
+        // own box is the largest rect on screen, and that is what has to fit.
         for (w, h) in [(360.0f32, 780.0), (800.0, 360.0), (1280.0, 800.0)] {
             let (scene, _) = garage_at(w, h, 3);
-            let (mut right, mut bottom) = (0.0f32, 0.0f32);
+            let (mut area, mut widest) = (0.0f32, 0.0f32);
+            let mut panel = None;
             for n in &scene.nodes {
                 let r = match n {
                     SceneNode::Rect { rect, .. }
@@ -270,11 +279,22 @@ mod tests {
                     | SceneNode::Text { rect, .. } => *rect,
                     _ => continue,
                 };
-                right = right.max(r.x + r.w);
-                bottom = bottom.max(r.y + r.h);
+                widest = widest.max(r.x + r.w);
+                if r.w * r.h > area {
+                    area = r.w * r.h;
+                    panel = Some(r);
+                }
             }
-            assert!(right <= w as f32 + 1.0, "{w}x{h}: {right} wide");
-            assert!(bottom <= h as f32 + 1.0, "{w}x{h}: {bottom} tall");
+            let panel = panel.expect("the garage must draw a panel");
+            assert!(
+                panel.x + panel.w <= w + 1.0,
+                "{w}x{h}: panel {panel:?} runs off the right"
+            );
+            assert!(
+                panel.y + panel.h <= h + 1.0,
+                "{w}x{h}: panel {panel:?} runs off the bottom"
+            );
+            assert!(widest <= w + 1.0, "{w}x{h}: {widest} wide");
         }
     }
 
