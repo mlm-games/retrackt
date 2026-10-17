@@ -1,16 +1,17 @@
-//! The garage: the car's paint.
+//! The garage: the car's paint, trim, livery and wheels.
 //!
-//! One thing to choose, from a handful of swatches, with the car drawn on screen
-//! so the choice is judged on the car rather than on a colour chip. The paint is
-//! a preference and is persisted like the volume: it rides with the game rather
-//! than with a track or a run.
+//! Every choice is judged on the car itself rather than on a chip, so the car is
+//! left on screen behind the panel. Colours are picked from swatches and the
+//! named choices from chips, and all four are preferences that ride with the
+//! game rather than with a track or a run.
 
-use repose_core::{Modifier, View};
-use repose_ui::{Box, FlowRow, FlowRowConfig, Row, Text, TextStyle, ViewExt, ZStack};
+use repose_core::{AlignItems, Modifier, View};
+use repose_ui::scroll::{ScrollArea, remember_scroll_state};
+use repose_ui::{Box, Column, FlowRow, FlowRowConfig, Text, TextStyle, ViewExt, ZStack};
 
 use crate::app::state::{ActionQueue, AppData, UiAct};
 use crate::app::theme;
-use crate::ui::widgets::{choice_chip, list_panel_w, outlined_at, pusher};
+use crate::ui::widgets::{choice_chip, list_panel_w, outlined_at, panel_height, pusher};
 use repose_material::material3::ButtonConfig;
 
 /// Size of one paint swatch, and the body colour it shows.
@@ -68,62 +69,44 @@ pub fn garage_ui(data: &AppData, actions: &ActionQueue) -> View {
         })
         .collect();
 
+    let body = Column(
+        Modifier::new()
+            .gap(theme::dp(10.0))
+            .align_items(AlignItems::STRETCH)
+            .fill_max_width(),
+    )
+    .child(vec![
+        caption("Body paint"),
+        flow(swatches),
+        caption("Trim and rims"),
+        flow(trims),
+        caption("Livery"),
+        flow(patterns),
+        caption("Wheels"),
+        flow(rims),
+        Text("The car you build your next race in.")
+            .size(theme::sp(12.0))
+            .color(theme::text_dim())
+            .single_line(),
+    ]);
+
     let panel = list_panel_w(
         "Garage",
         theme::dp(340.0),
         vec![
-            Text("Body paint")
-                .size(theme::sp(13.0))
-                .color(theme::text_dim())
-                .single_line(),
-            FlowRow(
-                Modifier::new().gap(theme::dp(10.0)).fill_max_width(),
-                FlowRowConfig {
-                    balanced: true,
-                    ..FlowRowConfig::default()
-                },
-            )
-            .child(swatches),
-            Text("Trim and rims")
-                .size(theme::sp(13.0))
-                .color(theme::text_dim())
-                .single_line(),
-            FlowRow(
-                Modifier::new().gap(theme::dp(10.0)).fill_max_width(),
-                FlowRowConfig {
-                    balanced: true,
-                    ..FlowRowConfig::default()
-                },
-            )
-            .child(trims),
-            Text("Livery")
-                .size(theme::sp(13.0))
-                .color(theme::text_dim())
-                .single_line(),
-            FlowRow(
-                Modifier::new().gap(theme::dp(10.0)).fill_max_width(),
-                FlowRowConfig {
-                    balanced: true,
-                    ..FlowRowConfig::default()
-                },
-            )
-            .child(patterns),
-            Text("Wheels")
-                .size(theme::sp(13.0))
-                .color(theme::text_dim())
-                .single_line(),
-            FlowRow(
-                Modifier::new().gap(theme::dp(10.0)).fill_max_width(),
-                FlowRowConfig {
-                    balanced: true,
-                    ..FlowRowConfig::default()
-                },
-            )
-            .child(rims),
-            Text("The car you build your next race in.")
-                .size(theme::sp(12.0))
-                .color(theme::text_dim())
-                .single_line(),
+            // Capped and scrolled. The garage has grown past a landscape
+            // phone, and this panel is not inside a scroller of its own: left
+            // uncapped it hangs its own Back button past the bottom of the
+            // window, where nothing can reach it.
+            Box(Modifier::new()
+                .input_blocker()
+                .max_height(panel_height())
+                .fill_max_width())
+            .child(ScrollArea(
+                Modifier::new().fill_max_width(),
+                remember_scroll_state("garage.body"),
+                body,
+            )),
             outlined_at(
                 "Back",
                 theme::dp(120.0),
@@ -145,6 +128,27 @@ pub fn garage_ui(data: &AppData, actions: &ActionQueue) -> View {
         Some(theme::dp(20.0)),
     ))
     .child(panel)])
+}
+
+/// A caption above one row of choices.
+fn caption(text: &str) -> View {
+    Text(text)
+        .size(theme::sp(13.0))
+        .color(theme::text_dim())
+        .single_line()
+}
+
+/// One wrapping row of choices. Every row is the same shape, so a row that has
+/// grown a swatch cannot wrap differently from one that has not.
+fn flow(children: Vec<View>) -> View {
+    FlowRow(
+        Modifier::new().gap(theme::dp(10.0)).fill_max_width(),
+        FlowRowConfig {
+            balanced: true,
+            ..FlowRowConfig::default()
+        },
+    )
+    .child(children)
 }
 
 /// One paint swatch. Tapping it paints the car: there is no second gesture,
