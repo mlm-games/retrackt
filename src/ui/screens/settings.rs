@@ -326,7 +326,7 @@ mod tests {
                 widest = widest.max(r.x + r.w);
                 if r.w * r.h > area {
                     area = r.w * r.h;
-                    panel = Some(*r);
+                    panel = Some(r);
                 }
             }
             let panel = panel.expect("the options must draw a panel");
