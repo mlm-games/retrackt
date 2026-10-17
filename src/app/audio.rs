@@ -1,4 +1,14 @@
-//! The desktop backend: a live `repame-audio` device.
+//! Sound.
+//!
+//! Every cue is synthesised at startup rather than shipped beside the binary.
+//! `repame_audio` writes the WAV bytes and decodes them back through its own
+//! bank, so the game has a voice without carrying an asset pipeline or a
+//! licensing question. The tones are deliberately plain: a short burst for a
+//! one-shot and a low tone for the engine, which is one long-lived voice kept
+//! at a playback rate that follows the car.
+//!
+//! Nothing here is audible until the player asks for it: `sound` is off in the
+//! options by default, and off stops the engine's voice rather than muting it.
 
 use repame_audio::{Audio, AudioChannel, CueDef, Variation, synth_sine_wav};
 
