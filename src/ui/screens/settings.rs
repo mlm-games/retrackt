@@ -117,6 +117,16 @@ fn row_label(text: &str) -> View {
 /// One of a fixed set, shown as a row of chips with the live one emphasised.
 /// Every option is on screen at once, so choosing between them costs one tap
 /// and never a hunt through a cycle.
+/// Width of the wrapping control block in a choice row.
+///
+/// A fixed cap rather than `flex_grow`, which is what the editor's own control
+/// rows use: a wrapping row given only a share of a parent has nothing to wrap
+/// against until the parent has been measured, and the two sizes depend on each
+/// other. Bounded, the wrap is decided from a number that is already known.
+fn controls_w() -> f32 {
+    (crate::ui::fit::panel_width(520.0) - LABEL_W - 40.0).max(140.0)
+}
+
 fn choice_row(
     label: &str,
     names: &[&str],
@@ -143,7 +153,9 @@ fn choice_row(
     .child([
         row_label(label),
         FlowRow(
-            Modifier::new().gap(theme::dp(8.0)).flex_grow(1.0),
+            Modifier::new()
+                .gap(theme::dp(8.0))
+                .max_width(theme::dp(controls_w())),
             FlowRowConfig {
                 balanced: true,
                 ..FlowRowConfig::default()
@@ -298,7 +310,12 @@ mod tests {
         crate::report_failure_where_it_happens();
         for (w, h) in [(360.0f32, 780.0), (800.0, 360.0), (1280.0, 800.0)] {
             let (scene, _) = options_at(w, h);
-            let (mut right, mut bottom) = (0.0f32, 0.0f32);
+            // The panel scrolls, so its *content* runs past the bottom on purpose:
+            // measuring every node would measure what has been scrolled out of
+            // sight, which is content the window is not meant to hold. The panel's
+            // own box is the largest rect on screen, and that is what has to fit.
+            let (mut area, mut widest) = (0.0f32, 0.0f32);
+            let mut panel = None;
             for n in &scene.nodes {
                 let r = match n {
                     SceneNode::Rect { rect, .. }
@@ -306,11 +323,22 @@ mod tests {
                     | SceneNode::Text { rect, .. } => *rect,
                     _ => continue,
                 };
-                right = right.max(r.x + r.w);
-                bottom = bottom.max(r.y + r.h);
+                widest = widest.max(r.x + r.w);
+                if r.w * r.h > area {
+                    area = r.w * r.h;
+                    panel = Some(*r);
+                }
             }
-            assert!(right <= w as f32 + 1.0, "{w}x{h}: {right} wide");
-            assert!(bottom <= h as f32 + 1.0, "{w}x{h}: {bottom} tall");
+            let panel = panel.expect("the options must draw a panel");
+            assert!(
+                panel.x + panel.w <= w as f32 + 1.0,
+                "{w}x{h}: panel {panel:?} runs off the right"
+            );
+            assert!(
+                panel.y + panel.h <= h as f32 + 1.0,
+                "{w}x{h}: panel {panel:?} runs off the bottom"
+            );
+            assert!(widest <= w as f32 + 1.0, "{w}x{h}: {widest} wide");
         }
     }
 
