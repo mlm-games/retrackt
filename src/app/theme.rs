@@ -82,6 +82,13 @@ pub const CAR_TRIMS: [u32; 6] = [
     0x1E2733, // midnight
 ];
 
+/// Liveries, by index. The names are what the garage shows; the geometry each
+/// one drives is in `scene::car::bodywork`.
+pub const CAR_PATTERNS: [&str; 4] = ["Centre", "Plain", "Twin", "Wide"];
+
+/// Wheel styles, by index.
+pub const CAR_RIMS: [&str; 3] = ["Disc", "Spoke", "Ring"];
+
 pub fn car_trim(index: u8) -> u32 {
     CAR_TRIMS
         .get(index as usize)

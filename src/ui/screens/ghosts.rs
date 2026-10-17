@@ -48,7 +48,12 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
             // anything else, and a button that can only error is worse than none.
             // Watching is gated the same way and for the same reason — playback
             // re-simulates the run against this track's geometry.
-            let action_count = if playable { 3 } else { 1 };
+            let export = ghost_btn("Export", {
+                let queue = actions.clone();
+                let file = entry.file.clone();
+                move || push(&queue, UiAct::CopyGhostCode(file.clone()))
+            });
+            let action_count = if playable { 4 } else { 2 };
 
             let actions_row = if playable {
                 Row(Modifier::new().gap(theme::dp(8.0)))
@@ -60,9 +65,12 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
                         "Watch",
                         pusher(actions, UiAct::WatchGhost(entry.file.clone())),
                     ))
+                    .child(export)
                     .child(remove)
             } else {
-                Row(Modifier::new().gap(theme::dp(8.0))).child(remove)
+                Row(Modifier::new().gap(theme::dp(8.0)))
+                    .child(export)
+                    .child(remove)
             };
 
             rows.push(
@@ -100,6 +108,53 @@ pub fn ghosts_ui(data: &AppData, actions: &ActionQueue) -> View {
         // reach. The panel's own scroller bounds the width to the panel, so the row
         // wraps instead of breaking out of it.
         children.push(Column(Modifier::new().gap(theme::dp(8.0)).fill_max_width()).child(rows));
+    }
+
+    // Sharing, under the list rather than beside it. A code is thousands of
+    // characters, so a field sharing a row with its button would get whatever
+    // width the button left and show the first few words of a paste.
+    children.push(heading("Share"));
+    let code_state: Rc<RefCell<TextFieldState>> =
+        remember_with_key("ghosts.code", || RefCell::new(TextFieldState::new()));
+    // The field is the source of truth while it has focus; the draft on
+    // `AppData` is what survives leaving the screen.
+    if code_state.borrow().text != data.ghost_code_draft {
+        code_state.borrow_mut().text = data.ghost_code_draft.clone();
+    }
+    children.push(BasicTextField(
+        code_state.clone(),
+        Modifier::new().fill_max_width(),
+        "Paste a ghost code",
+        TextFieldConfig {
+            line_limits: TextFieldLineLimits::SingleLine,
+            on_change: Some(Rc::new({
+                let queue = actions.clone();
+                move |text: String| push(&queue, UiAct::SetGhostCodeDraft(text))
+            }) as Rc<dyn Fn(String)>),
+            ..TextFieldConfig::default()
+        },
+    ));
+    // Read at press time, not captured when the row was built: the closure is
+    // built once per composition, so a code pasted afterwards would never reach
+    // it. The draft is pushed as well, so the action reads what was on screen
+    // even if the field never reported a change.
+    children.push(menu_btn("Keep", {
+        let queue = actions.clone();
+        let field_state = code_state;
+        move || {
+            let code = field_state.borrow().text.trim().to_string();
+            push(&queue, UiAct::SetGhostCodeDraft(code));
+            push(&queue, UiAct::LoadGhostCode);
+        }
+    }));
+    if !data.ghost_code_out.is_empty() {
+        children.push(dim_text("Sent. Copy this out to share it:"));
+        children.push(
+            Text(data.ghost_code_out.clone())
+                .size(theme::sp(12.0))
+                .color(theme::text_dim())
+                .max_lines(4),
+        );
     }
 
     children.push(menu_btn("Close", pusher(actions, UiAct::CloseGhosts)));

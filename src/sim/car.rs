@@ -13,6 +13,12 @@ use super::world::TrackWorld;
 /// Trim the car ships in, by index into the garage trim palette.
 pub const DEFAULT_TRIM: u8 = 0;
 
+/// Livery the car ships in, by index into the garage pattern list.
+pub const DEFAULT_PATTERN: u8 = 0;
+
+/// Wheel style the car ships with, by index into the garage rim list.
+pub const DEFAULT_RIMS: u8 = 0;
+
 /// Tuning for the arcade car. Every value is a per-second rate or a
 /// speed limit, so it reads independently of the simulation rate.
 #[derive(Clone, Copy, Debug)]
@@ -192,6 +198,10 @@ pub struct Car {
     /// Trim paint, by index into the garage trim palette. Cosmetic, and carried
     /// for the same reason as `paint`.
     pub trim: u8,
+    /// Livery, by index into the garage pattern list.
+    pub pattern: u8,
+    /// Wheel style, by index into the garage rim list.
+    pub rims: u8,
     /// Set when the kill-height teleport fires; the runtime reads and clears it,
     /// so a respawn inside a multi-tick frame still reports. Not reset per step.
     pub respawned: bool,
@@ -216,14 +226,20 @@ impl Car {
             respawned: false,
             paint,
             trim: DEFAULT_TRIM,
+            pattern: DEFAULT_PATTERN,
+            rims: DEFAULT_RIMS,
         }
     }
 
-    /// The same car in a different trim. A builder rather than a fourth
-    /// parameter: trim is cosmetic and every simulation test spawns the shipping
-    /// car, so the parameter would be `DEFAULT_TRIM` at all of them.
-    pub fn with_trim(mut self, trim: u8) -> Self {
+    /// The same car wearing different colours and wheels.
+    ///
+    /// A builder rather than more `at_spawn` parameters: all of this is
+    /// cosmetic, and every simulation test spawns the shipping car, so the
+    /// parameters would be the defaults at every one of them.
+    pub fn with_style(mut self, trim: u8, pattern: u8, rims: u8) -> Self {
         self.trim = trim;
+        self.pattern = pattern;
+        self.rims = rims;
         self
     }
 
@@ -297,6 +313,8 @@ impl Car {
             // changed between ticks is not a blend the eye can resolve.
             paint: curr.paint,
             trim: curr.trim,
+            pattern: curr.pattern,
+            rims: curr.rims,
         }
     }
 }

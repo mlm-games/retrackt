@@ -10,7 +10,7 @@ use repose_ui::{Box, FlowRow, FlowRowConfig, Row, Text, TextStyle, ViewExt, ZSta
 
 use crate::app::state::{ActionQueue, AppData, UiAct};
 use crate::app::theme;
-use crate::ui::widgets::{list_panel_w, outlined_at, pusher};
+use crate::ui::widgets::{choice_chip, list_panel_w, outlined_at, pusher};
 use repose_material::material3::ButtonConfig;
 
 /// Size of one paint swatch, and the body colour it shows.
@@ -42,6 +42,32 @@ pub fn garage_ui(data: &AppData, actions: &ActionQueue) -> View {
         ));
     }
 
+    // Livery and wheels are names rather than colours, so they are picked from a
+    // row of chips instead of a swatch: "Twin" is not a colour and cannot be
+    // shown as one.
+    let patterns: Vec<View> = theme::CAR_PATTERNS
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            choice_chip(
+                name,
+                data.settings.car_pattern == index as u8,
+                pusher(actions, UiAct::SetCarPattern(index as u8)),
+            )
+        })
+        .collect();
+    let rims: Vec<View> = theme::CAR_RIMS
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            choice_chip(
+                name,
+                data.settings.car_rims == index as u8,
+                pusher(actions, UiAct::SetCarRims(index as u8)),
+            )
+        })
+        .collect();
+
     let panel = list_panel_w(
         "Garage",
         theme::dp(340.0),
@@ -70,6 +96,30 @@ pub fn garage_ui(data: &AppData, actions: &ActionQueue) -> View {
                 },
             )
             .child(trims),
+            Text("Livery")
+                .size(theme::sp(13.0))
+                .color(theme::text_dim())
+                .single_line(),
+            FlowRow(
+                Modifier::new().gap(theme::dp(10.0)).fill_max_width(),
+                FlowRowConfig {
+                    balanced: true,
+                    ..FlowRowConfig::default()
+                },
+            )
+            .child(patterns),
+            Text("Wheels")
+                .size(theme::sp(13.0))
+                .color(theme::text_dim())
+                .single_line(),
+            FlowRow(
+                Modifier::new().gap(theme::dp(10.0)).fill_max_width(),
+                FlowRowConfig {
+                    balanced: true,
+                    ..FlowRowConfig::default()
+                },
+            )
+            .child(rims),
             Text("The car you build your next race in.")
                 .size(theme::sp(12.0))
                 .color(theme::text_dim())

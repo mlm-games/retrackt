@@ -138,6 +138,11 @@ impl EditorGesture {
         Rc::new(RefCell::new(Self::default()))
     }
 
+    /// Whether a pointer is held down, so a drag is in progress.
+    pub(crate) fn engaged(&self) -> bool {
+        !self.pointers.is_empty()
+    }
+
     fn press(&mut self, ev: &PointerEvent) {
         let button = match ev.event {
             PointerEventKind::Down(button) => button,

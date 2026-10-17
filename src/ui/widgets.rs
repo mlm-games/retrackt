@@ -157,6 +157,27 @@ pub fn accent_btn(label: &str, on_click: impl Fn() + 'static) -> View {
 ///
 /// Visible rather than hidden so the feature is discoverable, and inert rather
 /// than silent so the player learns why.
+/// One of a fixed set, as a chip: the accent when it is the live choice, a dim
+/// outline when it is not. The same width either way, so a row does not resize
+/// as the choice moves along it.
+pub fn choice_chip(label: &str, selected: bool, on_click: impl Fn() + 'static) -> View {
+    outlined_at(
+        label,
+        theme::dp(78.0),
+        ButtonConfig {
+            container_color: selected.then(theme::accent),
+            content_color: Some(if selected {
+                theme::background()
+            } else {
+                theme::text_dim()
+            }),
+            shape_radius: theme::dp(8.0),
+            ..ButtonConfig::default()
+        },
+        on_click,
+    )
+}
+
 pub fn disabled_btn(label: &str) -> View {
     outlined(
         label,

@@ -166,6 +166,10 @@ pub enum UiAct {
     SetCarPaint(u8),
     /// Trim the car `index` places along the garage trim palette.
     SetCarTrim(u8),
+    /// Livery the car `index` places along the garage pattern list.
+    SetCarPattern(u8),
+    /// Wheel style the car `index` places along the garage rim list.
+    SetCarRims(u8),
     /// Open the options from wherever they were asked for.
     OpenSettings,
     /// Leave the options, returning to `settings_return`.
@@ -178,6 +182,7 @@ pub enum UiAct {
     SetQuality(u8),
     SetShadows(bool),
     SetFog(bool),
+    SetClouds(bool),
     SetParticles(bool),
     SetSkidmarks(bool),
     SetSound(bool),
@@ -217,6 +222,13 @@ pub enum UiAct {
     DismissNotice,
     /// Discard the kept tape with this file stem, and its file.
     DeleteGhost(String),
+    /// Encode the kept tape with this file stem and put the code on the clipboard.
+    CopyGhostCode(String),
+    /// The ghost-code field's current text. Its own action so the draft survives
+    /// leaving and re-entering the library.
+    SetGhostCodeDraft(String),
+    /// Decode the ghost-code field and keep what it makes.
+    LoadGhostCode,
 }
 
 pub type ActionQueue = Rc<RefCell<Vec<UiAct>>>;
@@ -286,6 +298,10 @@ pub struct AppData {
     pub ghost_return: Screen,
     /// Draft text for naming a new ghost.
     pub ghost_draft: String,
+    /// Ghost-code field contents, and the last code this library exported. Shown
+    /// so a platform with no clipboard still leaves the code readable.
+    pub ghost_code_draft: String,
+    pub ghost_code_out: String,
     /// Best recorded time on the current track under the current vehicle
     /// tuning, in simulated ticks.
     pub best: Option<u32>,

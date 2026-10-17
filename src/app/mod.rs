@@ -12,7 +12,7 @@ pub mod theme;
 
 use repame_sim::Sim;
 use repame_view3d::{BatchDesc, GeomHandle, MeshGroup, Viewport3d};
-use repose_core::{Modifier, RenderContext, Scheduler, View};
+use repose_core::{CursorGrabMode, Modifier, RenderContext, Scheduler, View};
 use repose_ui::{ViewExt, ZStack};
 use retrackt_format::{
     PieceInstance, ReplayTape, TrackDocument, builtin_tracks, demo_track, gameplay_fingerprint,
@@ -250,6 +250,16 @@ impl App {
             self.data.editor.hover = None;
             self.release_editor_gesture();
         }
+
+        // A drag is the one interaction that cannot survive the pointer leaving
+        // the window: the platform cancels every gesture on `CursorLeft`, so an
+        // orbit that runs out of window would be dropped mid-move. Confined for
+        // as long as a pointer is down, free the moment the drag ends.
+        sched.cursor_grab = if self.editor_gesture.borrow().engaged() {
+            CursorGrabMode::Confined
+        } else {
+            CursorGrabMode::None
+        };
 
         // Playback speed scales the wall clock, not the step. `Sim::time_scale`
         // would be the obvious field to reach for and is wrong here: it multiplies
@@ -545,6 +555,14 @@ impl App {
                 let clamped = index.min(theme::CAR_TRIMS.len() as u8 - 1);
                 self.set_option(|s| s.car_trim = clamped);
             }
+            UiAct::SetCarPattern(index) => {
+                let clamped = index.min(theme::CAR_PATTERNS.len() as u8 - 1);
+                self.set_option(|s| s.car_pattern = clamped);
+            }
+            UiAct::SetCarRims(index) => {
+                let clamped = index.min(theme::CAR_RIMS.len() as u8 - 1);
+                self.set_option(|s| s.car_rims = clamped);
+            }
             UiAct::OpenSettings => {
                 self.data.settings_return = self.data.screen;
                 self.data.screen = Screen::Settings;
@@ -560,6 +578,7 @@ impl App {
             }
             UiAct::SetShadows(on) => self.set_option(|s| s.shadows = on),
             UiAct::SetFog(on) => self.set_option(|s| s.fog = on),
+            UiAct::SetClouds(on) => self.set_option(|s| s.clouds = on),
             UiAct::SetParticles(on) => self.set_option(|s| s.particles = on),
             UiAct::SetSkidmarks(on) => self.set_option(|s| s.skidmarks = on),
             UiAct::SetSound(on) => self.set_option(|s| s.sound = on),
@@ -574,6 +593,9 @@ impl App {
             UiAct::SetGhostDraft(name) => self.data.ghost_draft = name,
             UiAct::DismissNotice => self.data.notice = None,
             UiAct::DeleteGhost(file) => self.delete_ghost(&file),
+            UiAct::CopyGhostCode(file) => self.copy_ghost_code(&file),
+            UiAct::SetGhostCodeDraft(code) => self.data.ghost_code_draft = code,
+            UiAct::LoadGhostCode => self.load_ghost_code(),
             UiAct::LoadTrack(track) => self.load_track(&track),
 
             UiAct::SetPaletteCategory(index) => self.data.editor.palette_category = index,
@@ -696,9 +718,6 @@ impl App {
         }
     }
 
-    /// Start (or restart) a run. Returns false when the track cannot be raced or
-    /// has no drivable spawn; nothing is reset then, and `data.notice` explains
-    /// the rejection.
     /// Apply one option and write it out. Every option goes through here, so a
     /// new one cannot be added to the screen and quietly not persisted.
     fn set_option(&mut self, edit: impl FnOnce(&mut crate::save::Settings)) {
@@ -734,6 +753,9 @@ impl App {
         self.start_race();
     }
 
+    /// Start (or restart) a run. Returns false when the track cannot be raced or
+    /// has no drivable spawn; nothing is reset then, and `data.notice` explains
+    /// the rejection.
     fn start_race(&mut self) -> bool {
         // Checked here as well as in the editor: a track can reach this point
         // having been edited into an unraceable state, and a run that starts and
@@ -754,7 +776,11 @@ impl App {
         }
         self.data.notice = None;
         let car = Car::at_spawn(world.spawn, world.spawn_yaw, self.data.settings.car_paint)
-            .with_trim(self.data.settings.car_trim);
+            .with_style(
+                self.data.settings.car_trim,
+                self.data.settings.car_pattern,
+                self.data.settings.car_rims,
+            );
         {
             let mut session = self.sim.world.resource_mut::<SessionRes>();
             session.0.start(&world);
@@ -1189,6 +1215,51 @@ impl App {
         }
     }
 
+    /// Encode one kept tape and hand it out.
+    ///
+    /// The name goes with the tape: a code that carried only the run would
+    /// arrive as a file stem, and "ghost_3" is not a thing anybody wants to
+    /// receive from a friend.
+    fn copy_ghost_code(&mut self, file: &str) {
+        let Some(entry) = self.data.ghosts.iter().find(|e| e.file == file) else {
+            return;
+        };
+        let name = entry.name.clone();
+        let Some(tape) = crate::save::load_ghost(file) else {
+            self.data.notice = Some("That ghost's tape could not be read.".into());
+            return;
+        };
+        match retrackt_format::export_ghost_code(&name, &tape) {
+            Ok(code) => {
+                self.data.ghost_code_out = code.clone();
+                // Best effort: the code is also shown on screen, so a platform
+                // with no clipboard still leaves the player able to read it out.
+                repose_core::clipboard::copy_to_clipboard(&code);
+                self.data.notice =
+                    Some("Ghost code copied to the clipboard, and shown below.".into());
+            }
+            Err(e) => self.data.notice = Some(format!("Could not encode that ghost: {e}")),
+        }
+    }
+
+    fn load_ghost_code(&mut self) {
+        let code = self.data.ghost_code_draft.trim().to_string();
+        if code.is_empty() {
+            self.data.notice = Some("Paste a ghost code first.".into());
+            return;
+        }
+        match retrackt_format::import_ghost_code(&code) {
+            Ok((name, tape)) => match crate::save::save_ghost(&tape, &name) {
+                Ok(entry) => {
+                    self.refresh_ghosts();
+                    self.data.notice = Some(format!("Kept \"{}\" as a ghost.", entry.name));
+                }
+                Err(e) => self.data.notice = Some(format!("Could not keep that ghost: {e}")),
+            },
+            Err(e) => self.data.notice = Some(format!("Could not read that code: {e}")),
+        }
+    }
+
     fn delete_ghost(&mut self, file: &str) {
         // Read before the record is cleared below: a record whose ghost is this
         // tape is a tape the player is being chased by, whether or not it was ever
@@ -1327,7 +1398,11 @@ impl App {
         self.data.editor.can_redo = self.history.can_redo();
         let world = TrackWorld::from_doc(&self.data.track);
         let car = Car::at_spawn(world.spawn, world.spawn_yaw, self.data.settings.car_paint)
-            .with_trim(self.data.settings.car_trim);
+            .with_style(
+                self.data.settings.car_trim,
+                self.data.settings.car_pattern,
+                self.data.settings.car_rims,
+            );
         {
             let mut session = self.sim.world.resource_mut::<SessionRes>();
             session.0.start(&world);

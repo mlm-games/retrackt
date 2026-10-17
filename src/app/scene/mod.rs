@@ -411,6 +411,73 @@ fn plain_group(centre: Vec3, at: &Atmosphere) -> MeshGroup {
 /// The triangles come from the format crate so the scene and the collision
 /// world agree on where the range is: a mountain you can see but not touch is a
 /// mountain you drive through.
+
+/// A layer of cloud over the track.
+///
+/// Flat slabs rather than billboards: a lap sees them from underneath at a
+/// glancing angle, and a quad turned to face the camera would stand on edge as
+/// the view dropped toward the horizon, which is the moment a cloud is most of
+/// what is on screen. Placed around the view rather than the track, so the layer
+/// never runs out however long the track is.
+///
+/// Wound the opposite way round from the plain, and lit from below, because it
+/// is the one surface in the scene that is looked at from underneath: the
+/// opaque pass culls back faces, so a quad wound like the ground would be
+/// invisible from every angle a cloud is ever seen at.
+fn cloud_group(centre: Vec3, at: &Atmosphere) -> MeshGroup {
+    const SLABS: usize = 46;
+    const ALT: f32 = 340.0;
+    /// How far the layer spreads from the view.
+    ///
+    /// Bounded by two things rather than by taste: the far plane clips a slab
+    /// past it and cuts in half one that straddles it, and the sky dome is
+    /// [SKY_RADIUS] out, so a slab beyond that is drawn on the wrong side of the
+    /// sky. The farthest a slab can end up is this plus its own half-width
+    /// against the dome, and the altitude squared in underneath.
+    const REACH: f32 = 1500.0;
+    let mut group = MeshGroup {
+        depth_test: true,
+        ..MeshGroup::default()
+    };
+    let mut seed = 0x9E37_79B9u32;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed
+    };
+    for _ in 0..SLABS {
+        let a = next();
+        let theta = (a % 4096) as f32 / 4096.0 * TAU;
+        let r = REACH * (0.12 + ((a >> 12) & 0xff) as f32 / 255.0 * 0.88);
+        let y = ALT + ((a >> 20) & 0x7f) as f32 / 127.0 * 140.0;
+        // Between the horizon and the zenith and a shade brighter than either,
+        // with a little spread between slabs. A cloud is lit from above, so the
+        // pale value is the whole of what makes a slab read as weather rather
+        // than as a hole in the dome.
+        let swell = ((a >> 8) & 0x7f) as f32 / 127.0 * 0.12 - 0.06;
+        let ink =
+            |k: usize| (at.zenith[k] * 0.60 + at.horizon[k] * 0.18 + 0.24 + swell).clamp(0.0, 1.0);
+        let tint = [ink(0), ink(1), ink(2)];
+
+        let c = centre + Vec3::new(theta.cos() * r, y, theta.sin() * r);
+        let half = 70.0 + ((a >> 16) & 0xff) as f32 / 255.0 * 130.0;
+        // Squashed along one axis so no slab reads as a square, and so a pair
+        // that happens to overlap makes a longer cloud rather than a plus sign.
+        let hz = half * (0.45 + ((a >> 24) & 0x3f) as f32 / 63.0 * 0.5);
+        let hx = half;
+        group.push_quad_lit(
+            [c.x - hx, c.y, c.z - hz],
+            [c.x + hx, c.y, c.z - hz],
+            [c.x + hx, c.y, c.z + hz],
+            [c.x - hx, c.y, c.z + hz],
+            tint,
+            [0.0, -1.0, 0.0],
+        );
+    }
+    group
+}
+
 fn mountain_group(bounds: ([f32; 3], [f32; 3])) -> MeshGroup {
     let mut group = MeshGroup {
         depth_test: true,
@@ -618,6 +685,9 @@ impl App {
         // The plain follows the view, so it is built here rather than cached with
         // the ground: the detailed tiles are static and this one is not.
         frame.push(plain_group(centre, &at));
+        if self.data.settings.clouds {
+            frame.push(cloud_group(centre, &at));
+        }
         // Ground and track are handed over by value: `Frame3d` owns its groups
         // and repame-view3d has no shared-group handle, so a per-frame clone is
         // the price of them appearing in every frame. They stay separate groups
@@ -971,6 +1041,77 @@ mod tests {
             for other in horizons.iter().skip(at + 1) {
                 assert_ne!(horizon, other, "two environments draw the same horizon");
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod cloud_tests {
+    use super::*;
+
+    /// Every vertex of the layer, for the two invariants that make it visible.
+    fn vertices(centre: Vec3) -> Vec<(Vec3, bool)> {
+        let at = atmosphere(ENVIRONMENT_SUMMER, 0);
+        let group = cloud_group(centre, &at);
+        assert!(!group.positions.is_empty(), "the layer must have slabs");
+        assert_eq!(
+            group.positions.len(),
+            group.normals.len(),
+            "every vertex carries the normal it is lit by"
+        );
+        assert_eq!(
+            group.positions.len() % 4,
+            0,
+            "slabs are quads, so the vertex count is a multiple of four"
+        );
+        group
+            .positions
+            .iter()
+            .zip(group.normals.iter())
+            .map(|(p, n)| (Vec3::from_array(*p), n[1] < -0.9))
+            .collect()
+    }
+
+    #[test]
+    fn every_cloud_is_close_enough_to_be_drawn() {
+        crate::report_failure_where_it_happens();
+        // The layer is placed around the view, so the view is the worst case.
+        // Two of them: one at the origin, and one a kilometre out, because the
+        // spread is radial and a track running to the edge of the world is the
+        // case a centre-relative check misses.
+        for centre in [Vec3::ZERO, Vec3::new(1400.0, 0.0, -900.0)] {
+            for (p, faces_down) in vertices(centre) {
+                let d = (p - centre).length();
+                assert!(d < FAR_PLANE, "a cloud vertex at {d} is past the far plane");
+                assert!(
+                    d < SKY_RADIUS,
+                    "a cloud vertex at {d} is outside the sky dome"
+                );
+                assert!(faces_down, "a cloud vertex is lit as if from above");
+            }
+        }
+    }
+
+    #[test]
+    fn clouds_face_downwards() {
+        crate::report_failure_where_it_happens();
+        // Wound the opposite way round from the plain. The opaque pass culls
+        // back faces, so a quad wound like the ground is invisible from every
+        // angle a cloud is ever seen at, and no amount of lighting would show
+        // it. This is the one property of the layer that cannot be checked by
+        // looking at the numbers that define it.
+        let at = atmosphere(ENVIRONMENT_SUMMER, 0);
+        let group = cloud_group(Vec3::ZERO, &at);
+        let v = |i: u32| Vec3::from_array(group.positions[i as usize]);
+        assert_eq!(group.indices.len() % 6, 0, "each quad is two triangles");
+        for tri in group.indices.chunks(3) {
+            let (a, b, c) = (v(tri[0]), v(tri[1]), v(tri[2]));
+            let n = (b - a).cross(c - a).normalize_or_zero();
+            assert!(
+                n.y < -0.9,
+                "a cloud faces {n}: the opaque pass culls back faces, so one wound \
+                 the other way is invisible from underneath"
+            );
         }
     }
 }

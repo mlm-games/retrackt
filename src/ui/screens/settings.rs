@@ -12,7 +12,7 @@ use repose_ui::{Box, Column, DragValue, FlowRow, FlowRowConfig, Row, Text, TextS
 
 use crate::app::state::{ActionQueue, AppData, UiAct, push};
 use crate::app::theme;
-use crate::ui::widgets::{heading, list_panel, outlined_at, pusher};
+use crate::ui::widgets::{choice_chip, heading, list_panel, outlined_at, pusher};
 
 /// Width of the label column. Fixed so every row's controls start at the same
 /// x down the length of the panel, which is what makes the list scannable.
@@ -57,6 +57,7 @@ pub fn settings_ui(data: &AppData, actions: &ActionQueue) -> View {
         ),
         toggle_row("Shadows", s.shadows, UiAct::SetShadows, actions),
         toggle_row("Fog", s.fog, UiAct::SetFog, actions),
+        toggle_row("Clouds", s.clouds, UiAct::SetClouds, actions),
         toggle_row("Particles", s.particles, UiAct::SetParticles, actions),
         toggle_row("Skidmarks", s.skidmarks, UiAct::SetSkidmarks, actions),
         heading("Audio"),
@@ -142,10 +143,7 @@ fn choice_row(
         .enumerate()
         .map(|(index, name)| {
             let index = index as u8;
-            match index == current {
-                true => chip_on(name, pusher(actions, set(index))),
-                false => chip_off(name, pusher(actions, set(index))),
-            }
+            choice_chip(name, index == current, pusher(actions, set(index)))
         })
         .collect();
 
@@ -177,14 +175,8 @@ fn toggle_row(label: &str, on: bool, set: fn(bool) -> UiAct, actions: &ActionQue
         .fill_max_width())
     .child([
         row_label(label),
-        match on {
-            true => chip_on("On", pusher(actions, set(false))),
-            false => chip_off("On", pusher(actions, set(true))),
-        },
-        match on {
-            true => chip_off("Off", pusher(actions, set(false))),
-            false => chip_on("Off", pusher(actions, set(true))),
-        },
+        choice_chip("On", on, pusher(actions, set(false))),
+        choice_chip("Off", !on, pusher(actions, set(true))),
     ])
 }
 
@@ -222,33 +214,6 @@ fn slider_row(
                 .single_line(),
         ),
     ])
-}
-
-fn chip_on(label: &str, on_click: impl Fn() + 'static) -> View {
-    outlined_at(
-        label,
-        theme::dp(78.0),
-        ButtonConfig {
-            container_color: Some(theme::accent()),
-            content_color: Some(theme::background()),
-            shape_radius: theme::dp(8.0),
-            ..ButtonConfig::default()
-        },
-        on_click,
-    )
-}
-
-fn chip_off(label: &str, on_click: impl Fn() + 'static) -> View {
-    outlined_at(
-        label,
-        theme::dp(78.0),
-        ButtonConfig {
-            content_color: Some(theme::text_dim()),
-            shape_radius: theme::dp(8.0),
-            ..ButtonConfig::default()
-        },
-        on_click,
-    )
 }
 
 #[cfg(test)]

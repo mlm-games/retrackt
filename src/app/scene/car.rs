@@ -12,6 +12,9 @@ const GLASS: u32 = 0x1E2733;
 const DARK: u32 = 0x23272E;
 const UNDER: u32 = 0x1A1D23;
 const TIRE: u32 = 0x14161A;
+/// Ink for the rim's own details, a shade off the tyre so a spoke separates
+/// from it without becoming a highlight.
+const DARK_RIM: [f32; 3] = [0.055, 0.06, 0.07];
 const HEAD: u32 = 0xEDEFF2;
 const TAIL: u32 = 0xC2261C;
 
@@ -32,7 +35,7 @@ pub(super) fn groups(car: &Car) -> (MeshGroup, MeshGroup, MeshGroup) {
     let body_m = body_matrix(car);
 
     let mut shell = RawMesh::default();
-    bodywork(&mut shell, car.paint, car.trim);
+    bodywork(&mut shell, car.paint, car.trim, car.pattern);
     wheels(&mut shell, car);
     let mut body = raw_mesh_to_group(&shell.transformed(body_m, [1.0; 3]), true);
     body.material.roughness = 0.5;
@@ -51,7 +54,7 @@ pub(super) fn groups(car: &Car) -> (MeshGroup, MeshGroup, MeshGroup) {
 /// and a pair of lit headlights reads as a rival on the road.
 pub(super) fn ghost_group(car: &Car) -> MeshGroup {
     let mut shell = RawMesh::default();
-    bodywork(&mut shell, car.paint, car.trim);
+    bodywork(&mut shell, car.paint, car.trim, car.pattern);
     wheels(&mut shell, car);
     let mut group = raw_mesh_to_group(&shell.transformed(body_matrix(car), [1.0; 3]), true);
     // One flat albedo, not the car's own paint: the shell reads as a solid
@@ -71,7 +74,7 @@ pub(super) fn ghost_group(car: &Car) -> MeshGroup {
 
 /// Everything in body space: +Z forward, +Y up, origin at the car centre,
 /// which itself rides a height above the road.
-fn bodywork(m: &mut RawMesh, paint: u8, trim: u8) {
+fn bodywork(m: &mut RawMesh, paint: u8, trim: u8, pattern: u8) {
     let (hx, y0, y1, zf, zr) = (0.80, -0.45, 0.08, 1.32, -1.30);
     let v = Vec3::new;
     let body = lin(crate::app::theme::car_paint(paint));
@@ -167,40 +170,38 @@ fn bodywork(m: &mut RawMesh, paint: u8, trim: u8) {
         glass,
     );
 
-    let sw = 0.09;
-    push_lit(
-        m,
-        [
-            v(-sw, y1 + 0.01, zbf),
-            v(-sw, y1 + 0.01, zf),
-            v(sw, y1 + 0.01, zf),
-            v(sw, y1 + 0.01, zbf),
-        ],
-        Vec3::Y,
-        stripe,
-    );
-    push_lit(
-        m,
-        [
-            v(-sw, yc + 0.01, zb),
-            v(-sw, yc + 0.01, zt),
-            v(sw, yc + 0.01, zt),
-            v(sw, yc + 0.01, zb),
-        ],
-        Vec3::Y,
-        stripe,
-    );
-    push_lit(
-        m,
-        [
-            v(-sw, y1 + 0.01, zr),
-            v(-sw, y1 + 0.01, zb),
-            v(sw, y1 + 0.01, zb),
-            v(sw, y1 + 0.01, zr),
-        ],
-        Vec3::Y,
-        stripe,
-    );
+    // Every livery is the same three bands at a different offset and width, so
+    // a livery can only change what the stripes look like: the geometry is
+    // shared and only the numbers differ, which is what keeps a new one from
+    // being a new set of quads nobody has looked at.
+    let band = |m: &mut RawMesh, off: f32, half: f32| {
+        let (x0, x1) = (off - half, off + half);
+        for (y, z0, z1) in [
+            (y1 + 0.01, zbf, zf),
+            (yc + 0.01, zb, zt),
+            (y1 + 0.01, zr, zb),
+        ] {
+            push_lit(
+                m,
+                [v(x0, y, z0), v(x0, y, z1), v(x1, y, z1), v(x1, y, z0)],
+                Vec3::Y,
+                stripe,
+            );
+        }
+    };
+    match pattern {
+        // Plain: the body on its own.
+        1 => {}
+        // Twin: a narrow pair, the classic racing layout.
+        2 => {
+            band(m, -0.30, 0.055);
+            band(m, 0.30, 0.055);
+        }
+        // Wide: one band across most of the deck.
+        3 => band(m, 0.0, 0.30),
+        // Centre, and anything a save names that the list no longer has.
+        _ => band(m, 0.0, 0.09),
+    }
 
     for side in [-1.0, 1.0] {
         push_obox(
@@ -238,13 +239,18 @@ fn wheels(m: &mut RawMesh, car: &Car) {
         let x = if i % 2 == 0 { -TRACK } else { TRACK };
         let z = if i < 2 { AXLE } else { -AXLE };
         let steer = if i < 2 { car.steer_angle } else { 0.0 };
-        wheel(m, Vec3::new(x, y, z), steer, tire, rim);
+        wheel(m, Vec3::new(x, y, z), steer, tire, rim, car.rims);
     }
 }
 
-/// Octagonal tyre: tread ring plus two rim discs, steered about its own
-/// centre when `steer` is non-zero.
-fn wheel(m: &mut RawMesh, centre: Vec3, steer: f32, tire: [f32; 3], rim: [f32; 3]) {
+/// Octagonal tyre: tread ring plus two rim discs, steered about its own centre
+/// when `steer` is non-zero.
+///
+/// Every wheel style keeps the disc solid and adds to it. A style that made the
+/// disc smaller or cut pieces out of it would open the wheel's interior to the
+/// camera, and the tyre is a band rather than a bowl: there is nothing behind it
+/// to see but the far wall, back-facing and culled.
+fn wheel(m: &mut RawMesh, centre: Vec3, steer: f32, tire: [f32; 3], rim: [f32; 3], style: u8) {
     const SIDES: usize = 8;
     let rot = Quat::from_rotation_y(steer);
     let at = |p: Vec3| centre + rot * p;
@@ -264,6 +270,67 @@ fn wheel(m: &mut RawMesh, centre: Vec3, steer: f32, tire: [f32; 3], rim: [f32; 3
         );
         push_tri_lit(m, [at(w), at(w + p0), at(w + p1)], n(Vec3::X), rim);
         push_tri_lit(m, [at(-w), at(-w + p1), at(-w + p0)], n(Vec3::NEG_X), rim);
+
+        // The style, laid on the disc a hair proud of it. Dark rather than the
+        // trim colour so a spoke reads as a gap in a wheel rather than as a
+        // lighter stripe painted on one.
+        let proud = Vec3::X * 0.006;
+        match style {
+            1 => {
+                // Spokes, every other vertex of the octagon, so five of them.
+                if k % 2 == 0 {
+                    let tip = (p0 + p1) * 0.42;
+                    push_tri_lit(
+                        m,
+                        [
+                            at(w + proud) + Vec3::ZERO,
+                            at(w + proud + tip),
+                            at(w + proud + tip * 0.72),
+                        ],
+                        n(Vec3::X),
+                        DARK_RIM,
+                    );
+                    push_tri_lit(
+                        m,
+                        [
+                            at(-w - proud),
+                            at(-w - proud + tip * 0.72),
+                            at(-w - proud + tip),
+                        ],
+                        n(Vec3::NEG_X),
+                        DARK_RIM,
+                    );
+                }
+            }
+            2 => {
+                // A ring, as the eight quads of a band between two radii.
+                let inner = 0.62f32;
+                let outer = 0.86f32;
+                push_lit(
+                    m,
+                    [
+                        at(w + proud + p0 * inner),
+                        at(w + proud + p0 * outer),
+                        at(w + proud + p1 * outer),
+                        at(w + proud + p1 * inner),
+                    ],
+                    n(mid),
+                    DARK_RIM,
+                );
+                push_lit(
+                    m,
+                    [
+                        at(-w - proud + p0 * inner),
+                        at(-w - proud + p1 * inner),
+                        at(-w - proud + p1 * outer),
+                        at(-w - proud + p0 * outer),
+                    ],
+                    n(mid),
+                    DARK_RIM,
+                );
+            }
+            _ => {}
+        }
     }
 }
 

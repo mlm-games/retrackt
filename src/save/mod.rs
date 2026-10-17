@@ -35,6 +35,12 @@ pub struct Settings {
     /// Trim the car is built in, by index into the garage trim palette.
     #[serde(default = "default_trim")]
     pub car_trim: u8,
+    /// Index into [`crate::app::theme::CAR_PATTERNS`].
+    #[serde(default)]
+    pub car_pattern: u8,
+    /// Index into [`crate::app::theme::CAR_RIMS`].
+    #[serde(default)]
+    pub car_rims: u8,
     /// Index into [`UNIT_NAMES`].
     #[serde(default)]
     pub units: u8,
@@ -49,6 +55,8 @@ pub struct Settings {
     pub shadows: bool,
     #[serde(default = "default_true")]
     pub fog: bool,
+    #[serde(default = "default_true")]
+    pub clouds: bool,
     #[serde(default = "default_true")]
     pub particles: bool,
     #[serde(default = "default_true")]
@@ -116,12 +124,15 @@ impl Default for Settings {
             practice: false,
             car_paint: 0,
             car_trim: default_trim(),
+            car_pattern: 0,
+            car_rims: 0,
             units: 0,
             speedometer: default_true(),
             timer: default_true(),
             quality: default_quality(),
             shadows: default_true(),
             fog: default_true(),
+            clouds: default_true(),
             particles: default_true(),
             skidmarks: default_true(),
             steering: default_steering(),
