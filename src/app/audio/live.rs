@@ -33,6 +33,10 @@ pub struct Sound {
     /// not re-send the same number every frame.
     rate: f32,
     levels: [f32; 3],
+    /// Whether sound is on at all. Off is not a master fader at zero: off stops
+    /// the engine's voice and refuses to start another, where a silent master
+    /// would leave a voice running that nobody can hear.
+    enabled: bool,
     /// Checkpoints crossed as of the last frame, so a crossing is a change in a
     /// count rather than a call the racing code has to remember to make.
     checkpoint: usize,
@@ -49,10 +53,11 @@ impl Sound {
             engine: None,
             rate: 0.0,
             levels: [f32::NAN; 3],
+            enabled: false,
             checkpoint: 0,
             airborne: false,
         };
-        sound.set_levels(1.0, 1.0, 1.0);
+        sound.apply(false, 1.0, 1.0, 1.0);
         sound
     }
 
@@ -62,8 +67,18 @@ impl Sound {
         self.audio.is_live()
     }
 
-    /// The three faders, as the options screen holds them.
-    pub fn set_levels(&mut self, master: f32, music: f32, sfx: f32) {
+    /// Whether sound is on, and the three faders, in one call.
+    ///
+    /// One call rather than two because the first thing every option screen does
+    /// is hand over all four, and a caller that set the faders without saying
+    /// whether sound was on would leave the game audible or silent by accident.
+    pub fn apply(&mut self, enabled: bool, master: f32, music: f32, sfx: f32) {
+        if self.enabled != enabled {
+            self.enabled = enabled;
+            if !enabled {
+                self.silence();
+            }
+        }
         if self.levels == [master, music, sfx] {
             return;
         }
@@ -91,15 +106,22 @@ impl Sound {
         // The first checkpoint of a run is the start line being left behind, and
         // the count going from zero is the run beginning rather than a gate
         // being crossed. Only a rise from one gate to the next is a crossing.
-        if checkpoint > self.checkpoint && self.checkpoint > 0 {
+        let crossed = checkpoint > self.checkpoint && self.checkpoint > 0;
+        let landed = self.airborne && !airborne;
+        // Tracked whether or not sound is on, so turning it on mid-run does not
+        // fire the crossings that happened while it was off.
+        self.checkpoint = checkpoint;
+        self.airborne = airborne;
+
+        if !self.enabled {
+            return;
+        }
+        if crossed {
             self.audio.play(CHECKPOINT);
         }
-        self.checkpoint = checkpoint;
-
-        if self.airborne && !airborne {
+        if landed {
             self.audio.play(LAND);
         }
-        self.airborne = airborne;
 
         if !running {
             if let Some(voice) = self.engine.take() {

@@ -12,6 +12,11 @@ pub const SAVE_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Settings {
+    /// Whether the game makes any sound at all. Off until the player asks for
+    /// it: a game that speaks the first time it is opened is a game that gets
+    /// closed, and nothing here is needed to play.
+    #[serde(default)]
+    pub sound: bool,
     pub master_volume: f32,
     pub music_volume: f32,
     pub sfx_volume: f32,
@@ -103,6 +108,7 @@ fn default_steering() -> f32 {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            sound: false,
             master_volume: 1.0,
             music_volume: 1.0,
             sfx_volume: 1.0,

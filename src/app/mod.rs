@@ -409,7 +409,8 @@ impl App {
         // The wall-clock delta, not the physics one: the engine is heard rather
         // than simulated, and a tape at quarter speed is a car being watched, so
         // its engine should not drop an octave with it.
-        self.sound.set_levels(
+        self.sound.apply(
+            self.data.settings.sound,
             self.data.settings.master_volume,
             self.data.settings.music_volume,
             self.data.settings.sfx_volume,
@@ -561,6 +562,7 @@ impl App {
             UiAct::SetFog(on) => self.set_option(|s| s.fog = on),
             UiAct::SetParticles(on) => self.set_option(|s| s.particles = on),
             UiAct::SetSkidmarks(on) => self.set_option(|s| s.skidmarks = on),
+            UiAct::SetSound(on) => self.set_option(|s| s.sound = on),
             UiAct::SetMasterVolume(v) => self.set_option(|s| s.master_volume = v.clamp(0.0, 1.0)),
             UiAct::SetMusicVolume(v) => self.set_option(|s| s.music_volume = v.clamp(0.0, 1.0)),
             UiAct::SetSfxVolume(v) => self.set_option(|s| s.sfx_volume = v.clamp(0.0, 1.0)),

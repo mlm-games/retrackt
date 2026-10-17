@@ -16,7 +16,7 @@ impl Sound {
         false
     }
 
-    pub fn set_levels(&mut self, _master: f32, _music: f32, _sfx: f32) {}
+    pub fn apply(&mut self, _enabled: bool, _master: f32, _music: f32, _sfx: f32) {}
 
     pub fn update(
         &mut self,

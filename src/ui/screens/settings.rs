@@ -60,6 +60,7 @@ pub fn settings_ui(data: &AppData, actions: &ActionQueue) -> View {
         toggle_row("Particles", s.particles, UiAct::SetParticles, actions),
         toggle_row("Skidmarks", s.skidmarks, UiAct::SetSkidmarks, actions),
         heading("Audio"),
+        toggle_row("Sound", s.sound, UiAct::SetSound, actions),
         slider_row(
             "Master",
             s.master_volume,
@@ -79,7 +80,7 @@ pub fn settings_ui(data: &AppData, actions: &ActionQueue) -> View {
             pct,
         ),
         slider_row(
-            "Sound",
+            "Effects",
             s.sfx_volume,
             (0.0, 1.0),
             0.05,
